@@ -26,7 +26,8 @@ The `--force` path remains the explicit captain-approved discard escape hatch.
 Both subcommands share one durability lookup, which reads the live backlog first and falls back to `data/done-archive.md` only when the identity is absent there.
 That secondary read exists because tasks-axi Done retention prunes older resolved records out of the live backlog, which previously made a correctly filed and correctly resolved decision indistinguishable from one that was never filed.
 The fallback is read-only, never restores a record into the backlog, and satisfies the gate only for an archived record that is marked done, is kind `captain`, and still carries the durable resolution record.
-An identity absent from both sources, an archived record that is not resolved, and a missing, unreadable, or malformed archive all keep the same refusal, and the refusal now names which of those two cases it found rather than reporting both as absence.
+An identity absent from both sources, an archived record that is not resolved, and a missing, unreadable, or malformed archive all keep the same refusal.
+The refusal now names what it actually found rather than reporting every case as absence: a decision that was never filed, one that is archived without a durable resolution record, and an archive that could not be read are reported distinctly, because only the first two are facts the gate can establish.
 `resolve` uses the same archived record to stay idempotent for an exact retry that straddles retention, and still rejects a changed decision or routed-task set.
 
 The `resolve` subcommand requires a decision file and at least one existing dependent task whose structured `blocked-by` edge points to the hold.
@@ -104,6 +105,7 @@ Verification date: 2026-08-05, against tasks-axi 0.2.3.
 The two added cases use only synthetic `sample` identities.
 The first drives a real hold through completion and resolution, then archives it with `tasks-axi prune --keep 0 --state done` so the resolved record leaves the live backlog exactly as Done retention leaves it.
 The second exercises every archive shape that must not satisfy the gate: absent from both sources, unreadable, malformed, archived but not marked done, archived and done without a durable resolution record, a non-`captain` identity, a longer id that merely shares the prefix, and a neighbouring record whose resolution must not leak across the entry boundary.
+It also asserts that an unreadable archive is never reported as a decision that was never filed.
 Both cases fail against the pre-change script, the first with the reported `is absent from .../data/backlog.md` refusal.
 
 ```text

@@ -639,7 +639,8 @@ test_archive_lookup_refuses_every_unresolved_shape() {
   assert_grep "was never filed" "$home/no-archive.err" \
     "a missing archive must still report the decision as never filed"
 
-  # 2. Unreadable archive behaves exactly like an absent one.
+  # 2. An unreadable archive must refuse without crashing, and must not claim the
+  #    decision was never filed - that is the one case the gate cannot rule out.
   printf '## Archived 2026-08-05\n- [x] %s - Choice (repo: sample) (kind: captain) (done 2026-08-05)\n  Resolution recorded by fm-decision-hold.\n  Routed work:- dep\n' \
     "$hold" > "$home/data/done-archive.md"
   chmod 000 "$home/data/done-archive.md"
@@ -649,7 +650,9 @@ test_archive_lookup_refuses_every_unresolved_shape() {
     if run_decisions "$home" verify "$origin" > "$home/unreadable.out" 2> "$home/unreadable.err"; then
       fail "an unreadable archive satisfied the gate"
     fi
-    assert_grep "was never filed" "$home/unreadable.err" "an unreadable archive must refuse, not crash"
+    assert_grep "could not be read" "$home/unreadable.err" "an unreadable archive must refuse, not crash"
+    assert_no_grep "was never filed" "$home/unreadable.err" \
+      "an unreadable archive must not be reported as a decision that was never filed"
     chmod 644 "$home/data/done-archive.md"
   fi
 

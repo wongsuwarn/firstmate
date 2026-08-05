@@ -39,8 +39,8 @@
 # It satisfies the gate only for an archived record that is marked done, is kind
 # captain, and still carries the durable resolution record. An identity absent from
 # both sources, an archived record that is not resolved, and a missing, unreadable,
-# or malformed archive all keep today's refusal, and the refusal now names which of
-# those two cases it found.
+# or malformed archive all keep today's refusal, and the refusal now names what it
+# actually found rather than reporting every case as absence.
 #
 # `resolve` requires every --routed-to task to exist and to be blocked by the hold.
 # It writes the captain decision and routed identities into the hold body, clears
@@ -194,9 +194,16 @@ archive_record() {  # <hold-id> - prints the most recent archived record and its
 # record that `resolve` writes before it closes a hold. Every other outcome - a
 # record that was never filed, a record that is not done, an identity that is not a
 # captain decision, a missing or unreadable archive, and malformed content - prints
-# `absent` or `unresolved`, so the caller keeps refusing exactly as it does today.
-archive_hold_status() {  # <hold-id> - prints resolved | unresolved | absent
+# something else, so the caller keeps refusing exactly as it does today.
+# `unreadable` is reported separately because an archive that cannot be read is the
+# one case where absence from the live backlog does not prove the decision was never
+# filed, and the refusal must not claim more than it checked.
+archive_hold_status() {  # <hold-id> - prints resolved | unresolved | unreadable | absent
   local record='' entry_line
+  if [ -e "$ARCHIVE" ] && [ ! -r "$ARCHIVE" ]; then
+    printf 'unreadable\n'
+    return 0
+  fi
   record=$(archive_record "$1") || true
   if [ -z "$record" ]; then
     printf 'absent\n'
@@ -255,6 +262,8 @@ verify_hold_durable() {  # <hold-id>
     [ "$archived" != resolved ] || return 0
     [ "$archived" != unresolved ] \
       || fail "captain decision $id is archived in $ARCHIVE without a durable resolution record"
+    [ "$archived" != unreadable ] \
+      || fail "captain decision $id is absent from $DATA/backlog.md and $ARCHIVE could not be read"
     fail "captain decision $id was never filed: it is absent from both $DATA/backlog.md and $ARCHIVE"
   fi
   state=$(show_field "$show" state)
