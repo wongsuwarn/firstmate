@@ -27,7 +27,7 @@ When any diagnostic needs captain attention, report the plain consequence and re
 - `NEEDS_GH_AUTH` - ask the captain to run `! gh auth login` (interactive; you cannot run it for them).
 - `TANGLE: <remediation>` - the primary checkout is stranded on a feature branch instead of its default branch; `AGENTS.md` section 8 explains why this guard exists and what it protects.
   The work is safe on that branch ref; restore the primary to its default branch with the printed `git -C <root> checkout <default>`, then re-validate that branch in a proper worktree.
-  This is the only sanctioned firstmate-initiated git write to the primary, and it is a non-destructive branch switch that strands nothing.
+  This is the only sanctioned firstmate-initiated change to which branch the primary has checked out, and it is a non-destructive branch switch that strands nothing; the fetch-and-fast-forward writes `/updatefirstmate` and fleet sync already make to the primary, and the `git -C <root> fetch origin` printed by the `MAIN_DIVERGED` bullet below are separately sanctioned.
 - `MAIN_DIVERGED: <remediation>` - the primary checkout's local default branch carries commits `origin/<default>` does not, so the fast-forward-only self-update path (`/updatefirstmate`) can no longer reconcile it and declines to advance it, reporting `skipped: diverged from origin/<default>` only to whoever runs that update.
   This usually means a shared fix landed directly on the local default branch instead of through the normal PR path.
   The check never fetches, so it compares against a possibly stale `origin/<default>`; run the printed `git -C <root> fetch origin` first, because a refreshed ref alone can clear the report when the local-only commits are in fact already upstream.
