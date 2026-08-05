@@ -1106,7 +1106,7 @@ fi
 # Never fetches and never mutates; runs the same in every mode.
 diverged_default=$(fm_primary_diverged_branch "$FM_ROOT" 2>/dev/null || true)
 if [ -n "$diverged_default" ]; then
-  echo "MAIN_DIVERGED: primary checkout's '$diverged_default' carries commits origin/$diverged_default does not; fast-forward self-update can no longer reconcile it - inspect with: git -C $FM_ROOT log origin/$diverged_default..$diverged_default --oneline, then reconcile manually (rebase/merge onto origin/$diverged_default, or push the local commits) before rerunning /updatefirstmate"
+  echo "MAIN_DIVERGED: primary checkout's '$diverged_default' carries commits origin/$diverged_default does not; fast-forward self-update can no longer reconcile it - this check never fetches, so refresh the stale ref first with: git -C $FM_ROOT fetch origin, which alone can clear it; if it persists, inspect with: git -C $FM_ROOT log origin/$diverged_default..$diverged_default --oneline, then reconcile manually (rebase/merge onto origin/$diverged_default, or push the local commits) before rerunning /updatefirstmate"
 fi
 crew=
 [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)

@@ -177,6 +177,9 @@ test_bootstrap_line() {
   assert_contains "$out" "MAIN_DIVERGED:" "bootstrap did not report a diverged primary checkout"
   assert_contains "$out" "main" "MAIN_DIVERGED line did not name the default branch"
   assert_contains "$out" "/updatefirstmate" "MAIN_DIVERGED line did not point at the self-update path"
+  # The check never fetches, so the remediation must send the reader to refresh
+  # the possibly-stale tracking ref before acting on it.
+  assert_contains "$out" "fetch origin" "MAIN_DIVERGED line did not tell the reader to fetch first"
 
   # Detect-only mode is read-only for every other check; this guard never
   # mutates, so it must report identically there too.
