@@ -38,8 +38,10 @@
 #
 # INERT contexts, so legitimate shared use keeps working:
 #   - FM_BROWSER_SHARED_SESSION_OK=1 declares deliberate shared-session use.
-#   - The working directory is a genuine firstmate primary home, which is
-#     firstmate's own session rather than a task-scoped agent.
+#   - The working directory is a genuine firstmate primary home that is not a
+#     secondmate home, which is firstmate's own session rather than a
+#     task-scoped agent. A secondmate is bound to its own session at spawn like
+#     every other task-scoped agent, so it is enforced rather than exempt.
 set -u
 
 GUARD_SELF=${BASH_SOURCE[0]}
@@ -69,10 +71,12 @@ GUARD_DIR=$(dirname "$GUARD_REAL")
 
 # Subcommands that report or install rather than drive a browser session. They
 # stay usable without isolation so `--help`, version probes, and the bootstrap
-# hook install never depend on a task binding.
+# hook install never depend on a task binding. A bare invocation is not one of
+# them: it reports the resolved session's own page and reference count, so
+# without isolation it reads whatever another concurrent task has open.
 guard_command_is_sessionless() {
   case "${1-}" in
-    ''|--help|-h|help|-v|-V|--version|setup) return 0 ;;
+    --help|-h|help|-v|-V|--version|setup) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -88,7 +92,9 @@ guard_session_isolated() {
 }
 
 # Firstmate's own primary home browses on the shared session by design; only
-# task-scoped agents must be isolated from each other.
+# task-scoped agents must be isolated from each other, and a secondmate is one
+# of those (docs/browser-session-isolation.md owns why this composes its own
+# predicate instead of reusing fm_primary_scope_matches whole).
 guard_context_is_inert() {
   [ "${FM_BROWSER_SHARED_SESSION_OK-}" != 1 ] || return 0
   local scope_lib=$GUARD_DIR/fm-primary-scope-lib.sh
@@ -97,6 +103,7 @@ guard_context_is_inert() {
   . "$scope_lib" || return 1
   local here
   here=$(pwd -P 2>/dev/null) || return 1
+  ! fm_root_is_secondmate_home "$here" || return 1
   fm_primary_scope_matches "$here" "$here/state"
 }
 
@@ -136,7 +143,25 @@ guard_check() {
   guard_refuse
 }
 
-# First executable named chrome-devtools-axi on PATH that is not this guard.
+# Return 0 when an already-resolved physical path is a copy of this guard
+# rather than the real tool. Every shim is a symlink onto a file with this
+# script's own name, so a second firstmate checkout's shim directory on PATH is
+# recognized too, not just this one's. The name test is dropped when this guard
+# itself carries the real tool's name - an unresolvable path, or a deployment
+# that copied rather than symlinked - because it would otherwise match every
+# candidate and hide the real tool instead of one guard. FM_BROWSER_GUARD_ACTIVE
+# is the last-resort stop for that case.
+guard_path_is_guard() {
+  local resolved=$1 self=${GUARD_REAL##*/}
+  [ "$resolved" != "$GUARD_REAL" ] || return 0
+  [ "$self" != "$REAL_TOOL" ] || return 1
+  case "${resolved##*/}" in
+    "$self") return 0 ;;
+  esac
+  return 1
+}
+
+# First executable named chrome-devtools-axi on PATH that is not a guard.
 # Split PATH by hand rather than by word splitting so an entry containing a
 # glob character can never be expanded.
 guard_resolve_real_tool() {
@@ -148,10 +173,10 @@ guard_resolve_real_tool() {
     resolved_dir=$(cd "$entry" 2>/dev/null && pwd -P) || continue
     candidate=$resolved_dir/$REAL_TOOL
     [ -f "$candidate" ] && [ -x "$candidate" ] || continue
-    # Any shim directory resolves back to this guard; skip it rather than
-    # exec'ing ourselves.
+    # Any shim directory resolves back to a guard; skip it rather than exec'ing
+    # ourselves or handing off to another checkout's copy.
     resolved_tool=$(guard_resolve_path "$candidate") || continue
-    [ "$resolved_tool" != "$GUARD_REAL" ] || continue
+    guard_path_is_guard "$resolved_tool" && continue
     printf '%s\n' "$candidate"
     return 0
   done
@@ -166,7 +191,7 @@ guard_exec() {
     return 2
   fi
   real=$(guard_resolve_real_tool) || {
-    echo "fm-browser-session-guard: no real $REAL_TOOL found on PATH outside $GUARD_DIR" >&2
+    echo "fm-browser-session-guard: no real $REAL_TOOL found on PATH outside firstmate's guard shims" >&2
     return 2
   }
   export FM_BROWSER_GUARD_ACTIVE=1
@@ -186,8 +211,9 @@ check  decides only: exit 0 to allow, exit 1 to refuse with a reason on stderr.
 exec   enforces, then runs the real chrome-devtools-axi found on PATH.
 
 The same script runs as bin/shims/chrome-devtools-axi, where it enforces and
-then exec's transparently. It is inert in a firstmate primary home and when
-FM_BROWSER_SHARED_SESSION_OK=1 declares deliberate shared use.
+then exec's transparently. It is inert in a firstmate primary home that is not
+a secondmate home, and when FM_BROWSER_SHARED_SESSION_OK=1 declares deliberate
+shared use.
 See docs/browser-session-isolation.md.
 EOF
 }

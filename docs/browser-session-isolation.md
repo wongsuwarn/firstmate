@@ -44,6 +44,7 @@ The shim closes that class: any `chrome-devtools-axi` call that reaches it witho
 
 The guard **refuses** a browser-driving invocation when `CHROME_DEVTOOLS_AXI_SESSION` is unset, empty or whitespace-only, or exactly `default`.
 Those are precisely the values that resolve to the shared instance.
+A bare `chrome-devtools-axi` with no arguments is refused on the same terms, because it reports the resolved session's own page title and reference count, so without isolation it reads whatever another concurrent task has open.
 The refusal names the missing isolation, states the consequence, and gives the exact rebinding command.
 
 The guard **allows**:
@@ -53,8 +54,13 @@ The guard **allows**:
 
 The guard is **inert** - identical to allow - in two contexts, so legitimate shared use keeps working:
 
-- The working directory is a genuine firstmate primary home, detected with the shared predicate in `bin/fm-primary-scope-lib.sh`. firstmate's own session browses on the shared instance by design; only task-scoped agents must be isolated from each other. A linked task worktree is not a primary home, so a crewmate or scout working inside one is still enforced.
+- The working directory is a genuine firstmate primary home that is not a secondmate home, built from the primitives in `bin/fm-primary-scope-lib.sh`. firstmate's own session browses on the shared instance by design; only task-scoped agents must be isolated from each other. A linked task worktree is not a primary home, so a crewmate or scout working inside one is still enforced.
 - `FM_BROWSER_SHARED_SESSION_OK=1` declares deliberate shared-session use, the same explicit-escape shape as `FM_ALLOW_SUBAGENT=1` in `bin/fm-subagent-pretool-check.sh`. Intent has to be stated rather than inferred from an absent variable.
+
+A secondmate home is the one scope this guard deliberately reads differently from its siblings.
+`fm_primary_scope_matches` force-includes any root carrying a valid `.fm-secondmate-home` marker, because a secondmate is firstmate for its own home and the primary-session guards must fire there.
+Browser isolation is the opposite question: `bin/fm-spawn.sh` binds a secondmate to its own per-task session at spawn exactly as it binds a crewmate, and a local secondmate's pane starts in its home root, so exempting that root would leave the one agent class the two layers disagree about free to share the default session.
+This guard therefore composes its own predicate - a plain primary checkout that is *not* a secondmate home - instead of reusing `fm_primary_scope_matches` whole, which leaves the shared library's force-include semantics untouched for the guards that depend on it.
 
 Note the deliberate asymmetry with the primary-session guards (`docs/cd-guard.md`, `docs/arm-pretool-check.md`, `docs/subagent-guard.md`): those fire only in the primary home and are inert in task worktrees.
 This one is the mirror image, because the hazard is the reverse.
@@ -76,7 +82,7 @@ A blocked browser command costs one rebinding step; a wrongly shared browser ses
 
 ## Entry shapes
 
-- `bin/shims/chrome-devtools-axi <args>...` - the transparent shim. It enforces, then `exec`s the first real `chrome-devtools-axi` on PATH that does not resolve back to itself, so a shim directory that appears anywhere on PATH cannot make it call itself. `FM_BROWSER_GUARD_ACTIVE=1` is a second stop against re-entry.
+- `bin/shims/chrome-devtools-axi <args>...` - the transparent shim. It enforces, then `exec`s the first real `chrome-devtools-axi` on PATH that does not resolve to a guard, skipping every shim directory rather than only its own, so a second firstmate checkout's shims earlier on PATH cannot make it hand off to another guard instead of the real tool. `FM_BROWSER_GUARD_ACTIVE=1` is a last-resort stop against re-entry.
 - `bin/fm-browser-session-guard.sh check [<args>...]` - decide only, never run the tool. This is the preflight form.
 - `bin/fm-browser-session-guard.sh exec <args>...` - enforce, then run.
 
@@ -104,7 +110,7 @@ Layer 1 removes the second by making the launch command self-contained, and laye
 
 ## Automated validation
 
-`tests/fm-browser-session-guard.test.sh` owns the acceptance matrix: the refusal cases (unset, blank, `default`), the allow cases (an isolated session, the sessionless subcommands, a primary home, a declared shared use), the linked-worktree enforcement, the fail-closed refusal when the scope predicate is unreadable, the `check` CLI, the usage-versus-refusal exit split, the shim's anti-recursion and missing-tool behavior, the spawn wiring proven on the launch command `bin/fm-spawn.sh` actually sends, and the generated briefs' statement of the contract.
+`tests/fm-browser-session-guard.test.sh` owns the acceptance matrix: the refusal cases (unset, blank, `default`, and a bare invocation), the allow cases (an isolated session, the sessionless subcommands, a primary home, a declared shared use), the linked-worktree enforcement, the secondmate-home enforcement proven as a one-marker delta against that same inert primary home, the fail-closed refusal when the scope predicate is unreadable, the `check` CLI, the usage-versus-refusal exit split, the shim's anti-recursion, its resolution past a second checkout's guard, its missing-tool behavior, the spawn wiring proven on the launch command `bin/fm-spawn.sh` actually sends, and the generated briefs' statement of the contract.
 No agent is spawned and no browser is launched; a stub stands in for `chrome-devtools-axi`.
 
 Run:

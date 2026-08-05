@@ -101,6 +101,27 @@ test_allows_isolated_session() {
   pass "a task with its own session runs unaffected"
 }
 
+# A bare invocation is not sessionless: it reports the resolved session's own
+# page, so without isolation it reads another concurrent task's open tab. It is
+# also the shape the installed SessionStart hook uses, which makes its refusal
+# the signal that announces a dropped binding at the start of a session.
+test_refuses_bare_invocation() {
+  local code=0
+  run_guard "$TASK_CWD" unset - "$SHIM" || code=$?
+  expect_code 1 "$code" "a bare invocation must refuse"
+  assert_not_contains "$RUN_OUT" "RAN session=" \
+    "a bare invocation must not read the shared session"
+  assert_contains "$RUN_OUT" "REFUSED" "the bare-invocation refusal must be loud"
+  pass "a bare unisolated invocation refuses instead of reading the shared session"
+
+  code=0
+  run_guard "$TASK_CWD" my-task-id - "$SHIM" || code=$?
+  expect_code 0 "$code" "a bare invocation with isolation must still work"
+  assert_contains "$RUN_OUT" "RAN session=my-task-id" \
+    "a bound task's bare invocation must reach the real tool"
+  pass "a bare invocation still works once the task's own session is bound"
+}
+
 test_allows_sessionless_subcommands() {
   local sub code
   for sub in --help -v --version setup; do
@@ -141,6 +162,44 @@ test_inert_in_primary_home() {
   assert_not_contains "$RUN_OUT" "RAN session=" \
     "a task worktree must not reach the shared browser"
   pass "the guard still enforces in that home's linked task worktree"
+}
+
+# A secondmate home is a primary home for the sibling primary-session guards,
+# which is exactly why this one must read the scope itself: a secondmate is
+# bound to its own session at spawn like any other task-scoped agent. The
+# fixture is one delta from an inert primary home - the marker file - so the
+# control and the enforced case differ in nothing else.
+test_secondmate_home_is_enforced() {
+  local home=$TMP_ROOT/secondmate-home code=0 home_shim
+  mkdir -p "$home/bin/shims" "$home/state"
+  git init -q "$home"
+  : > "$home/AGENTS.md"
+  cp "$GUARD" "$ROOT/bin/fm-primary-scope-lib.sh" "$home/bin/"
+  chmod +x "$home/bin/fm-browser-session-guard.sh"
+  ln -sfn ../fm-browser-session-guard.sh "$home/bin/shims/chrome-devtools-axi"
+  home_shim="$home/bin/shims/chrome-devtools-axi"
+
+  run_guard "$home" unset - "$home_shim" open https://example.invalid || code=$?
+  expect_code 0 "$code" "the unmarked control must be an inert primary home"
+  assert_contains "$RUN_OUT" "RAN session=unset" \
+    "a plain primary home must stay inert"
+
+  printf 'secondmate-alpha\n' > "$home/.fm-secondmate-home"
+  code=0
+  run_guard "$home" unset - "$home_shim" open https://example.invalid || code=$?
+  expect_code 1 "$code" "a secondmate home is task-scoped and must be enforced"
+  assert_not_contains "$RUN_OUT" "RAN session=" \
+    "a secondmate must not reach the shared browser unisolated"
+  assert_contains "$RUN_OUT" "REFUSED" "the secondmate refusal must be loud"
+  pass "a secondmate home is enforced while the same home unmarked stays inert"
+
+  # The secondmate's own binding is what spawn gives it, and it must work.
+  code=0
+  run_guard "$home" secondmate-alpha - "$home_shim" open https://example.invalid || code=$?
+  expect_code 0 "$code" "a bound secondmate must be unaffected"
+  assert_contains "$RUN_OUT" "RAN session=secondmate-alpha" \
+    "a secondmate with its own session must run unaffected"
+  pass "a secondmate bound to its own session runs unaffected"
 }
 
 test_declared_shared_use_is_allowed() {
@@ -224,6 +283,43 @@ test_shim_does_not_recurse_into_itself() {
   assert_contains "$out" "RAN session=t2" \
     "the shim must exec the real tool, not itself"
   pass "the shim skips its own directory when resolving the real tool"
+}
+
+# Another firstmate checkout's shim directory can lead this one's PATH - a
+# crewmate working on firstmate itself is the ordinary case. Handing off to that
+# copy would abort at its re-entry backstop and never reach the real tool, so
+# the resolver must skip every guard it finds, not only its own file.
+test_shim_resolves_past_another_checkouts_guard() {
+  local other=$TMP_ROOT/other-checkout code=0 out
+  mkdir -p "$other/bin/shims"
+  cp "$GUARD" "$other/bin/"
+  chmod +x "$other/bin/fm-browser-session-guard.sh"
+  ln -sfn ../fm-browser-session-guard.sh "$other/bin/shims/chrome-devtools-axi"
+
+  out=$(cd "$TASK_CWD" && env CHROME_DEVTOOLS_AXI_SESSION=t4 \
+    PATH="$other/bin/shims:$STUB_BIN:$BASE_PATH" "$SHIM" pages 2>&1) || code=$?
+  expect_code 0 "$code" "another checkout's guard must not shadow the real tool"
+  assert_contains "$out" "RAN session=t4" \
+    "the resolver must skip every guard and reach the real tool"
+  pass "the shim resolves past a second checkout's guard to the real tool"
+}
+
+# Skipping guards by name must not degrade into skipping everything when the
+# guard itself carries the real tool's name, which is what a copied rather than
+# symlinked deployment produces. Its own file is still skipped by identity, and
+# the real tool must still be reached.
+test_a_guard_named_like_the_real_tool_still_resolves() {
+  local copied=$TMP_ROOT/copied-guard code=0 out
+  mkdir -p "$copied"
+  cp "$GUARD" "$copied/chrome-devtools-axi"
+  chmod +x "$copied/chrome-devtools-axi"
+
+  out=$(cd "$TASK_CWD" && env CHROME_DEVTOOLS_AXI_SESSION=t5 \
+    PATH="$copied:$STUB_BIN:$BASE_PATH" "$copied/chrome-devtools-axi" pages 2>&1) || code=$?
+  expect_code 0 "$code" "a guard named like the real tool must still resolve past itself"
+  assert_contains "$out" "RAN session=t5" \
+    "skipping guards by name must not hide the real tool"
+  pass "a guard deployed under the real tool's name still reaches the real tool"
 }
 
 test_shim_reports_a_missing_real_tool() {
@@ -348,14 +444,18 @@ test_briefs_state_the_enforced_contract() {
 test_refuses_unset_session
 test_refuses_explicit_default_session
 test_refuses_blank_session
+test_refuses_bare_invocation
 test_allows_isolated_session
 test_allows_sessionless_subcommands
 test_inert_in_primary_home
+test_secondmate_home_is_enforced
 test_declared_shared_use_is_allowed
 test_fails_closed_when_scope_is_unreadable
 test_check_cli_decides_without_running
 test_usage_is_a_usage_error
 test_shim_does_not_recurse_into_itself
+test_shim_resolves_past_another_checkouts_guard
+test_a_guard_named_like_the_real_tool_still_resolves
 test_shim_reports_a_missing_real_tool
 test_shim_is_a_symlink_to_the_guard
 test_spawn_binds_isolation_inside_the_launch_command
