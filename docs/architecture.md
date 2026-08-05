@@ -147,7 +147,7 @@ Only a named non-default branch checked out in `FM_ROOT` is a worktree tangle.
 If another live session holds the fleet lock, both surfaces keep the alarm but switch to read-only wording with no repair command.
 `fm-main-divergence-lib.sh` reports the neighbouring failure through the same session-start surface as a `MAIN_DIVERGED:` line when the primary checkout's local default branch carries commits `origin/<default>` does not, the one state the fast-forward-only self-update can no longer reconcile and instead declines to advance, a skip reported only to whoever runs that update.
 Because the shared refs it reads are visible from every linked worktree, it uses the same branch-state discriminator as the tangle guard and stays silent anywhere but the primary sitting on its default branch.
-It never fetches and never mutates, so its wording is identical in locked and read-only sessions.
+The check function itself never fetches and never mutates in either mode, but - like the tangle line - its printed remediation differs by lock state: a session holding the fleet lock gets the fetch-and-reconcile instructions, while a read-only session without the lock gets advisory-only wording with no fetch command.
 Ship briefs also tell the crewmate to verify `pwd -P` and `git rev-parse --show-toplevel` before creating `fm/<id>`, then stop with a blocked status if it landed in the primary checkout.
 
 ## No-mistakes gate authority boundary

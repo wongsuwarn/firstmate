@@ -11,7 +11,9 @@
 # classification (healthy/behind, diverged, ahead-only, no origin, no
 # origin/<default> ref), its primary-only scoping over the shared refs every
 # linked worktree can also read, and the fm-bootstrap.sh MAIN_DIVERGED problem
-# line - all hermetic over temp git repos.
+# line - including its detect-only split, mirroring TANGLE's own read-only
+# advisory wording for a session that did not get the fleet lock - all
+# hermetic over temp git repos.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -181,12 +183,17 @@ test_bootstrap_line() {
   # the possibly-stale tracking ref before acting on it.
   assert_contains "$out" "fetch origin" "MAIN_DIVERGED line did not tell the reader to fetch first"
 
-  # Detect-only mode is read-only for every other check; this guard never
-  # mutates, so it must report identically there too.
+  # Detect-only mode is read-only for every other check (TANGLE drops its
+  # state-changing checkout command there); this guard's check function never
+  # mutates in either mode, but its printed remediation does instruct a fetch,
+  # so - like TANGLE - detect-only mode must keep the alarm while dropping that
+  # fetch instruction rather than reporting byte-identically.
   out=$(FM_ROOT_OVERRIDE="$tracked" FM_HOME="$tracked" FM_BOOTSTRAP_DETECT_ONLY=1 "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null | grep '^MAIN_DIVERGED:' || true)
   assert_contains "$out" "MAIN_DIVERGED:" "detect-only bootstrap did not report a diverged primary checkout"
+  assert_contains "$out" "main" "detect-only MAIN_DIVERGED line did not name the default branch"
+  assert_not_contains "$out" "fetch origin" "detect-only MAIN_DIVERGED line printed a state-changing fetch instruction"
 
-  pass "fm-bootstrap: MAIN_DIVERGED problem line fires only once local diverges from origin, identically in detect-only mode"
+  pass "fm-bootstrap: MAIN_DIVERGED problem line fires only once local diverges from origin; normal mode instructs a fetch first, detect-only mode stays advisory-only with no such command"
 }
 
 test_lib_classification
