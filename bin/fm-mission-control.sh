@@ -11,7 +11,7 @@
 # secondmate current state keep exactly one owner. Two inputs come from outside
 # the snapshot because the snapshot does not own them: data/projects.md is the
 # delivery-posture registry, and `quota-axi --json` is the live allowance
-# reading. Elapsed and last-update times come from the task's own
+# reading. Task-record age and last-update times come from the task's own
 # state/<id>.meta and state/<id>.status modification times, which the snapshot
 # does not expose.
 #
@@ -110,7 +110,7 @@ file_mtime() {  # <path>
   printf '%s\n' "$mtime"
 }
 
-# Per-task start and last-update times keyed by task id. The snapshot's
+# Per-task record and last-update times keyed by task id. The snapshot's
 # observed_at fields are observation times, not task times, so these come from
 # the task's own durable records instead.
 TIMES=$(
@@ -231,6 +231,7 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
 
 (.tasks // []) as $tasks |
 (.backlog.records // []) as $records |
+(.backlog.present == true) as $backlog_present |
 ($tasks | map(select(.kind != "secondmate"))) as $work_tasks |
 ($tasks | map(select(.kind == "secondmate"))) as $secondmate_tasks |
 (.secondmate_current.records // []) as $sm_records |
@@ -273,8 +274,48 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
     link: null
   })) | add // []) as $waiting_secondmate |
 
+($sm_records | map(. as $sm |
+  (($sm.decisions_open // []) | length) as $shown |
+  ([($sm.omitted // [])[] | select(.surface == "decisions_open") | (.count // 0)] | add // 0) as $omitted |
+  ([($sm.counts.decisions_open // $shown), ($shown + $omitted), $shown] | max) as $total |
+  select($total > $shown) |
+  {
+    kind: "incomplete",
+    home: ($sm.id // "secondmate"),
+    id: (($sm.id // "secondmate") + "/omitted-decisions"),
+    title: "Additional captain decisions are not shown",
+    detail: ("Snapshot shows \($shown) of \($total) decisions. Inspect this secondmate home for all \($total - $shown) omitted decisions."),
+    repo: "",
+    link: null,
+    omitted_count: ($total - $shown)
+  })) as $waiting_secondmate_omitted |
+
+((.secondmate_current.truncated // 0) | if . < 0 then 0 else . end) as $sm_truncated |
+(if $sm_truncated > 0 then [{
+  kind: "incomplete",
+  home: "secondmates",
+  id: "secondmate-current/truncated",
+  title: "Secondmate decision scan is incomplete",
+  detail: ("Snapshot omitted \($sm_truncated) secondmate record(s). Inspect the full fleet state before concluding that no other captain decisions are waiting."),
+  repo: "",
+  link: null
+}] else [] end) as $waiting_secondmate_truncated |
+
+(if $backlog_present then [] else [{
+  kind: "incomplete",
+  home: "main",
+  id: "main/backlog-unavailable",
+  title: "Main backlog is unavailable",
+  detail: "Captain decisions from the main backlog cannot be counted. Restore or inspect the backlog before concluding that nothing is waiting.",
+  repo: "",
+  link: null
+}] end) as $waiting_backlog_unavailable |
+
 ($waiting_decisions + $waiting_secondmate) as $waiting_calls |
 ($waiting_calls + $waiting_prs) as $waiting |
+($waiting_secondmate_omitted + $waiting_secondmate_truncated + $waiting_backlog_unavailable) as $waiting_notices |
+(($waiting | length) + ($waiting_secondmate_omitted | map(.omitted_count) | add // 0)) as $waiting_count |
+((($backlog_present | not) or $sm_truncated > 0)) as $waiting_incomplete |
 
 # ----------------------------------------------------------- fleet health --
 ($work_tasks | map(select(
@@ -303,6 +344,7 @@ def card_waiting:
   . as $w |
   ($w.link // "") as $link |
   (if $w.kind == "pr" then (if $w.yolo then "merge call (autonomous)" else "review or merge" end)
+   elif $w.kind == "incomplete" then "incomplete scan"
    else "decision" end) as $badge |
   (@html "<article class=\"call \($w.kind)\">
      <header><span class=\"badge\">\($badge)</span>")
@@ -331,7 +373,7 @@ def card_task:
      <h3>\(dash($t.backlog.title // $t.id))</h3>
      <dl class=\"facts\">
        <div><dt>phase</dt><dd>\(dash($t.current_state.detail // $t.current_state.source))</dd></div>
-       <div><dt>elapsed</dt><dd>\(dash(ago($tm.start)))</dd></div>
+       <div><dt>task record age</dt><dd>\(dash(ago($tm.start)))</dd></div>
        <div><dt>last update</dt><dd>\(dash(if $tm.last == null then null else (ago($tm.last) + " ago") end))</dd></div>
        <div><dt>runtime</dt><dd>\(dash($t.backend))\(if ($t.harness // "") != "" then " / " else "" end)\(dash($t.harness))</dd></div>
      </dl>")
@@ -379,13 +421,15 @@ def secondmate_block:
     ($sm_records | map(. as $sm |
       ($secondmate_tasks | map(select(.id == $sm.id)) | first) as $task |
       ($sm.current.state // "unknown") as $st |
-      (($sm.decisions_open // []) | length) as $decisions |
+      (($sm.decisions_open // []) | length) as $decisions_shown |
+      ([($sm.omitted // [])[] | select(.surface == "decisions_open") | (.count // 0)] | add // 0) as $decisions_omitted |
+      ([($sm.counts.decisions_open // $decisions_shown), ($decisions_shown + $decisions_omitted), $decisions_shown] | max) as $decisions |
       (($sm.active_children // []) | length) as $children |
       (@html "<article class=\"secondmate\">
         <header><span class=\"dot\"></span><h3>\($sm.id)</h3><span class=\"state\">\($st)</span></header>
         <dl class=\"facts\">
           <div><dt>routed work</dt><dd>\(if $children == 0 then "none - idle is healthy" else "\($children) under way" end)</dd></div>
-          <div><dt>your decisions</dt><dd>\(if $decisions == 0 then "none" else "\($decisions) waiting" end)</dd></div>
+          <div><dt>your decisions</dt><dd>\(if $decisions == 0 then "none" elif $decisions > $decisions_shown then "\($decisions) waiting (\($decisions_shown) shown)" else "\($decisions) waiting" end)</dd></div>
           <div><dt>reachable</dt><dd>\(if ($task.endpoint.exists // false) then "yes" else ($task.endpoint.agent_alive // "unknown") end)</dd></div>
         </dl>")
       + (if ($sm.current.reason // "") == "" then "" else (@html "<p class=\"why\">\($sm.current.reason)</p>") end)
@@ -584,23 +628,28 @@ footer.foot{margin-top:34px;color:var(--faint);font-size:11.5px;font-family:var(
 + (@html "\(.generated)") + "</span></div>
   <div class=\"spacer\"></div>
   <div class=\"counts\">"
-+ (if ($waiting | length) > 0
-   then (@html "<span class=\"pill hot\"><b>\($waiting | length)</b> waiting on you</span>")
++ (if $waiting_incomplete
+   then (@html "<span class=\"pill hot\"><b>\($waiting_count)+</b> waiting known</span>")
+   elif $waiting_count > 0
+   then (@html "<span class=\"pill hot\"><b>\($waiting_count)</b> waiting on you</span>")
    else "<span class=\"pill\"><b>0</b> waiting on you</span>" end)
-+ (@html "<span class=\"pill\"><b>\($work_tasks | length)</b> under way</span>
-    <span class=\"pill\"><b>\($records | map(select(.state == "queued")) | length)</b> queued</span>
-    <span class=\"pill\"><b>\($rollup | length)</b> projects</span>")
++ (@html "<span class=\"pill\"><b>\($work_tasks | length)</b> under way</span>")
++ (if $backlog_present
+   then (@html "<span class=\"pill\"><b>\($records | map(select(.state == "queued")) | length)</b> queued</span>")
+   else "<span class=\"pill hot\"><b>?</b> queued - backlog unavailable</span>" end)
++ (@html "<span class=\"pill\"><b>\($rollup | length)</b> projects</span>")
 + "</div>
 </div></div>
 
 <div class=\"wrap\">
 
-<section class=\"alert" + (if ($waiting | length) == 0 then " clear" else "" end) + "\">
-  <h2>" + (if ($waiting | length) == 0 then "&#9989; Nothing waiting on you" else "&#9888; Waiting on you" end)
-+ (@html "<span class=\"n\">\($waiting | length)</span>") + "<i class=\"rule\"></i></h2>"
-+ (if ($waiting | length) == 0
+<section class=\"alert" + (if $waiting_count == 0 and ($waiting_incomplete | not) then " clear" else "" end) + "\">
+  <h2>" + (if $waiting_incomplete then "&#9888; Waiting status incomplete" elif $waiting_count == 0 then "&#9989; Nothing waiting on you" else "&#9888; Waiting on you" end)
++ (@html "<span class=\"n\">\($waiting_count)\(if $waiting_incomplete then "+ known" else "" end)</span>") + "<i class=\"rule\"></i></h2>"
++ (if $waiting_count == 0 and ($waiting_incomplete | not)
    then "<p class=\"empty\">No decisions, reviews, or merges need the captain right now.</p>"
-   else "<div class=\"calls\">" + (($waiting_calls | map(card_waiting) | add) // "")
+   else "<div class=\"calls\">" + (($waiting_notices | map(card_waiting) | add) // "")
+        + (($waiting_calls | map(card_waiting) | add) // "")
         + (($waiting_prs | map(card_waiting) | add) // "") + "</div>" end)
 + "</section>
 
@@ -614,8 +663,10 @@ footer.foot{margin-top:34px;color:var(--faint);font-size:11.5px;font-family:var(
 + "  </section>
 
   <section>
-    <h2>&#9989; Recently shipped" + (@html "<span class=\"n\">\($shipped | length)</span>") + "<i class=\"rule\"></i></h2>"
-+ (if ($shipped | length) == 0
+    <h2>&#9989; Recently shipped" + (if $backlog_present then (@html "<span class=\"n\">\($shipped | length)</span>") else "<span class=\"n\">unavailable</span>" end) + "<i class=\"rule\"></i></h2>"
++ (if ($backlog_present | not)
+   then "<p class=\"empty\">Recently shipped is unavailable because the backlog could not be read.</p>"
+   elif ($shipped | length) == 0
    then "<p class=\"empty\">Nothing landed yet.</p>"
    else "<div class=\"shipped\">" + (($shipped | map(. as $d |
      (@html "<article class=\"ship\">
@@ -631,18 +682,20 @@ footer.foot{margin-top:34px;color:var(--faint);font-size:11.5px;font-family:var(
 + "<span class=\"scope\">registered projects only</span><i class=\"rule\"></i></h2>"
 + (if ($rollup | length) == 0
    then "<p class=\"empty\">No project registry found - firstmate rebuilds it from the clones.</p>"
-   else "<div class=\"tablewrap\"><table><thead><tr>
+   else (if $backlog_present then "" else "<p class=\"empty\">Backlog-derived project counts are unavailable.</p>" end)
+   + "<div class=\"tablewrap\"><table><thead><tr>
      <th>Project</th><th>Delivery</th><th class=\"num\">Active</th><th class=\"num\">In flight</th>
      <th class=\"num\">Queued</th><th class=\"num\">Waiting</th><th class=\"num\">Shipped</th></tr></thead><tbody>"
    + (($rollup | map(. as $p |
        "<tr>" + (@html "<td><span class=\"mono\">\($p.name)</span></td>
         <td><span class=\"tag\">\($p.mode)</span>")
        + (if $p.yolo then "<span class=\"tag yolo\">+yolo</span>" else "" end) + "</td>"
-       + (@html "<td class=\"num\(if $p.active == 0 then " zero" else "" end)\">\($p.active)</td>
-          <td class=\"num\(if $p.in_flight == 0 then " zero" else "" end)\">\($p.in_flight)</td>
+       + (@html "<td class=\"num\(if $p.active == 0 then " zero" else "" end)\">\($p.active)</td>")
+       + (if $backlog_present then (@html "<td class=\"num\(if $p.in_flight == 0 then " zero" else "" end)\">\($p.in_flight)</td>
           <td class=\"num\(if $p.queued == 0 then " zero" else "" end)\">\($p.queued)</td>
           <td class=\"num\(if $p.waiting == 0 then " zero" else " hot" end)\">\($p.waiting)</td>
           <td class=\"num\(if $p.done == 0 then " zero" else "" end)\">\($p.done)</td>")
+          else "<td class=\"num zero\">-</td><td class=\"num zero\">-</td><td class=\"num zero\">-</td><td class=\"num zero\">-</td>" end)
        + "</tr>") | add) // "")
    + "</tbody></table></div>" end)
 + "  </section>
@@ -652,7 +705,13 @@ footer.foot{margin-top:34px;color:var(--faint);font-size:11.5px;font-family:var(
   <section>
     <h2>&#128678; Fleet health<i class=\"rule\"></i></h2>
     <div class=\"panel health\">"
-+ (if ($unhealthy | length) == 0 and ($blocked_items | length) == 0
++ (if ($backlog_present | not)
+   then "<p class=\"empty\">Backlog health is unavailable because the backlog could not be read.</p>"
+     + (if ($unhealthy | length) == 0 then "" else "<ul>"
+       + (($unhealthy | map(. as $t |
+           (@html "<li><b>\($t.current_state.state // "blocked")</b> \($t.id)<br><span class=\"mono\">\(dash($t.paths.status_log.last_event.raw))</span></li>")) | add) // "")
+       + "</ul>" end)
+   elif ($unhealthy | length) == 0 and ($blocked_items | length) == 0
    then "<p class=\"empty\">Nothing blocked or failed.</p>"
    else "<ul>"
      + (($unhealthy | map(. as $t |
@@ -680,7 +739,7 @@ footer.foot{margin-top:34px;color:var(--faint);font-size:11.5px;font-family:var(
 
 <script>
 (function () {
-  var rendered = " + (.generated | @json) + ";
+  var rendered = " + (.generated | @json | gsub("<"; "\\u003c")) + ";
   var stamp = Date.parse(rendered);
   var age = document.getElementById(\"age\");
   var top = document.getElementById(\"top\");

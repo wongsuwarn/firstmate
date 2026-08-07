@@ -119,7 +119,8 @@ test_renders_live_fixture_home() {
   assert_grep 'https://github.com/example/alpha/pull/9' "$board" "a recorded PR must be surfaced as a call"
 
   assert_grep 'Rebuild the alpha intake form' "$board" "the live task must appear in progress"
-  assert_grep '2h 0m' "$board" "elapsed must be derived from the task record"
+  assert_grep 'task record age</dt><dd>2h 0m' "$board" \
+    "the mutable metadata timestamp must be labelled as task-record age"
   assert_grep 'working: intake form wired up' "$board" "the last status event must be shown"
   assert_grep 'progress note - populated by firstmate in phase 2' "$board" \
     "the phase-2 progress slot must be rendered and labelled"
@@ -140,6 +141,7 @@ test_renders_live_fixture_home() {
 test_absent_sources_render_empty_sections() {
   local home fakebin out board
   home=$(make_home empty)
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
   fakebin=$(make_fakebin "$home")
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$BOARD" --no-quota) \
     || fail "an empty home must still render"
@@ -154,22 +156,55 @@ test_absent_sources_render_empty_sections() {
 }
 
 test_hostile_text_is_escaped() {
-  local snap board out
+  local snap board out script_tags
   snap=$TMP_ROOT/hostile.json
   board=$TMP_ROOT/hostile.html
-  snapshot_json '[{
+  cat > "$snap" <<'EOF'
+{
+  "schema": "fm-fleet-snapshot.v1",
+  "generated": "\u003c/script\u003e\u003cscript\u003ealert(3)\u003c/script\u003e",
+  "fm_home": "/fixture/home",
+  "roots": {"state": "/fixture/home/state", "data": "/fixture/home/data"},
+  "backlog": {"present": true, "records": [{
     "state": "queued", "id": "x1", "captain_actionable": true,
     "title": "<script>alert(1)</script> & \"quoted\"",
     "hold_reason": "<img src=x onerror=alert(2)>",
     "repo": "alpha"
-  }]' '[]' > "$snap"
+  }]},
+  "tasks": [],
+  "secondmate_current": {"registry": {"records": []}, "records": []}
+}
+EOF
   out=$("$BOARD" --snapshot "$snap" --no-quota --out "$board") \
     || fail "hostile prose must still render"
   assert_no_grep '<script>alert(1)</script>' "$board" "markup in fleet prose must not reach the page as markup"
   assert_no_grep '<img src=x' "$board" "an injected tag must not reach the page as markup"
   assert_grep '&lt;script&gt;alert(1)&lt;/script&gt;' "$board" "markup must be escaped and still readable"
   assert_grep '&quot;quoted&quot;' "$board" "quotes in fleet prose must be escaped"
+  assert_no_grep '<script>alert(3)</script>' "$board" \
+    "a generated timestamp with a literal JSON unicode closing tag must not break out of the inline script"
+  script_tags=$(grep -o '<script>' "$board" | wc -l | tr -d ' ')
+  [ "$script_tags" = 1 ] || fail "the rendered page must contain only its single intended script, got $script_tags"
   pass "prose from fleet state is escaped before it reaches the page"
+}
+
+test_missing_backlog_is_disclosed_as_unavailable() {
+  local snap board
+  snap=$TMP_ROOT/no-backlog.json
+  board=$TMP_ROOT/no-backlog.html
+  snapshot_json '[]' '[]' | jq '.backlog.present = false' > "$snap"
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a snapshot with an absent backlog must render"
+  assert_grep 'Waiting status incomplete' "$board" \
+    "waiting status must be incomplete when main-home decisions cannot be read"
+  assert_grep 'Main backlog is unavailable' "$board" "the missing decision source must be named"
+  assert_grep 'queued - backlog unavailable' "$board" "queued work must not render as zero"
+  assert_grep 'Recently shipped is unavailable' "$board" "shipped work must not render as empty"
+  assert_grep 'Backlog health is unavailable' "$board" "backlog health must not render as clear"
+  assert_no_grep 'No decisions, reviews, or merges need the captain right now.' "$board" \
+    "an absent backlog must not produce an authoritative all-clear"
+  assert_no_grep 'Nothing landed yet.' "$board" "an absent backlog must not produce an authoritative shipped zero"
+  pass "an absent backlog marks every backlog-derived conclusion unavailable"
 }
 
 test_secondmate_captain_decision_is_surfaced() {
@@ -197,6 +232,37 @@ test_secondmate_captain_decision_is_surfaced() {
   assert_grep '<b>1</b> waiting on you' "$board" "a secondmate decision must be counted as waiting"
   assert_grep 'none - idle is healthy' "$board" "an idle secondmate must read as healthy, not alarming"
   pass "a captain decision inside a secondmate home is surfaced and counted"
+}
+
+test_bounded_secondmate_decisions_are_disclosed() {
+  local snap board
+  snap=$TMP_ROOT/bounded-secondmates.json
+  board=$TMP_ROOT/bounded-secondmates.html
+  snapshot_json '[]' '[{
+    "id": "brain",
+    "home": "/fixture/brain",
+    "current": {"state": "captain_decision"},
+    "active_children": [],
+    "decisions_open": [{
+      "id": "brain-visible", "key": "brain-visible", "verb": "captain-hold",
+      "summary": "Visible captain decision", "reason": "Visible bounded record"
+    }],
+    "counts": {"decisions_open": 3},
+    "omitted": [{"surface": "decisions_open", "count": 2}]
+  }]' | jq '.secondmate_current += {total: 2, shown: 1, truncated: 1}' > "$snap"
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "bounded secondmate state must render"
+  assert_grep '<b>3+</b> waiting known' "$board" \
+    "the count must include per-home omitted decisions and mark omitted homes unknown"
+  assert_grep 'Additional captain decisions are not shown' "$board" \
+    "per-home bounded decisions must produce an actionable disclosure"
+  assert_grep 'Snapshot shows 1 of 3 decisions.' "$board" \
+    "the per-home disclosure must state the bounded count"
+  assert_grep 'Snapshot omitted 1 secondmate record(s).' "$board" \
+    "top-level secondmate truncation must produce an incomplete-state disclosure"
+  assert_grep '3 waiting (1 shown)' "$board" \
+    "the secondmate card must use the authoritative decision count"
+  pass "bounded secondmate decisions remain visible as incomplete captain work"
 }
 
 test_path_form_repo_folds_into_the_project_rollup() {
@@ -277,7 +343,9 @@ test_self_reload_is_wired() {
 test_renders_live_fixture_home
 test_absent_sources_render_empty_sections
 test_hostile_text_is_escaped
+test_missing_backlog_is_disclosed_as_unavailable
 test_secondmate_captain_decision_is_surfaced
+test_bounded_secondmate_decisions_are_disclosed
 test_path_form_repo_folds_into_the_project_rollup
 test_unmeasurable_allowance_is_not_a_zero_gauge
 test_usage_errors_refuse
