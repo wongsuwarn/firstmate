@@ -443,6 +443,7 @@ h2{
 }
 h2 .rule{flex:1;height:1px;background:linear-gradient(90deg,var(--line2),transparent);min-width:24px}
 h2 .n{font-family:var(--mono);color:var(--faint);letter-spacing:0}
+h2 .scope{font-size:10.5px;letter-spacing:.06em;text-transform:none;color:var(--faint);font-weight:400}
 .empty{color:var(--faint);font-size:13.5px;margin:0;padding:14px 16px;border:1px dashed var(--line2);border-radius:10px}
 
 /* ---- waiting on you ---- */
@@ -614,7 +615,8 @@ footer.foot{margin-top:34px;color:var(--faint);font-size:11.5px;font-family:var(
 + "  </section>
 
   <section>
-    <h2>&#128506; Projects" + (@html "<span class=\"n\">\($rollup | length)</span>") + "<i class=\"rule\"></i></h2>"
+    <h2>&#128506; Projects" + (@html "<span class=\"n\">\($rollup | length)</span>")
++ "<span class=\"scope\">registered projects only</span><i class=\"rule\"></i></h2>"
 + (if ($rollup | length) == 0
    then "<p class=\"empty\">No project registry found - firstmate rebuilds it from the clones.</p>"
    else "<div class=\"tablewrap\"><table><thead><tr>
