@@ -484,6 +484,53 @@ test_navigation_tabs_group_the_board() {
   pass "the board groups its sections behind keyboard-reachable navigation tabs"
 }
 
+# A fragment is only present on the entry load because the board's meta refresh
+# drops it. Execute the rendered head script twice against one browser-shaped
+# storage area to prove that the fragment-selected tab becomes the remembered
+# tab before the fragment disappears.
+test_fragment_selected_tab_survives_reload() {
+  local snap board
+  snap=$TMP_ROOT/fragment-tab.json
+  board=$TMP_ROOT/fragment-tab.html
+  snapshot_json '[]' '[]' > "$snap"
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "the fragment tab behavior fixture must render"
+  command -v node >/dev/null 2>&1 \
+    || fail "node is required to execute the rendered board's head script"
+  node - "$board" <<'JS' \
+    || fail "a fragment-selected tab must survive the next fragmentless load"
+const fs = require("node:fs");
+const vm = require("node:vm");
+const html = fs.readFileSync(process.argv[2], "utf8");
+const head = html.slice(0, html.indexOf("<body>"));
+const script = head.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+if (!script) process.exit(1);
+
+const values = new Map();
+const storage = {
+  getItem(key) { return values.has(key) ? values.get(key) : null; },
+  setItem(key, value) { values.set(key, value); }
+};
+
+function load(hash, localStorage) {
+  const document = {documentElement: {className: ""}};
+  const window = {location: {hash}, localStorage};
+  vm.runInNewContext(script, {document, window});
+  return document.documentElement.className;
+}
+
+if (load("#tab=system", storage) !== "js t-system") process.exit(1);
+if (load("", storage) !== "js t-system") process.exit(1);
+
+const refused = {
+  getItem() { throw new Error("storage refused"); },
+  setItem() { throw new Error("storage refused"); }
+};
+if (load("#tab=system", refused) !== "js t-decisions") process.exit(1);
+JS
+  pass "a fragment-selected tab is remembered before the fragment disappears"
+}
+
 # An attention bar the captain cannot follow is worse than none: clicking it has
 # to reach fleet health wherever health now lives.
 test_attention_bar_reaches_health_across_tabs() {
@@ -949,6 +996,7 @@ test_missing_backlog_is_disclosed_as_unavailable
 test_deferred_decision_leaves_the_primary_view
 test_deferred_shelf_reaches_a_secondmate_and_discloses_its_bound
 test_navigation_tabs_group_the_board
+test_fragment_selected_tab_survives_reload
 test_attention_bar_reaches_health_across_tabs
 test_unreadable_backlog_does_not_leave_projects_looking_calm
 test_blocked_work_is_raised_above_the_board

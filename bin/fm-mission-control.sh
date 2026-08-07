@@ -53,10 +53,12 @@
 #     bring back:  tasks-axi hold <id> --reason "<reason>" --kind captain
 #
 #   tasks-axi requires --reason on every hold and stores the reason it is given,
-#   so pass the reason back EXACTLY as the board shows it under the decision; a
-#   different string silently rewrites the captain's decision text. A decision
-#   set aside inside a second mate's own home reaches the shelf through that
-#   home's reported queued rows.
+#   so read the current reason from the owning home's backlog row and pass that
+#   exact stored text back unchanged. For a second mate decision, the owning
+#   home is that second mate's own home, not the main home or the board. The
+#   reason shown on the board identifies the decision but may be shortened, so
+#   it is not safe to copy. A different string silently rewrites the captain's
+#   decision text.
 #
 # Exit codes: 0 rendered, 1 runtime failure, 2 usage error.
 #
@@ -1057,14 +1059,15 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   var keys = [\"decisions\", \"projects\", \"activity\", \"system\"];
   var key = \"decisions\";
   var m = /^#(?:tab=|panel-)([a-z]+)$/.exec(window.location.hash || \"\");
-  if (m && keys.indexOf(m[1]) !== -1) {
-    key = m[1];
-  } else {
-    try {
+  try {
+    if (m && keys.indexOf(m[1]) !== -1) {
+      window.localStorage.setItem(\"fm-mission-control-tab\", m[1]);
+      key = m[1];
+    } else {
       var saved = window.localStorage.getItem(\"fm-mission-control-tab\");
       if (saved && keys.indexOf(saved) !== -1) { key = saved; }
-    } catch (e) { /* storage unavailable; the default tab is correct */ }
-  }
+    }
+  } catch (e) { /* storage unavailable; the default tab is correct */ }
   document.documentElement.className = \"js t-\" + key;
 }());
 </script>
