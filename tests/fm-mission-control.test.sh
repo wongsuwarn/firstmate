@@ -95,7 +95,10 @@ snapshot_json() {  # <records-json> <secondmate-records-json>
     roots: {state: "/fixture/home/state", data: "/fixture/home/data"},
     backlog: {path: "/fixture/home/data/backlog.md", present: true, records: $records},
     tasks: [],
-    secondmate_current: {registry: {records: []}, records: $sm}
+    secondmate_current: {registry: {
+      present: false, available: true, complete: true,
+      input_truncated: false, records_truncated: false, records: []
+    }, records: $sm}
   }'
 }
 
@@ -172,7 +175,10 @@ test_hostile_text_is_escaped() {
     "repo": "alpha"
   }]},
   "tasks": [],
-  "secondmate_current": {"registry": {"records": []}, "records": []}
+  "secondmate_current": {"registry": {
+    "present": false, "available": true, "complete": true,
+    "input_truncated": false, "records_truncated": false, "records": []
+  }, "records": []}
 }
 EOF
   out=$("$BOARD" --snapshot "$snap" --no-quota --out "$board") \
@@ -265,6 +271,69 @@ test_bounded_secondmate_decisions_are_disclosed() {
   pass "bounded secondmate decisions remain visible as incomplete captain work"
 }
 
+test_unreadable_secondmate_sources_are_disclosed() {
+  local snap board
+  snap=$TMP_ROOT/unavailable-registry.json
+  board=$TMP_ROOT/unavailable-registry.html
+  snapshot_json '[]' '[]' | jq '.secondmate_current.registry = {
+    present: true, available: false, complete: false,
+    reason: "registered secondmate table is unreadable",
+    input_truncated: false, records_truncated: false, records: []
+  }' > "$snap"
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "an unavailable secondmate registry must render"
+  assert_grep 'Waiting status incomplete' "$board" \
+    "an unavailable registry must make the captain waiting status incomplete"
+  assert_grep 'Secondmate registry scan is incomplete' "$board" \
+    "an unavailable registry must produce an actionable disclosure"
+  assert_grep 'registered secondmate table is unreadable' "$board" \
+    "the registry disclosure must preserve the unavailable reason"
+  assert_no_grep '<b>0</b> waiting on you' "$board" \
+    "an unavailable registry must not produce an authoritative zero"
+
+  snap=$TMP_ROOT/bounded-registry.json
+  board=$TMP_ROOT/bounded-registry.html
+  snapshot_json '[]' '[]' | jq '.secondmate_current.registry = {
+    present: true, available: true, complete: false,
+    reason: null, reasons: ["record_limit"],
+    input_truncated: false, records_truncated: true, records: []
+  }' > "$snap"
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a bounded secondmate registry must render"
+  assert_grep 'Waiting status incomplete' "$board" \
+    "a bounded registry must make the captain waiting status incomplete"
+  assert_grep 'record_limit' "$board" "the registry disclosure must preserve its truncation reason"
+  assert_no_grep '<b>0</b> waiting on you' "$board" \
+    "a bounded registry must not produce an authoritative zero"
+
+  snap=$TMP_ROOT/unavailable-secondmate-home.json
+  board=$TMP_ROOT/unavailable-secondmate-home.html
+  snapshot_json '[]' '[{
+    "id": "brain",
+    "home": "/fixture/brain",
+    "registered": true,
+    "current": {"state": "unknown", "reason": "structured home snapshot failed"},
+    "provenance": {"selected": "unknown"},
+    "active_children": [], "decisions_open": [],
+    "counts": {"decisions_open": 0}, "omitted": []
+  }]' | jq '.secondmate_current.registry.records = [{
+    id: "brain", home: "/fixture/brain", registered: true
+  }]' > "$snap"
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a registered secondmate with unreadable decisions must render"
+  assert_grep 'Waiting status incomplete' "$board" \
+    "an unreadable registered home must make the captain waiting status incomplete"
+  assert_grep 'Registered secondmate decisions are unavailable' "$board" \
+    "an unreadable registered home must produce an actionable disclosure"
+  assert_grep 'structured home snapshot failed' "$board" \
+    "the registered-home disclosure must preserve the read failure reason"
+  assert_grep 'your decisions</dt><dd>unavailable' "$board" \
+    "the secondmate card must not relabel an unreadable decision source as empty"
+  assert_no_grep '<b>0</b> waiting on you' "$board" \
+    "an unreadable registered home must not produce an authoritative zero"
+  pass "unreadable and bounded secondmate sources prevent a false all-clear"
+}
+
 test_path_form_repo_folds_into_the_project_rollup() {
   local snap board
   snap=$TMP_ROOT/rollup.json
@@ -346,6 +415,7 @@ test_hostile_text_is_escaped
 test_missing_backlog_is_disclosed_as_unavailable
 test_secondmate_captain_decision_is_surfaced
 test_bounded_secondmate_decisions_are_disclosed
+test_unreadable_secondmate_sources_are_disclosed
 test_path_form_repo_folds_into_the_project_rollup
 test_unmeasurable_allowance_is_not_a_zero_gauge
 test_usage_errors_refuse

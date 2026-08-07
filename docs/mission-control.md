@@ -21,7 +21,7 @@ Each active task instead shows its current phase, the age of its task record, an
 - **Waiting on you**, first and most prominent, merges three sources of captain-gated work: captain-held items in this home's backlog, tasks with a recorded PR awaiting a review or merge call, and captain-held decisions inside a registered secondmate's own home.
   That third source matters because a secondmate's decisions live in its backlog and never appear in this home's, so a board built from the local backlog alone would silently drop them.
   Each card names the home it came from when that home is not the main one.
-  Bounded secondmate reads show their omitted decision counts and mark the waiting status incomplete when whole secondmate records were omitted.
+  Bounded or unavailable secondmate registries, omitted homes, and registered homes whose decisions could not be read all mark the waiting status incomplete.
   Credential and login needs are not detected in phase 1 and are not faked.
 - **In progress** shows each task with live metadata: its project, kind, current run state, last reported event, task-record age, and the phase-2 progress slot.
 - **Recently shipped** lists recent landed backlog items with their PR or report links.

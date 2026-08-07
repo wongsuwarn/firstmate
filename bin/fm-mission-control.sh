@@ -236,6 +236,10 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
 ($tasks | map(select(.kind == "secondmate"))) as $secondmate_tasks |
 (.secondmate_current.records // []) as $sm_records |
 (.secondmate_current.registry // {}) as $sm_registry |
+(($sm_registry.available == true)
+  and ($sm_registry.complete == true)
+  and ($sm_registry.input_truncated != true)
+  and ($sm_registry.records_truncated != true)) as $sm_registry_complete |
 
 # ------------------------------------------------------- waiting on you ----
 # Three canonical sources, each tagged with the home it came from: main-home
@@ -301,6 +305,31 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
   link: null
 }] else [] end) as $waiting_secondmate_truncated |
 
+(if $sm_registry_complete then [] else [{
+  kind: "incomplete",
+  home: "secondmates",
+  id: "secondmate-registry/incomplete",
+  title: "Secondmate registry scan is incomplete",
+  detail: (if $sm_registry.available != true
+    then ("Registered secondmate table is unavailable: \($sm_registry.reason // "unknown reason"). Additional homes and captain decisions may be missing.")
+    else ("Registered secondmate table was bounded or incomplete\(if (($sm_registry.reasons // []) | length) > 0 then " (\(($sm_registry.reasons // []) | join(", ")))" else "" end). Additional homes and captain decisions may be missing.")
+    end),
+  repo: "",
+  link: null
+}] end) as $waiting_secondmate_registry |
+
+($sm_records | map(select(
+  .registered == true
+  and ((.provenance.selected // "") != "structured-home")) | {
+    kind: "incomplete",
+    home: (.id // "secondmate"),
+    id: ((.id // "secondmate") + "/decisions-unavailable"),
+    title: "Registered secondmate decisions are unavailable",
+    detail: ("Captain decisions for this registered secondmate could not be read: \(.current.reason // "structured home unavailable"). Inspect the secondmate home before concluding that nothing is waiting."),
+    repo: "",
+    link: null
+  })) as $waiting_secondmate_unavailable |
+
 (if $backlog_present then [] else [{
   kind: "incomplete",
   home: "main",
@@ -313,9 +342,13 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
 
 ($waiting_decisions + $waiting_secondmate) as $waiting_calls |
 ($waiting_calls + $waiting_prs) as $waiting |
-($waiting_secondmate_omitted + $waiting_secondmate_truncated + $waiting_backlog_unavailable) as $waiting_notices |
+($waiting_secondmate_omitted + $waiting_secondmate_truncated + $waiting_secondmate_registry + $waiting_secondmate_unavailable + $waiting_backlog_unavailable) as $waiting_notices |
 (($waiting | length) + ($waiting_secondmate_omitted | map(.omitted_count) | add // 0)) as $waiting_count |
-((($backlog_present | not) or $sm_truncated > 0)) as $waiting_incomplete |
+((($backlog_present | not)
+  or $sm_truncated > 0
+  or ($waiting_secondmate_omitted | length) > 0
+  or ($waiting_secondmate_registry | length) > 0
+  or ($waiting_secondmate_unavailable | length) > 0)) as $waiting_incomplete |
 
 # ----------------------------------------------------------- fleet health --
 ($work_tasks | map(select(
@@ -415,12 +448,15 @@ def quota_block:
   end;
 
 def secondmate_block:
-  if ($sm_records | length) == 0 and (($sm_registry.records // []) | length) == 0 then
-    "<p class=\"empty\">No second mates registered.</p>"
+  (if $sm_registry_complete then ""
+   else "<p class=\"empty\">Secondmate registry state is incomplete, so registered homes may be missing.</p>" end)
+  + (if ($sm_records | length) == 0 and (($sm_registry.records // []) | length) == 0 then
+    (if $sm_registry_complete then "<p class=\"empty\">No second mates registered.</p>" else "" end)
   else
     ($sm_records | map(. as $sm |
       ($secondmate_tasks | map(select(.id == $sm.id)) | first) as $task |
       ($sm.current.state // "unknown") as $st |
+      ((.registered != true) or ((.provenance.selected // "") == "structured-home")) as $decisions_available |
       (($sm.decisions_open // []) | length) as $decisions_shown |
       ([($sm.omitted // [])[] | select(.surface == "decisions_open") | (.count // 0)] | add // 0) as $decisions_omitted |
       ([($sm.counts.decisions_open // $decisions_shown), ($decisions_shown + $decisions_omitted), $decisions_shown] | max) as $decisions |
@@ -429,12 +465,12 @@ def secondmate_block:
         <header><span class=\"dot\"></span><h3>\($sm.id)</h3><span class=\"state\">\($st)</span></header>
         <dl class=\"facts\">
           <div><dt>routed work</dt><dd>\(if $children == 0 then "none - idle is healthy" else "\($children) under way" end)</dd></div>
-          <div><dt>your decisions</dt><dd>\(if $decisions == 0 then "none" elif $decisions > $decisions_shown then "\($decisions) waiting (\($decisions_shown) shown)" else "\($decisions) waiting" end)</dd></div>
+          <div><dt>your decisions</dt><dd>\(if ($decisions_available | not) then "unavailable" elif $decisions == 0 then "none" elif $decisions > $decisions_shown then "\($decisions) waiting (\($decisions_shown) shown)" else "\($decisions) waiting" end)</dd></div>
           <div><dt>reachable</dt><dd>\(if ($task.endpoint.exists // false) then "yes" else ($task.endpoint.agent_alive // "unknown") end)</dd></div>
         </dl>")
       + (if ($sm.current.reason // "") == "" then "" else (@html "<p class=\"why\">\($sm.current.reason)</p>") end)
       + (@html "<footer class=\"mono\">\(dash($sm.home))</footer></article>")) | add // "")
-  end;
+  end);
 
 # ------------------------------------------------------------------ page ---
 "<!doctype html>
