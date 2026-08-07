@@ -309,6 +309,11 @@ EOF
   assert_grep '&quot;quoted&quot;' "$board" "quotes in fleet prose must be escaped"
   assert_no_grep '<script>alert(3)</script>' "$board" \
     "a generated timestamp with a literal JSON unicode closing tag must not break out of the inline script"
+  # Checked directly, not only by counting scripts: the payload has to be on the
+  # page in escaped form, which is what proves it was neutralized rather than
+  # dropped or silently rewritten.
+  assert_grep '&lt;/script&gt;&lt;script&gt;alert(3)&lt;/script&gt;' "$board" \
+    "the closing-tag payload must reach the page escaped and readable"
   # The board renders exactly two of its own scripts: the tab chosen in <head>
   # before first paint, and the age ticker plus tab wiring at the end of the
   # body. A third means hostile prose opened one of its own.
@@ -472,6 +477,9 @@ test_navigation_tabs_group_the_board() {
     "the selected tab must be remembered across the board's own reload"
   assert_grep 'http-equiv="refresh"' "$board" \
     "the board must keep reloading itself with tabs in place"
+  # An opened shelf snapping shut mid-read is the same reset the tabs avoid.
+  assert_grep 'localStorage.setItem("fm-mission-control-deferred"' "$board" \
+    "an opened deferred shelf must survive the board's own reload"
   assert_no_grep 'src="http' "$board" "the tabs must not depend on a network asset"
   pass "the board groups its sections behind keyboard-reachable navigation tabs"
 }

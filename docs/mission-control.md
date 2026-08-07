@@ -56,6 +56,9 @@ The self-reload navigates without the URL fragment, so a fragment cannot be what
 A `#tab=<name>` fragment still selects a tab on the first load, which is what a hand-typed or copied link uses.
 A browser that refuses storage - a private context, or a restricted `file://` origin - simply opens on Decisions each time.
 
+The Deferred shelf is held to the same bar, because a shelf that snapped shut every 25 seconds would be the same jarring reset in a smaller place.
+It is closed for a captain who never opens it, stays open for one who does, and stays closed again once they close it.
+
 ## Deferring a decision
 
 Setting a decision aside is not a control on the board, which stays read-only.

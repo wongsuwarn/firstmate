@@ -1290,6 +1290,22 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   });
 
   paint();
+
+  /* The shelf is held to the same bar as the tabs: opening it to read three
+     decisions must not be undone by the next self-reload. It is remembered the
+     same way, so it stays shut for a captain who never opens it and stays open
+     for one who does, until they close it again. */
+  var shelf = document.querySelector(\"details.shelf\");
+  if (shelf) {
+    try {
+      if (window.localStorage.getItem(\"fm-mission-control-deferred\") === \"open\") { shelf.open = true; }
+    } catch (e) { /* not remembered; closed is the right default */ }
+    shelf.addEventListener(\"toggle\", function () {
+      try {
+        window.localStorage.setItem(\"fm-mission-control-deferred\", shelf.open ? \"open\" : \"closed\");
+      } catch (e) { /* not remembered */ }
+    });
+  }
 }());
 </script>
 </body></html>
