@@ -466,22 +466,22 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
   (($sm.decisions_open // []) | map(.id // .key) | map(select(. != null))) as $decision_ids |
   (($sm.holds // []) | map(. as $hold |
     select((($decision_ids | index($hold.id)) == null)
-      and (((($hold.unresolved_blocker_ids // []) | length) > 0)
-        or ($sm.current.state // "") == "externally_held")))) as $blocked_shown |
+      and (($hold.source // "") == "child-state"
+        or (($hold.source // "") == "backlog"
+          and ((($hold.unresolved_blocker_ids // []) | length) > 0)))))) as $blocked_shown |
   (($sm.holds // []) | length) as $shown |
   ([($sm.counts.holds // $shown), $shown] | max) as $total |
-  (if ($sm.current.state // "") == "externally_held" then $total
-   else ($blocked_shown | length) end) as $blocked_total |
+  ($blocked_shown | length) as $blocked_total |
   {
     id: ($sm.id // "secondmate"),
     blocked_holds: ($blocked_shown | map(. + {home: ($sm.id // "secondmate")})),
     blocked_shown: ($blocked_shown | length),
     blocked_total: $blocked_total,
-    blocked_omitted: ($blocked_total - ($blocked_shown | length)),
-    unclassified_omitted: (if ($sm.current.state // "") == "externally_held" then 0 else ($total - $shown) end)
+    unclassified_omitted: ($total - $shown),
+    card_held_total: (if ($sm.current.state // "") == "externally_held" then $total else $blocked_total end)
   })) as $secondmate_health |
 ($secondmate_health | map(.blocked_holds) | add // []) as $secondmate_holds |
-($secondmate_health | map(select(.blocked_omitted > 0 or .unclassified_omitted > 0))) as $secondmate_holds_omitted |
+($secondmate_health | map(select(.unclassified_omitted > 0))) as $secondmate_holds_omitted |
 ($sm_records | map(select((.current.state // "unknown") == "unknown"))) as $secondmate_unknown |
 ($secondmate_health | map(.blocked_total) | add // 0) as $secondmate_hold_count |
 ((($sm_truncated > 0)
@@ -558,7 +558,7 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
     children: $children_total,
     children_shown: $children_shown,
     children_omitted: ($children_total - $children_shown),
-    holds: ($health.blocked_total // 0),
+    holds: ($health.card_held_total // 0),
     holds_shown: ($health.blocked_shown // 0),
     hold_reason: (($health.blocked_holds | first | .reason) // ""),
     decisions_available: ((($sm.registered != true) or (($sm.provenance.selected // "") == "structured-home"))),
@@ -742,7 +742,7 @@ def health_block:
     + (($secondmate_holds | map(. as $h |
         (@html "<li><span class=\"hstate wait\">held</span><span class=\"hwhat\">\(dash($h.id // $h.title))<span class=\"hint\">\($h.home): \(dash($h.reason // $h.blocked_by))</span></span></li>")) | add) // "")
     + (($secondmate_holds_omitted | map(. as $o |
-        (@html "<li><span class=\"hstate wait\">bounded</span><span class=\"hwhat\">\($o.id)<span class=\"hint\">\(if $o.blocked_omitted > 0 then "\($o.blocked_total) held tasks total, \($o.blocked_shown) shown" else "\($o.unclassified_omitted) additional holds could not be classified" end)</span></span></li>")) | add) // "")
+        (@html "<li><span class=\"hstate wait\">bounded</span><span class=\"hwhat\">\($o.id)<span class=\"hint\">\($o.unclassified_omitted) additional holds could not be classified</span></span></li>")) | add) // "")
     + (($secondmate_unknown | map(. as $s |
         (@html "<li><span class=\"hstate\">unknown</span><span class=\"hwhat\">\($s.id // "secondmate")<span class=\"hint\">\(dash($s.current.reason))</span></span></li>")) | add) // "")
     + (if $sm_truncated > 0 then
@@ -955,7 +955,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
 "
 + (if ($health_count > 0) or $health_incomplete or ($backlog_present | not)
    then "<a class=\"attnbar\" href=\"#health\">" + icon_alert
-     + (@html "<span>\(if $health_count > 0 then "\($health_count) \(plural($health_count; "item is"; "items are")) blocked or failed\(if $health_incomplete or ($backlog_present | not) then "; health details are incomplete" else "" end)" else "Fleet health cannot be confirmed from the available sources" end)</span>")
+     + (@html "<span>\(if $health_count > 0 then "\(if $secondmate_hold_count > 0 then "\($health_count) fleet health \(plural($health_count; "item needs"; "items need")) attention" else "\($health_count) \(plural($health_count; "item is"; "items are")) blocked or failed" end)\(if $health_incomplete or ($backlog_present | not) then "; health details are incomplete" else "" end)" else "Fleet health cannot be confirmed from the available sources" end)</span>")
      + "<span class=\"go\">&rsaquo;</span></a>"
    else "" end)
 + "

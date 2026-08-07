@@ -454,6 +454,43 @@ test_secondmate_captain_decision_is_surfaced() {
   pass "a captain decision inside a secondmate home is surfaced and counted"
 }
 
+test_secondmate_mixed_decision_and_child_hold_stay_distinct() {
+  local snap board
+  snap=$TMP_ROOT/secondmate-mixed-holds.json
+  board=$TMP_ROOT/secondmate-mixed-holds.html
+  snapshot_json '[]' '[{
+    "id": "brain", "current": {"state": "captain_decision"},
+    "active_children": [],
+    "decisions_open": [{
+      "id": "brain-cost", "key": "brain-cost", "verb": "captain-hold",
+      "summary": "Approve the paid notification tier"
+    }],
+    "holds": [{
+      "id": "brain-cost", "source": "backlog", "unresolved_blocker_ids": [],
+      "reason": "Captain pricing choice"
+    }, {
+      "id": "vendor-window", "source": "child-state", "unresolved_blocker_ids": [],
+      "reason": "Paused for the vendor maintenance window"
+    }],
+    "counts": {"active_children": 0, "decisions_open": 1, "holds": 2}
+  }]' > "$snap"
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "mixed secondmate decisions and child holds must render"
+  assert_grep '<div class="n">1</div><div class="l">Awaiting you</div>' "$board" \
+    "the captain decision must remain in the waiting count"
+  assert_grep '1 fleet health item needs attention' "$board" \
+    "only the child-state hold must reach the health count"
+  assert_grep '>vendor-window<' "$board" \
+    "the child-state hold must appear in fleet health"
+  assert_grep 'Paused for the vendor maintenance window' "$board" \
+    "child-state health must render its own wait reason"
+  assert_no_grep 'blocked or failed' "$board" \
+    "the captain decision must not be counted as unhealthy"
+  assert_no_grep 'blocked by vendor-window' "$board" \
+    "a paused child-state hold must not be relabelled as a blocker"
+  pass "mixed secondmate decisions and child holds remain distinct"
+}
+
 test_secondmate_change_time_comes_from_its_own_reporting() {
   local home fakebin board
   home=$(make_home smtime)
@@ -656,7 +693,10 @@ test_secondmate_health_and_activity_use_authoritative_counts() {
   snapshot_json '[]' '[{
     "id": "brain", "current": {"state": "externally_held"},
     "active_children": [], "decisions_open": [],
-    "holds": [{"id": "vendor-sync", "reason": "Waiting for vendor access"}],
+    "holds": [{
+      "id": "vendor-sync", "source": "child-state",
+      "unresolved_blocker_ids": [], "reason": "Waiting for vendor access"
+    }],
     "counts": {"active_children": 0, "decisions_open": 0, "holds": 3}
   }, {
     "id": "ops", "current": {"state": "active_child_work"},
@@ -678,10 +718,10 @@ test_secondmate_health_and_activity_use_authoritative_counts() {
     "an externally held secondmate must not render as ready"
   assert_grep 'Waiting for vendor access' "$board" \
     "the secondmate card and health surface must preserve the hold reason"
-  assert_grep '3 items are blocked or failed; health details are incomplete' "$board" \
-    "the attention bar must count secondmate holds and disclose bounded detail"
-  assert_grep '3 held tasks total, 1 shown' "$board" \
-    "fleet health must disclose its authoritative bounded hold count"
+  assert_grep '1 fleet health item needs attention; health details are incomplete' "$board" \
+    "the attention bar must count classified secondmate holds without guessing omitted types"
+  assert_grep '2 additional holds could not be classified' "$board" \
+    "fleet health must disclose bounded hold details it cannot classify"
   assert_no_grep 'Nothing blocked or failed.' "$board" \
     "held secondmate work must prevent a fleet-health all-clear"
   pass "secondmate health and activity remain authoritative when bounded"
@@ -749,6 +789,7 @@ test_unreadable_backlog_does_not_leave_projects_looking_calm
 test_blocked_work_is_raised_above_the_board
 test_duplicate_main_health_sources_are_normalized
 test_secondmate_captain_decision_is_surfaced
+test_secondmate_mixed_decision_and_child_hold_stay_distinct
 test_secondmate_change_time_comes_from_its_own_reporting
 test_bounded_secondmate_decisions_are_disclosed
 test_unreadable_secondmate_sources_are_disclosed
