@@ -9,7 +9,7 @@ The script's own header and `--help` own its exact flags, environment variables,
 ## What phase 1 does
 
 Phase 1 shows state and nothing else.
-The board carries no reply, approve, or input controls, integrates with no review surface, serves over no network, and is wired into no supervision cycle.
+The board carries no reply, approve, or input controls, integrates with no Lavish review surface, serves over no network, and is wired into no supervision cycle.
 Those belong to phase 2 and are firstmate's to add.
 
 The board never shows a completion percentage or an estimated finish time.
@@ -25,13 +25,14 @@ Each active task instead shows its current phase, the age of its task record, an
   Credential and login needs are not detected in phase 1 and are not faked.
 - **In progress** shows each task with live metadata: its project, kind, current run state, last reported event, task-record age, and the phase-2 progress slot.
 - **Recently shipped** lists recent landed backlog items with their PR or report links.
-- **Fleet health** lists blocked or failed tasks and items waiting on an unresolved blocker, and shows the current allowance per provider.
+- **Fleet health** lists blocked or failed tasks and items waiting on an unresolved blocker.
+- **Allowance** shows the current allowance per provider.
 - **Projects** rolls the backlog up per registered project, with each project's delivery posture.
 - **Second mates** shows each registered secondmate and its routed state.
   An idle secondmate is healthy and is rendered as such, never as an alarm.
 
 Any source may be absent.
-An absent backlog, registry, secondmate table, or allowance reading renders as an explicit empty section that states what is missing, and never as a failure or a misleading zero.
+An absent backlog, project registry, secondmate table, or allowance reading renders an explicit unavailable or empty notice that states what is missing, and never a misleading zero.
 
 ## Where the data comes from
 
