@@ -1073,6 +1073,13 @@ test_controls_match_what_each_row_can_actually_resolve() {
   assert_contains "$block" 'data-open="reply"' "a PR awaiting the captain must offer a reply"
 
   assert_grep 'data-intent="ask"' "$board" "the board must offer one composer for a new ask"
+
+  # Every control that can hold the refresh has to say so. The composer is
+  # always open, so text left in it holds the board with no form to close.
+  holds=$(grep -o 'class="rc-hold"' "$board" | wc -l | tr -d ' ')
+  opens=$(grep -o 'class="rc-f" data-toggle' "$board" | wc -l | tr -d ' ')
+  [ "$holds" = "$((opens + 1))" ] \
+    || fail "each toggled control and the always-open composer must say the refresh is held, got $holds notes for $opens forms"
   pass "each row offers only the controls it can actually resolve"
 }
 
@@ -1110,8 +1117,8 @@ test_controls_can_only_queue_a_request() {
   # The meta refresh must survive ONLY for a page that runs no script, so every
   # occurrence of it has to be the one inside noscript.
   local all inert
-  all=$(grep -c '<meta http-equiv="refresh"' "$board" || true)
-  inert=$(grep -c '<noscript><meta http-equiv="refresh"' "$board" || true)
+  all=$(grep -o '<meta http-equiv="refresh"' "$board" | wc -l | tr -d ' ')
+  inert=$(grep -o '<noscript><meta http-equiv="refresh"' "$board" | wc -l | tr -d ' ')
   [ "$inert" = 1 ] \
     || fail "the meta refresh must move into noscript once the reload is managed, got $inert"
   [ "$all" = "$inert" ] \

@@ -784,6 +784,9 @@ def ask_block:
     + "<textarea class=\"rc-t\" rows=\"3\" maxlength=\"2000\" aria-label=\"Ask firstmate\"></textarea>"
     + "<div class=\"rc-row\"><button type=\"submit\" class=\"rc-go\">Send to firstmate</button>"
     + "<span class=\"rc-sent\" hidden></span></div>"
+    # This composer is always open, so text left in it holds the refresh with no
+    # form to close. It has to say so, or the board just quietly stops updating.
+    + "<p class=\"rc-hold\">The board holds its refresh while there is text here.</p>"
     + "</form></div>"
   end;
 

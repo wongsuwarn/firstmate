@@ -17,6 +17,13 @@
 #            ordinary artifact review feedback arrive through the same Lavish
 #            poll, and reading the first as the second is exactly the mistake
 #            this name prevents.
+#
+#            PRECONDITION: open the Lavish session on the board FIRST. This only
+#            registers the source. With no session open, the first poll returns
+#            "No active Lavish Editor session", which is terminal, so the runner
+#            retires the registration straight away and the reply surface is
+#            dead without ever having worked. Arming is not what puts the board
+#            on screen.
 # requests   Normalize a captured result into one JSON record per line. See
 #            "What requests emits" below.
 #
@@ -44,6 +51,13 @@
 # backlog, no network, and no write but stdout. Whether a target still exists is
 # firstmate's business at wake time, because a PR may have merged or a task been
 # torn down since the board was rendered. There is no fuzzy target matching.
+#
+# `requests` says what the captain asked for, never whether the surface is still
+# there, so classify every result too. The captain's "Send & End" sits beside
+# "Send to Agent" in the Lavish panel, and one tap on it makes that delivery
+# terminal: the request still arrives, and the source retires behind it. An
+# `ended` or `missing` result means the reply surface is GONE until the Lavish
+# session is opened on the board again and it is re-armed.
 #
 # Fail-closed rules, each of which drops a record to "unrecognized" rather than
 # guessing: an unknown or missing intent, a wrong version, a field outside its

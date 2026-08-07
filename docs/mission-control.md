@@ -86,6 +86,10 @@ The same file served statically is therefore the read-only board exactly as befo
 With `--controls` the self-reload moves into `<noscript>` and a managed reload takes over, holding while a control is open so a 25-second refresh cannot discard half-typed text; without the flag the meta refresh is untouched.
 
 [`bin/fm-procevent-mission-control.sh`](../bin/fm-procevent-mission-control.sh) owns arming the wake and turning what comes back into validated requests, and its `--help` owns the request format, the fail-closed rules, and the lavish-axi version the format is verified against.
+
+The reply surface lasts as long as the review session behind it.
+Ending that session from the panel, which the captain can do with one tap beside the send button, delivers the request in hand and then retires the surface, and arming it before the session is open retires it before it ever works.
+Either way the read-only board is unaffected; only the ability to reply from it stops, until the session is opened again and the surface re-armed.
 How the control surface is exposed beyond this machine is a separate decision and is not made here.
 
 ## Deferring a decision
