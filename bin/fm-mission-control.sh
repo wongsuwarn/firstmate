@@ -93,9 +93,21 @@ NOW=${FM_MISSION_CONTROL_NOW_EPOCH:-$(date +%s)}
 case "$NOW" in ''|*[!0-9]*) NOW=$(date +%s) ;; esac
 
 # Modification time of one file, or empty when it is absent or unreadable.
+# BSD and GNU stat need separate invocations: `stat -f` asks GNU stat for
+# FILESYSTEM status and succeeds with output that is not a timestamp at all, so
+# a "try one, fall back to the other" chain reads the wrong thing on Linux
+# rather than failing over. A non-numeric answer degrades to no time rather
+# than breaking the render.
 file_mtime() {  # <path>
+  local mtime
   [ -e "$1" ] || return 0
-  stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null || true
+  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+    mtime=$(stat -f '%m' "$1" 2>/dev/null) || return 0
+  else
+    mtime=$(stat -c '%Y' "$1" 2>/dev/null) || return 0
+  fi
+  case "$mtime" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%s\n' "$mtime"
 }
 
 # Per-task start and last-update times keyed by task id. The snapshot's

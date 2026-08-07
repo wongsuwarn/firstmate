@@ -44,7 +44,11 @@ SH
 }
 
 mtime_of() {  # <path>
-  stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null
+  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+    stat -f '%m' "$1" 2>/dev/null
+  else
+    stat -c '%Y' "$1" 2>/dev/null
+  fi
 }
 
 # A complete home: registry, backlog with a captain hold and a landed item, one
