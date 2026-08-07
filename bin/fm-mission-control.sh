@@ -185,14 +185,26 @@ REGISTRY=$(printf '%s' "$PROJECTS_RAW" | jq -R -s --argjson present "$PROJECTS_P
     map(select(.name != null))
   end') || die "could not parse the project registry"
 
-# When each project last changed. A registered project is dated by its clone's
+# When each project last changed. A project with a card is dated by its clone's
 # last commit, which survives task teardown; a second mate is dated by when it
 # last reported, because its own clone can trail the work it advised on and a
 # plausible-but-stale time is worse than no time at all. Either source may be
 # missing, and a missing source renders as a dash.
 updated_rows() {
   local name id epoch label
-  printf '%s' "$REGISTRY" | jq -r '.[].name' | while IFS= read -r name; do
+  printf '%s' "$SNAPSHOT" | jq -r --argjson registry "$REGISTRY" '
+    def short_repo:
+      if (. // "") == "" then ""
+      elif test("/") then (split("/") | map(select(length > 0)) | last // "")
+      else . end;
+    ($registry | map(.name)) as $registered |
+    ([.secondmate_current.records[]?.id // empty] | unique) as $secondmates |
+    ([.tasks[]? | select(.kind != "secondmate") |
+      ((.backlog.repo // "") | short_repo) as $repo |
+      if $repo != "" then $repo else ((.project // "") | short_repo) end] |
+      map(. as $name | select($name != "" and (($secondmates | index($name)) == null)))) as $live |
+    ($registered + $live | unique[])
+  ' | while IFS= read -r name; do
     [ -n "$name" ] || continue
     epoch=""
     if [ -n "$PROJECTS_DIR" ] && safe_project_name "$name"; then
@@ -440,7 +452,23 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
   ((.current_state.state // "") | test("block|fail|error|cancel"; "i"))
   or (.hints.blocked_event == true)))) as $unhealthy |
 ($records | map(select(.state != "done" and ((.unresolved_blocker_ids // []) | length) > 0))) as $blocked_items |
-(($unhealthy | length) + ($blocked_items | length)) as $health_count |
+($sm_records | map(. as $sm |
+  ($sm.holds // []) | map(. + {home: ($sm.id // "secondmate")})) | add // []) as $secondmate_holds |
+($sm_records | map(. as $sm |
+  (($sm.holds // []) | length) as $shown |
+  ([($sm.counts.holds // $shown), $shown] | max) as $total |
+  select($total > $shown) | {
+    home: ($sm.id // "secondmate"), shown: $shown, total: $total,
+    omitted: ($total - $shown)
+  })) as $secondmate_holds_omitted |
+($sm_records | map(select((.current.state // "unknown") == "unknown"))) as $secondmate_unknown |
+($secondmate_holds_omitted | map(.omitted) | add // 0) as $secondmate_hold_omitted_count |
+(($secondmate_holds | length) + $secondmate_hold_omitted_count) as $secondmate_hold_count |
+((($sm_truncated > 0)
+  or ($sm_registry_complete | not)
+  or ($secondmate_unknown | length) > 0
+  or $secondmate_hold_omitted_count > 0)) as $health_incomplete |
+(($unhealthy | length) + ($blocked_items | length) + $secondmate_hold_count) as $health_count |
 
 # -------------------------------------------------------- shipped today ----
 ($records | map(select(.state == "done"))) as $done_all |
@@ -497,13 +525,23 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
 ($sm_records | map(. as $sm |
   (($sm.decisions_open // []) | length) as $shown |
   ([($sm.omitted // [])[] | select(.surface == "decisions_open") | (.count // 0)] | add // 0) as $omitted |
+  (($sm.active_children // []) | length) as $children_shown |
+  ([($sm.omitted // [])[] | select(.surface == "active_children") | (.count // 0)] | add // 0) as $children_omitted |
+  ([($sm.counts.active_children // $children_shown), ($children_shown + $children_omitted), $children_shown] | max) as $children_total |
+  (($sm.holds // []) | length) as $holds_shown |
+  ([($sm.counts.holds // $holds_shown), $holds_shown] | max) as $holds_total |
   {
     kind: "secondmate",
     key: ("secondmate:" + ($sm.id // "secondmate")),
     name: ($sm.id // "secondmate"),
     state: ($sm.current.state // "unknown"),
     reason: ($sm.current.reason // ""),
-    children: (($sm.active_children // []) | length),
+    children: $children_total,
+    children_shown: $children_shown,
+    children_omitted: ($children_total - $children_shown),
+    holds: $holds_total,
+    holds_shown: $holds_shown,
+    hold_reason: (($sm.holds // [] | first | .reason) // ""),
     decisions_available: ((($sm.registered != true) or (($sm.provenance.selected // "") == "structured-home"))),
     decisions_shown: $shown,
     decisions: ([($sm.counts.decisions_open // $shown), ($shown + $omitted), $shown] | max)
@@ -512,6 +550,12 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
 ($registered_cards + $unregistered_cards) as $project_cards |
 (($project_cards | length) + ($secondmate_cards | length)) as $card_count |
 ((($projects_present | not) or ($sm_registry_complete | not))) as $card_count_incomplete |
+($secondmate_cards | map(.children) | add // 0) as $secondmate_active_count |
+(($work_tasks | length) + $secondmate_active_count) as $in_progress_count |
+((($sm_truncated > 0)
+  or ($sm_registry_complete | not)
+  or ($secondmate_unknown | length) > 0)) as $in_progress_incomplete |
+($secondmate_cards | map(.children_omitted) | add // 0) as $active_details_omitted |
 
 # ------------------------------------------------------------- fragments ---
 # A placeholder for "nothing here", kept as literal markup so it is never
@@ -588,22 +632,35 @@ def project_card:
 
 def secondmate_card:
   . as $s |
-  (if ($s.decisions_available | not) or ($s.decisions > 0) then "attn"
-   elif $s.children > 0 then "live"
+  (if ($s.decisions_available | not) or $s.state == "unknown" then "unknown"
+   elif ($s.decisions > 0) or $s.state == "captain_decision" then "attn"
+   elif $s.state == "externally_held" or $s.holds > 0 then "attn"
+   elif $s.state == "active_child_work" or $s.children > 0 then "live"
    else "idle" end) as $tone |
-  (if $tone == "attn" then "Needs you" elif $tone == "live" then "Working" else "Ready" end) as $pill |
+  (if $s.state == "externally_held" or $s.holds > 0 then "Blocked"
+   elif $tone == "attn" then "Needs you"
+   elif $tone == "live" then "Working"
+   elif $tone == "unknown" then "Unconfirmed"
+   else "Ready" end) as $pill |
   (if ($s.reason // "") != "" then $s.reason
+   elif $s.state == "externally_held" or $s.holds > 0 then
+     (if ($s.hold_reason // "") != "" then $s.hold_reason
+      else "\($s.holds) routed \(plural($s.holds; "task is"; "tasks are")) externally held" end)
    elif $s.children > 0 then "\($s.children) \(plural($s.children; "task"; "tasks")) routed and under way"
-   else "Idle and healthy, awaiting routed work." end) as $state_line |
+   elif $s.state == "captain_decision" then "Routed work is waiting for your decision."
+   elif $s.state == "no_active_work" then "Idle and healthy, awaiting routed work."
+   else "Current secondmate state is unavailable." end) as $state_line |
   (if ($s.decisions_available | not) then "Your decisions here cannot be read."
    elif $s.decisions > $s.decisions_shown then "\($s.decisions) decisions await you (\($s.decisions_shown) shown)"
    elif $s.decisions > 0 then "\($s.decisions) \(plural($s.decisions; "decision awaits"; "decisions await")) you"
+   elif $s.children_omitted > 0 then "\($s.children) active tasks (\($s.children_shown) shown)"
+   elif $s.holds > $s.holds_shown then "\($s.holds) held tasks (\($s.holds_shown) shown)"
    else "" end) as $meta_line |
   (@html "<div class=\"proj s-\($tone)\">
      <div class=\"proj-top\"><span class=\"badge\">")
   + icon_compass
   + (@html "</span><span class=\"proj-name\">\($s.name)<span class=\"sub-role\">&middot; second mate</span></span>
-     <span class=\"pill \(if $tone == "attn" then "attn" elif $tone == "live" then "live" else "idle" end)\">\($pill)</span></div>
+     <span class=\"pill \(if $tone == "attn" then "attn" elif $tone == "live" then "live" elif $tone == "unknown" then "unknown" else "idle" end)\">\($pill)</span></div>
      <div class=\"proj-state\">\($state_line)</div>")
   + "<div class=\"proj-meta\">"
   + (if $meta_line == "" then none_mark else (@html "\($meta_line)") end)
@@ -652,13 +709,10 @@ def quota_block:
   end;
 
 def health_block:
-  if ($backlog_present | not) then
-    "<p class=\"quiet\">Backlog health is unavailable because the backlog could not be read.</p>"
-    + (if ($unhealthy | length) == 0 then "" else "<ul class=\"hlist\">"
-      + (($unhealthy | map(. as $t |
-          (@html "<li><span class=\"hstate\">\($t.current_state.state // "blocked")</span><span class=\"hwhat\">\($t.id)<span class=\"hint\">\(dash($t.paths.status_log.last_event.raw))</span></span></li>")) | add) // "")
-      + "</ul>" end)
-  elif $health_count == 0 then
+  (if ($backlog_present | not) then
+     "<p class=\"quiet\">Backlog health is unavailable because the backlog could not be read.</p>"
+   else "" end)
+  + (if $backlog_present and $health_count == 0 and ($health_incomplete | not) then
     "<p class=\"clear\">Nothing blocked or failed.</p>"
   else
     "<ul class=\"hlist\">"
@@ -666,8 +720,20 @@ def health_block:
         (@html "<li><span class=\"hstate\">\($t.current_state.state // "blocked")</span><span class=\"hwhat\">\($t.id)<span class=\"hint\">\(dash($t.paths.status_log.last_event.raw))</span></span></li>")) | add) // "")
     + (($blocked_items | map(. as $r |
         (@html "<li><span class=\"hstate wait\">waiting</span><span class=\"hwhat\">\(dash($r.title // $r.raw))<span class=\"hint\">blocked by \(($r.unresolved_blocker_ids // []) | join(", "))</span></span></li>")) | add) // "")
+    + (($secondmate_holds | map(. as $h |
+        (@html "<li><span class=\"hstate wait\">held</span><span class=\"hwhat\">\(dash($h.id // $h.title))<span class=\"hint\">\($h.home): \(dash($h.reason // $h.blocked_by))</span></span></li>")) | add) // "")
+    + (($secondmate_holds_omitted | map(. as $o |
+        (@html "<li><span class=\"hstate wait\">bounded</span><span class=\"hwhat\">\($o.home)<span class=\"hint\">\($o.total) held tasks total, \($o.shown) shown</span></span></li>")) | add) // "")
+    + (($secondmate_unknown | map(. as $s |
+        (@html "<li><span class=\"hstate\">unknown</span><span class=\"hwhat\">\($s.id // "secondmate")<span class=\"hint\">\(dash($s.current.reason))</span></span></li>")) | add) // "")
+    + (if $sm_truncated > 0 then
+        (@html "<li><span class=\"hstate\">incomplete</span><span class=\"hwhat\">Secondmate health scan<span class=\"hint\">\($sm_truncated) secondmate records omitted</span></span></li>")
+       else "" end)
+    + (if ($sm_registry_complete | not) then
+        "<li><span class=\"hstate\">incomplete</span><span class=\"hwhat\">Secondmate registry health could not be fully read</span></li>"
+       else "" end)
     + "</ul>"
-  end;
+  end);
 
 # ------------------------------------------------------------------ page ---
 "<!doctype html>
@@ -845,7 +911,13 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
        "Awaiting you";
        (if $waiting_incomplete then "some sources unavailable" else "" end);
        ($waiting_count > 0 or $waiting_incomplete))
-+ stat(icon_pulse; "\($work_tasks | length)"; "In progress"; ""; false)
++ stat(icon_pulse;
+       "\($in_progress_count)\(if $in_progress_incomplete then "+" else "" end)";
+       "In progress";
+       (if $in_progress_incomplete then "second mate activity incomplete"
+        elif $active_details_omitted > 0 then "\($active_details_omitted) active task details omitted"
+        else "" end);
+       $in_progress_incomplete)
 + stat(icon_shipped;
        (if $backlog_present then "\($shipped | length)" else "?" end);
        "Shipped today";
@@ -862,9 +934,9 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
        $card_count_incomplete)
 + "</div>
 "
-+ (if ($health_count > 0) or ($backlog_present | not)
++ (if ($health_count > 0) or $health_incomplete or ($backlog_present | not)
    then "<a class=\"attnbar\" href=\"#health\">" + icon_alert
-     + (@html "<span>\(if ($backlog_present | not) then "Fleet health cannot be confirmed while the backlog is unreadable" else "\($health_count) \(plural($health_count; "item is"; "items are")) blocked or failed" end)</span>")
+     + (@html "<span>\(if $health_count > 0 then "\($health_count) \(plural($health_count; "item is"; "items are")) blocked or failed\(if $health_incomplete or ($backlog_present | not) then "; health details are incomplete" else "" end)" else "Fleet health cannot be confirmed from the available sources" end)</span>")
      + "<span class=\"go\">&rsaquo;</span></a>"
    else "" end)
 + "
@@ -916,7 +988,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
 
   <section class=\"strip\" id=\"health\">
     <div class=\"pane\">"
-+ (@html "<h3>Fleet health<span class=\"count\">\(if ($backlog_present | not) then "incomplete" elif $health_count == 0 then "all clear" else "\($health_count) \(plural($health_count; "item"; "items"))" end)</span></h3>")
++ (@html "<h3>Fleet health<span class=\"count\">\(if $health_count > 0 then "\($health_count) \(plural($health_count; "item"; "items"))\(if $health_incomplete or ($backlog_present | not) then "+" else "" end)" elif $health_incomplete or ($backlog_present | not) then "incomplete" else "all clear" end)</span></h3>")
 + health_block
 + "    </div>
     <div class=\"pane\">

@@ -397,8 +397,8 @@ test_secondmate_captain_decision_is_surfaced() {
   assert_grep '<span class="tag">brain</span>' "$board" "the owning home must be named on the row"
   assert_grep '<div class="n">1</div><div class="l">Awaiting you</div>' "$board" \
     "a secondmate decision must be counted as waiting"
-  assert_grep 'Idle and healthy, awaiting routed work.' "$board" \
-    "an idle secondmate must read as healthy, not alarming"
+  assert_grep 'Routed work is waiting for your decision.' "$board" \
+    "the card must reflect the authoritative captain-decision state"
   assert_grep 'second mate' "$board" "a secondmate card must say what it is"
   pass "a captain decision inside a secondmate home is surfaced and counted"
 }
@@ -573,6 +573,69 @@ test_live_work_outside_the_registry_stays_visible() {
   pass "live work outside the registry is shown rather than silently dropped"
 }
 
+test_unregistered_live_project_uses_clone_change_time() {
+  local home snap board
+  home=$(make_home unregistered-updated)
+  snap=$TMP_ROOT/unregistered-updated.json
+  board=$TMP_ROOT/unregistered-updated.html
+  make_clone "$home" gamma "$TODAY_0905"
+  snapshot_json '[]' '[]' | jq --arg home "$home" '
+    .roots.projects = ($home + "/projects") |
+    .roots.data = ($home + "/data") |
+    .tasks = [{
+      id: "gamma-task", kind: "ship", project: "gamma",
+      current_state: {state: "working"},
+      backlog: {title: "Rework gamma", repo: "gamma"},
+      pr: {url: null}
+    }]' > "$snap"
+  FM_MISSION_CONTROL_NOW_EPOCH="$NOW_EPOCH" \
+    "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "an unregistered live project with a clone must render"
+  assert_grep 'class="proj-name">gamma' "$board" \
+    "the live unregistered project must get a card"
+  assert_grep 'Updated 9:05am today' "$board" \
+    "an unregistered project card must read its clone history"
+  pass "unregistered live project cards read their clone change time"
+}
+
+test_secondmate_health_and_activity_use_authoritative_counts() {
+  local snap board
+  snap=$TMP_ROOT/secondmate-health.json
+  board=$TMP_ROOT/secondmate-health.html
+  snapshot_json '[]' '[{
+    "id": "brain", "current": {"state": "externally_held"},
+    "active_children": [], "decisions_open": [],
+    "holds": [{"id": "vendor-sync", "reason": "Waiting for vendor access"}],
+    "counts": {"active_children": 0, "decisions_open": 0, "holds": 3}
+  }, {
+    "id": "ops", "current": {"state": "active_child_work"},
+    "active_children": [{"id": "visible-child"}], "decisions_open": [], "holds": [],
+    "counts": {"active_children": 4, "decisions_open": 0, "holds": 0},
+    "omitted": [{"surface": "active_children", "count": 3}]
+  }]' > "$snap"
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "bounded secondmate health and activity must render"
+  assert_grep '<div class="n">4</div><div class="l">In progress</div>' "$board" \
+    "the in-progress stat must include authoritative secondmate child counts"
+  assert_grep '3 active task details omitted' "$board" \
+    "the stat must disclose bounded secondmate activity details"
+  assert_grep '4 tasks routed and under way' "$board" \
+    "the secondmate card must use its authoritative active count"
+  assert_grep '4 active tasks (1 shown)' "$board" \
+    "the secondmate card must disclose omitted active children"
+  assert_grep '>Blocked</span>' "$board" \
+    "an externally held secondmate must not render as ready"
+  assert_grep 'Waiting for vendor access' "$board" \
+    "the secondmate card and health surface must preserve the hold reason"
+  assert_grep '3 items are blocked or failed; health details are incomplete' "$board" \
+    "the attention bar must count secondmate holds and disclose bounded detail"
+  assert_grep '3 held tasks total, 1 shown' "$board" \
+    "fleet health must disclose its authoritative bounded hold count"
+  assert_no_grep 'Nothing blocked or failed.' "$board" \
+    "held secondmate work must prevent a fleet-health all-clear"
+  pass "secondmate health and activity remain authoritative when bounded"
+}
+
 test_unmeasurable_allowance_is_not_a_zero_gauge() {
   local snap quota board
   snap=$TMP_ROOT/quota-snap.json
@@ -638,6 +701,8 @@ test_bounded_secondmate_decisions_are_disclosed
 test_unreadable_secondmate_sources_are_disclosed
 test_path_form_repo_folds_into_the_project_rollup
 test_live_work_outside_the_registry_stays_visible
+test_unregistered_live_project_uses_clone_change_time
+test_secondmate_health_and_activity_use_authoritative_counts
 test_unmeasurable_allowance_is_not_a_zero_gauge
 test_usage_errors_refuse
 test_self_reload_is_wired
