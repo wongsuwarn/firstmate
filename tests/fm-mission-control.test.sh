@@ -188,6 +188,21 @@ EOF
   pass "each project card is dated from its own clone, relative to the board's NOW"
 }
 
+test_yesterday_uses_local_calendar_arithmetic() {
+  local home fakebin board
+  home=$(make_home dst-yesterday)
+  printf -- '- fallback-proj [direct-PR] - Changed before fallback\n' > "$home/data/projects.md"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  make_clone "$home" fallback-proj 1792881000
+  fakebin=$(make_fakebin "$home")
+  board=$(TZ=Europe/London PATH="$fakebin:$PATH" FM_HOME="$home" \
+    FM_MISSION_CONTROL_NOW_EPOCH=1792971000 "$BOARD" --no-quota) \
+    || fail "a render across the autumn clock change must succeed"
+  assert_grep 'Updated 11:30pm yesterday' "$board" \
+    "the previous local calendar day must remain yesterday across DST fallback"
+  pass "yesterday follows the local calendar across DST fallback"
+}
+
 test_missing_change_time_degrades_to_a_dash() {
   local home fakebin board dashes
   home=$(make_home nodate)
@@ -373,6 +388,33 @@ test_blocked_work_is_raised_above_the_board() {
   pass "blocked work is raised above the board instead of hidden in a panel"
 }
 
+test_duplicate_main_health_sources_are_normalized() {
+  local snap board matches
+  snap=$TMP_ROOT/duplicate-health.json
+  board=$TMP_ROOT/duplicate-health.html
+  snapshot_json '[{
+    "state": "in_flight", "id": "dup-task", "title": "Blocked duplicate",
+    "repo": "alpha", "unresolved_blocker_ids": ["access"]
+  }]' '[]' | jq '.tasks = [{
+    id: "dup-task", kind: "ship", project: "alpha",
+    current_state: {state: "blocked"}, hints: {blocked_event: true},
+    backlog: {title: "Blocked duplicate", repo: "alpha"},
+    paths: {status_log: {last_event: {raw: "blocked: access"}}},
+    pr: {url: null}
+  }]' > "$snap"
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "duplicate task and backlog health evidence must render"
+  assert_grep '1 item is blocked or failed' "$board" \
+    "one blocked task must be counted once across health sources"
+  assert_no_grep '2 items are blocked or failed' "$board" \
+    "duplicate health evidence must not inflate the attention count"
+  assert_grep 'blocked by access' "$board" \
+    "normalized task health must retain the backlog blocker"
+  matches=$(grep -o '>dup-task<' "$board" | wc -l | tr -d ' ')
+  [ "$matches" = 1 ] || fail "normalized health must render dup-task once, got $matches"
+  pass "main task health is normalized by task identity"
+}
+
 test_secondmate_captain_decision_is_surfaced() {
   local snap board
   snap=$TMP_ROOT/secondmate.json
@@ -386,7 +428,12 @@ test_secondmate_captain_decision_is_surfaced() {
       "id": "brain-cost", "key": "brain-cost", "verb": "captain-hold",
       "summary": "Approve the paid notification tier",
       "reason": "The two-way leg needs the paid tier"
-    }]
+    }],
+    "holds": [{
+      "id": "brain-cost", "source": "backlog", "unresolved_blocker_ids": [],
+      "reason": "The two-way leg needs the paid tier"
+    }],
+    "counts": {"active_children": 0, "decisions_open": 1, "holds": 1}
   }]' > "$snap"
   "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
     || fail "a secondmate-only decision must render"
@@ -399,6 +446,10 @@ test_secondmate_captain_decision_is_surfaced() {
     "a secondmate decision must be counted as waiting"
   assert_grep 'Routed work is waiting for your decision.' "$board" \
     "the card must reflect the authoritative captain-decision state"
+  assert_grep 'Nothing blocked or failed.' "$board" \
+    "a captain decision must stay out of fleet health"
+  assert_no_grep '>Blocked</span>' "$board" \
+    "a captain decision must keep the needs-you pill"
   assert_grep 'second mate' "$board" "a secondmate card must say what it is"
   pass "a captain decision inside a secondmate home is surfaced and counted"
 }
@@ -688,6 +739,7 @@ test_self_reload_is_wired() {
 
 test_renders_live_fixture_home
 test_project_last_change_comes_from_the_clone
+test_yesterday_uses_local_calendar_arithmetic
 test_missing_change_time_degrades_to_a_dash
 test_render_writes_nothing_into_the_project_clones
 test_absent_sources_render_empty_sections
@@ -695,6 +747,7 @@ test_hostile_text_is_escaped
 test_missing_backlog_is_disclosed_as_unavailable
 test_unreadable_backlog_does_not_leave_projects_looking_calm
 test_blocked_work_is_raised_above_the_board
+test_duplicate_main_health_sources_are_normalized
 test_secondmate_captain_decision_is_surfaced
 test_secondmate_change_time_comes_from_its_own_reporting
 test_bounded_secondmate_decisions_are_disclosed

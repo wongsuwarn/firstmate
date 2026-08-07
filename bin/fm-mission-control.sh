@@ -109,7 +109,11 @@ epoch_fmt() {  # <epoch> <format>
 }
 
 TODAY=$(epoch_fmt "$NOW" '%Y-%m-%d')
-YESTERDAY=$(epoch_fmt "$((NOW - 86400))" '%Y-%m-%d')
+if [ "$IS_DARWIN" = 1 ]; then
+  YESTERDAY=$(LC_ALL=C date -r "$NOW" -v-1d '+%Y-%m-%d' 2>/dev/null)
+else
+  YESTERDAY=$(LC_ALL=C date -d "$TODAY -1 day" '+%Y-%m-%d' 2>/dev/null)
+fi
 
 # Modification time of one file, or empty when it is absent or unreadable. BSD
 # and GNU stat need separate invocations: `stat -f` asks GNU stat for FILESYSTEM
@@ -450,24 +454,40 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
 # ----------------------------------------------------------- fleet health --
 ($work_tasks | map(select(
   ((.current_state.state // "") | test("block|fail|error|cancel"; "i"))
-  or (.hints.blocked_event == true)))) as $unhealthy |
-($records | map(select(.state != "done" and ((.unresolved_blocker_ids // []) | length) > 0))) as $blocked_items |
+  or (.hints.blocked_event == true)))) as $unhealthy_raw |
+($records | map(select(.state != "done" and ((.unresolved_blocker_ids // []) | length) > 0))) as $blocked_items_raw |
+($unhealthy_raw | map(.id)) as $unhealthy_ids |
+($unhealthy_raw | map(. as $task |
+  ($blocked_items_raw | map(select(.id == $task.id)) | first) as $row |
+  $task + {health_blocker_ids: ($row.unresolved_blocker_ids // [])})) as $unhealthy |
+($blocked_items_raw | map(. as $row |
+  select(($unhealthy_ids | index($row.id)) == null))) as $blocked_items |
 ($sm_records | map(. as $sm |
-  ($sm.holds // []) | map(. + {home: ($sm.id // "secondmate")})) | add // []) as $secondmate_holds |
-($sm_records | map(. as $sm |
+  (($sm.decisions_open // []) | map(.id // .key) | map(select(. != null))) as $decision_ids |
+  (($sm.holds // []) | map(. as $hold |
+    select((($decision_ids | index($hold.id)) == null)
+      and (((($hold.unresolved_blocker_ids // []) | length) > 0)
+        or ($sm.current.state // "") == "externally_held")))) as $blocked_shown |
   (($sm.holds // []) | length) as $shown |
   ([($sm.counts.holds // $shown), $shown] | max) as $total |
-  select($total > $shown) | {
-    home: ($sm.id // "secondmate"), shown: $shown, total: $total,
-    omitted: ($total - $shown)
-  })) as $secondmate_holds_omitted |
+  (if ($sm.current.state // "") == "externally_held" then $total
+   else ($blocked_shown | length) end) as $blocked_total |
+  {
+    id: ($sm.id // "secondmate"),
+    blocked_holds: ($blocked_shown | map(. + {home: ($sm.id // "secondmate")})),
+    blocked_shown: ($blocked_shown | length),
+    blocked_total: $blocked_total,
+    blocked_omitted: ($blocked_total - ($blocked_shown | length)),
+    unclassified_omitted: (if ($sm.current.state // "") == "externally_held" then 0 else ($total - $shown) end)
+  })) as $secondmate_health |
+($secondmate_health | map(.blocked_holds) | add // []) as $secondmate_holds |
+($secondmate_health | map(select(.blocked_omitted > 0 or .unclassified_omitted > 0))) as $secondmate_holds_omitted |
 ($sm_records | map(select((.current.state // "unknown") == "unknown"))) as $secondmate_unknown |
-($secondmate_holds_omitted | map(.omitted) | add // 0) as $secondmate_hold_omitted_count |
-(($secondmate_holds | length) + $secondmate_hold_omitted_count) as $secondmate_hold_count |
+($secondmate_health | map(.blocked_total) | add // 0) as $secondmate_hold_count |
 ((($sm_truncated > 0)
   or ($sm_registry_complete | not)
   or ($secondmate_unknown | length) > 0
-  or $secondmate_hold_omitted_count > 0)) as $health_incomplete |
+  or ($secondmate_holds_omitted | length) > 0)) as $health_incomplete |
 (($unhealthy | length) + ($blocked_items | length) + $secondmate_hold_count) as $health_count |
 
 # -------------------------------------------------------- shipped today ----
@@ -528,8 +548,7 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
   (($sm.active_children // []) | length) as $children_shown |
   ([($sm.omitted // [])[] | select(.surface == "active_children") | (.count // 0)] | add // 0) as $children_omitted |
   ([($sm.counts.active_children // $children_shown), ($children_shown + $children_omitted), $children_shown] | max) as $children_total |
-  (($sm.holds // []) | length) as $holds_shown |
-  ([($sm.counts.holds // $holds_shown), $holds_shown] | max) as $holds_total |
+  ($secondmate_health | map(select(.id == ($sm.id // "secondmate"))) | first) as $health |
   {
     kind: "secondmate",
     key: ("secondmate:" + ($sm.id // "secondmate")),
@@ -539,9 +558,9 @@ def yolo_for($repo): ($registry_by_name[$repo // ""].yolo // false);
     children: $children_total,
     children_shown: $children_shown,
     children_omitted: ($children_total - $children_shown),
-    holds: $holds_total,
-    holds_shown: $holds_shown,
-    hold_reason: (($sm.holds // [] | first | .reason) // ""),
+    holds: ($health.blocked_total // 0),
+    holds_shown: ($health.blocked_shown // 0),
+    hold_reason: (($health.blocked_holds | first | .reason) // ""),
     decisions_available: ((($sm.registered != true) or (($sm.provenance.selected // "") == "structured-home"))),
     decisions_shown: $shown,
     decisions: ([($sm.counts.decisions_open // $shown), ($shown + $omitted), $shown] | max)
@@ -717,13 +736,13 @@ def health_block:
   else
     "<ul class=\"hlist\">"
     + (($unhealthy | map(. as $t |
-        (@html "<li><span class=\"hstate\">\($t.current_state.state // "blocked")</span><span class=\"hwhat\">\($t.id)<span class=\"hint\">\(dash($t.paths.status_log.last_event.raw))</span></span></li>")) | add) // "")
+        (@html "<li><span class=\"hstate\">\($t.current_state.state // "blocked")</span><span class=\"hwhat\">\($t.id)<span class=\"hint\">\(if ($t.health_blocker_ids | length) > 0 then "blocked by \($t.health_blocker_ids | join(", "))" else dash($t.paths.status_log.last_event.raw) end)</span></span></li>")) | add) // "")
     + (($blocked_items | map(. as $r |
         (@html "<li><span class=\"hstate wait\">waiting</span><span class=\"hwhat\">\(dash($r.title // $r.raw))<span class=\"hint\">blocked by \(($r.unresolved_blocker_ids // []) | join(", "))</span></span></li>")) | add) // "")
     + (($secondmate_holds | map(. as $h |
         (@html "<li><span class=\"hstate wait\">held</span><span class=\"hwhat\">\(dash($h.id // $h.title))<span class=\"hint\">\($h.home): \(dash($h.reason // $h.blocked_by))</span></span></li>")) | add) // "")
     + (($secondmate_holds_omitted | map(. as $o |
-        (@html "<li><span class=\"hstate wait\">bounded</span><span class=\"hwhat\">\($o.home)<span class=\"hint\">\($o.total) held tasks total, \($o.shown) shown</span></span></li>")) | add) // "")
+        (@html "<li><span class=\"hstate wait\">bounded</span><span class=\"hwhat\">\($o.id)<span class=\"hint\">\(if $o.blocked_omitted > 0 then "\($o.blocked_total) held tasks total, \($o.blocked_shown) shown" else "\($o.unclassified_omitted) additional holds could not be classified" end)</span></span></li>")) | add) // "")
     + (($secondmate_unknown | map(. as $s |
         (@html "<li><span class=\"hstate\">unknown</span><span class=\"hwhat\">\($s.id // "secondmate")<span class=\"hint\">\(dash($s.current.reason))</span></span></li>")) | add) // "")
     + (if $sm_truncated > 0 then
