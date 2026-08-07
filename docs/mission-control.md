@@ -28,8 +28,10 @@ Each project card instead states only what live state can prove: what is under w
 - **Projects** shows one card per registered project, plus a card for each second mate and for any unregistered project that has work under way.
   A task the captain can see running is never invisible just because its project was never registered.
   Each card carries a status pill, a one-line live state, the calls waiting on the captain, and when the project last changed.
+  If the backlog is unavailable, a card whose calm state cannot be proved says `Unconfirmed` rather than `Idle`.
 - **Shipped today** lists the backlog items that landed on the board's own current date, with their PR or report links.
-- **Fleet health** lists blocked or failed tasks and items waiting on an unresolved blocker.
+  Done records without a completion date are excluded from the list and disclosed in the stat tile instead of being silently counted as today.
+- **Fleet health** lists blocked or failed tasks, backlog items waiting on an unresolved blocker, and non-decision secondmate work whose own state or blocker linkage says it is held.
   It sits in the closing strip, so anything blocked or failed is also announced in a bar above the primary sections rather than left for the captain to scroll to.
 - **Allowance** shows the current allowance per provider.
 
