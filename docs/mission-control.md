@@ -61,10 +61,7 @@ It is closed for a captain who never opens it, stays open for one who does, and 
 
 ## Deferring a decision
 
-Setting a decision aside is not a control on the board, which stays read-only.
-Firstmate marks the decision on the captain's word, in the home whose backlog holds it, by changing that item's hold kind alone - from `captain` to tasks-axi's existing `parked` - and reverses it by restoring `captain`.
-The item stays `kind: captain` throughout, so it remains a captain decision rather than being reclassified as generic future work, and the fleet snapshot reports it as `captain_deferred`: neither actionable nor blocked, and so absent from holds and from any externally held verdict.
-`bin/fm-mission-control.sh`'s header carries the exact two commands and the one hazard in using them.
+The board stays read-only; `bin/fm-mission-control.sh --help` owns the exact commands for setting a decision aside and bringing it back, including the reason-preservation hazard.
 
 Any source may be absent.
 An absent backlog, project registry, secondmate table, or allowance reading renders an explicit unavailable or empty notice that states what is missing, and never a misleading zero.
