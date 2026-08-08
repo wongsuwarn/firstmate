@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--resume-worktree <path>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--resume-worktree <path>]
-#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--remote-control|--rc] [--backend <name>] [--resume-worktree <path>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--remote-control|--rc] [--backend <name>] [--resume-worktree <path>]
+#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--remote-control|--rc] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
@@ -24,11 +24,11 @@
 #   from that harness's launch rather than guessed.
 #   --remote-control (alias --rc) adds Claude Code's --remote-control flag to the
 #   launch command, so the session appears in the Claude mobile app's Code tab and
-#   at claude.ai/code (docs.claude.com Remote Control). It is claude-harness-only
+#   at claude.ai/code (code.claude.com/docs/en/remote-control). It is claude-harness-only
 #   and REFUSED for any other resolved harness, every raw launch command, and every
-#   remote secondmate. It requires a claude.ai Pro/Max login (API-key auth is
-#   unsupported) and is silently a no-op on an installed CLI too old to recognize
-#   the flag. A spawn with the flag set records remote_control=1 in
+#   remote secondmate. Claude Code requires version 2.1.51 or later and a
+#   claude.ai OAuth login; API-key auth is unsupported, and Team or Enterprise
+#   admins must enable Remote Control. A spawn with the flag set records remote_control=1 in
 #   state/<id>.meta; the field is omitted entirely when unset, matching the
 #   backend= convention. That record is NOT auto-replayed by this script on a
 #   plain respawn - a caller wanting Remote Control to survive a respawn passes
