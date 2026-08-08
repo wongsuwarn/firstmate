@@ -2083,7 +2083,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
           if(at===-1)p.push(item);else p[at]=item;
           localStorage.setItem("test-prompts",JSON.stringify(p)); return true;
         }
-        if(localStorage.getItem("test-queue-delay")==="1") return new Promise(r=>setTimeout(()=>r(accept()),80));
+        // Keep acceptance pending until the reload destroys this document.
+        if(localStorage.getItem("test-queue-delay")==="1") return new Promise(()=>{});
         return accept();
       },
       sendQueuedPrompts:function(){
