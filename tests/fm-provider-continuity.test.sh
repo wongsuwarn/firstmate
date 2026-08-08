@@ -722,7 +722,7 @@ test_failed_relaunch_keeps_retry_fence_when_record_publish_fails() {
   assert_present "$HOME_DIR/state/.resume-$id.meta.bak" \
     "fallback publication failure discarded the previous task record"
 
-  FM_FAKE_FAIL_META_PATH= run_resume_spawn "$HOME_DIR" "$FAKEBIN_DIR" "$WT_DIR" \
+  FM_FAKE_FAIL_META_PATH='' run_resume_spawn "$HOME_DIR" "$FAKEBIN_DIR" "$WT_DIR" \
     "$id" "$PROJ_DIR" --mode no-mistakes --yolo off \
     --harness claude --resume-worktree "$WT_DIR"
   expect_code 1 "$SPAWN_STATUS" "an unresolved launch-abort fence must refuse a retry"

@@ -786,7 +786,7 @@ spawn_record_publish() {  # <record> <destination> [recovery-prefix]
 }
 
 spawn_abort_cleanup() {
-  local status=$? endpoint_state=missing record_tmp= record_ready=1 restart_backup restart_endpoint_state record
+  local status=$? endpoint_state=missing record_tmp='' record_ready=1 restart_backup restart_endpoint_state record
   if [ -n "$META_TMP" ]; then
     rm -f -- "$META_TMP" || true
     META_TMP=
