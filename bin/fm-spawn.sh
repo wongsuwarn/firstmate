@@ -720,6 +720,7 @@ HERDR_PRESENTATION_ORDER_LOCK_HELD=0
 SPAWN_TASK_LOCK=
 SPAWN_TASK_LOCK_HELD=0
 META_TMP=
+SPAWN_RECORD_PATH=
 CONFIG_INHERIT_LOCK=
 CONFIG_INHERIT_LOCK_HELD=0
 SPAWN_REGISTRY_LOCK=
@@ -744,9 +745,43 @@ parse_orca_worktree_result() {
   fi
 }
 
+spawn_record_publish() {  # <record> <destination> [recovery-prefix]
+  local record=$1 destination=$2 recovery_prefix=${3:-} parent suffix recovery
+  parent=${destination%/*}
+  META_TMP=$(mktemp "$parent/.${destination##*/}.XXXXXX") || return 1
+  if ! printf '%s' "$record" > "$META_TMP"; then
+    rm -f -- "$META_TMP" || true
+    META_TMP=
+    return 1
+  fi
+  if { { [ ! -e "$destination" ] && [ ! -L "$destination" ]; } \
+      || { [ -f "$destination" ] && [ ! -L "$destination" ]; }; } \
+    && mv -f -- "$META_TMP" "$destination"; then
+    META_TMP=
+    SPAWN_RECORD_PATH=$destination
+    return 0
+  fi
+  if [ -n "$recovery_prefix" ]; then
+    suffix=${META_TMP##*.}
+    recovery="$recovery_prefix.$suffix"
+    if [ ! -e "$recovery" ] && [ ! -L "$recovery" ] \
+      && mv -f -- "$META_TMP" "$recovery"; then
+      META_TMP=
+      SPAWN_RECORD_PATH=$recovery
+      return 0
+    fi
+  fi
+  rm -f -- "$META_TMP" || true
+  META_TMP=
+  return 1
+}
+
 spawn_abort_cleanup() {
-  local status=$? restart_backup restart_endpoint_state
-  [ -z "$META_TMP" ] || rm -f -- "$META_TMP"
+  local status=$? restart_backup restart_endpoint_state record
+  if [ -n "$META_TMP" ]; then
+    rm -f -- "$META_TMP" || true
+    META_TMP=
+  fi
   if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] \
      && [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
     if ! spawn_herdr_presentation_order_lock_acquire "${HERDR_PROJECTION_ABORT_SESSION:-}"; then
@@ -774,21 +809,27 @@ spawn_abort_cleanup() {
       if ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
         mkdir -p "$STATE" 2>/dev/null || true
         if [ -d "$STATE" ]; then
-          {
-            echo "window=$W"
-            echo "worktree=${WT:-}"
-            echo "project=$PROJ_ABS"
-            echo "harness=$HARNESS"
-            echo "kind=$KIND"
-            [ -z "${MODE:-}" ] || echo "mode=$MODE"
-            [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
-            echo "tasktmp=${TASK_TMP:-}"
-            echo "model=${MODEL:-default}"
-            echo "effort=${EFFORT:-default}"
-            echo "backend=orca"
-            echo "orca_worktree_id=$ORCA_WORKTREE_ID"
-            [ -z "${ORCA_TERMINAL:-}" ] || echo "terminal=$ORCA_TERMINAL"
-          } > "$STATE/$ID.meta" 2>/dev/null || true
+          record="window=$W"$'\n'
+          record="${record}worktree=${WT:-}"$'\n'
+          record="${record}project=$PROJ_ABS"$'\n'
+          record="${record}harness=$HARNESS"$'\n'
+          record="${record}kind=$KIND"$'\n'
+          [ -z "${MODE:-}" ] || record="${record}mode=$MODE"$'\n'
+          [ -z "${YOLO:-}" ] || record="${record}yolo=$YOLO"$'\n'
+          record="${record}tasktmp=${TASK_TMP:-}"$'\n'
+          record="${record}model=${MODEL:-default}"$'\n'
+          record="${record}effort=${EFFORT:-default}"$'\n'
+          record="${record}backend=orca"$'\n'
+          record="${record}orca_worktree_id=$ORCA_WORKTREE_ID"$'\n'
+          [ -z "${ORCA_TERMINAL:-}" ] || record="${record}terminal=$ORCA_TERMINAL"$'\n'
+          SPAWN_RECORD_PATH=
+          if spawn_record_publish "$record" "$STATE/$ID.meta" "$STATE/$ID.meta.recovery"; then
+            if [ "$SPAWN_RECORD_PATH" != "$STATE/$ID.meta" ]; then
+              echo "warning: Orca cleanup failed; recovery metadata for $ID is preserved at $SPAWN_RECORD_PATH" >&2
+            fi
+          else
+            echo "warning: Orca cleanup failed and recovery metadata for $ID could not be published" >&2
+          fi
         fi
       fi
     fi
@@ -2336,19 +2377,11 @@ if [ "$KIND" = secondmate ]; then
   META_RECORD="${META_RECORD}home=$PROJ_ABS"$'\n'
   META_RECORD="${META_RECORD}projects=$SECONDMATE_PROJECTS"$'\n'
 fi
-META_TMP=$(mktemp "$STATE/.${ID}.meta.XXXXXX") || {
-  echo "error: could not publish the task record for $ID; refusing to report a spawn firstmate cannot supervise" >&2
-  exit 1
-}
-if ! printf '%s' "$META_RECORD" > "$META_TMP" \
-  || { { [ -e "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; } \
-    && { [ ! -f "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; }; } \
-  || ! mv -f -- "$META_TMP" "$STATE/$ID.meta"; then
-  rm -f -- "$META_TMP"
+if ! spawn_record_publish "$META_RECORD" "$STATE/$ID.meta"; then
+  [ -z "$META_TMP" ] || { rm -f -- "$META_TMP" || true; META_TMP=; }
   echo "error: could not publish the task record for $ID; refusing to report a spawn firstmate cannot supervise" >&2
   exit 1
 fi
-META_TMP=
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
 sq_brief=$(shell_quote "$BRIEF")
