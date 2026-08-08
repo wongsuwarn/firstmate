@@ -10,6 +10,10 @@
 #     line in meta (byte-identical to today's meta shape).
 #   - non-claude harness: --remote-control is refused before any endpoint or
 #     meta is created.
+#   - raw launch command: --remote-control is refused even when its executable
+#     name resolves to claude.
+#   - remote secondmate: --remote-control is refused without changing registry
+#     or task metadata state.
 #   - it composes correctly with --model/--effort (all three flags land in the
 #     launch command in template order, none dropped or garbled).
 #   - --rc is a working alias for --remote-control.
@@ -162,6 +166,56 @@ test_refuses_for_non_claude_harness() {
   pass "--remote-control is refused for a non-claude harness, before any metadata is written"
 }
 
+test_refuses_for_raw_claude_launch_command() {
+  local rec out status
+  rec=$(make_case rc-raw-claude claude)
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR" \
+    "claude --verbose" --remote-control)
+  status=$?
+  [ "$status" -ne 0 ] || fail "--remote-control on a raw claude command should be refused"$'\n'"$out"
+  assert_contains "$out" "cannot be reliably applied to a raw launch command" \
+    "the refusal should explain why raw launch commands cannot use Remote Control"
+  [ ! -e "$HOME_DIR/state/$CASE_ID.meta" ] \
+    || fail "a refused raw-command Remote Control spawn must not write task metadata"
+  [ ! -s "$LAUNCH_LOG" ] \
+    || fail "a refused raw-command Remote Control spawn must not reach the launch backend"
+  pass "--remote-control is refused for a raw claude launch command"
+}
+
+test_refuses_for_remote_secondmate() {
+  local rec out status registry registry_before remote_home remote_root
+  rec=$(make_case rc-remote-secondmate claude)
+  read_case_record "$rec"
+  registry="$HOME_DIR/data/secondmates.md"
+  registry_before="$HOME_DIR/data/secondmates.before"
+  remote_home="$HOME_DIR/remote-home"
+  remote_root="$HOME_DIR/remote-root"
+  printf '%s\n' \
+    "- $CASE_ID - Remote fixture (host: remote-mac; root: $remote_root; home: $remote_home; scope: remote work; projects: sample; added 2026-08-08)" \
+    > "$registry"
+  cp "$registry" "$registry_before"
+
+  out=$(env -u FM_TRACE_CONTEXT \
+    FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    FM_SPAWN_NO_GUARD=1 PATH="$FAKEBIN_DIR:$PATH" \
+    "$SPAWN" "$CASE_ID" --secondmate --remote-control 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "--remote-control on a remote secondmate should be refused"$'\n'"$out"
+  assert_contains "$out" "not yet supported for remote secondmates" \
+    "the refusal should name the unsupported remote-secondmate boundary"
+  [ ! -e "$HOME_DIR/state/$CASE_ID.meta" ] \
+    || fail "a refused remote-secondmate Remote Control spawn must not write task metadata"
+  cmp -s "$registry_before" "$registry" \
+    || fail "a refused remote-secondmate Remote Control spawn changed the registry"
+  [ ! -e "$HOME_DIR/state/.spawn-$CASE_ID.lock" ] \
+    || fail "a refused remote-secondmate Remote Control spawn touched task lock state"
+  pass "--remote-control is refused before remote secondmate state changes"
+}
+
 test_composes_with_model_and_effort() {
   local rec out status meta line
   rec=$(make_case rc-compose claude)
@@ -203,6 +257,8 @@ test_rc_alias_matches_remote_control() {
 test_flag_inserts_remote_control_for_claude
 test_flag_absent_is_a_no_op
 test_refuses_for_non_claude_harness
+test_refuses_for_raw_claude_launch_command
+test_refuses_for_remote_secondmate
 test_composes_with_model_and_effort
 test_rc_alias_matches_remote_control
 

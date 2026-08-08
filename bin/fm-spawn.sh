@@ -25,10 +25,10 @@
 #   --remote-control (alias --rc) adds Claude Code's --remote-control flag to the
 #   launch command, so the session appears in the Claude mobile app's Code tab and
 #   at claude.ai/code (docs.claude.com Remote Control). It is claude-harness-only
-#   and REFUSED for any other resolved harness, including a raw launch command
-#   that does not resolve to claude. It requires a claude.ai Pro/Max login (API-key
-#   auth is unsupported) and is silently a no-op on an installed CLI too old to
-#   recognize the flag. A spawn with the flag set records remote_control=1 in
+#   and REFUSED for any other resolved harness, every raw launch command, and every
+#   remote secondmate. It requires a claude.ai Pro/Max login (API-key auth is
+#   unsupported) and is silently a no-op on an installed CLI too old to recognize
+#   the flag. A spawn with the flag set records remote_control=1 in
 #   state/<id>.meta; the field is omitted entirely when unset, matching the
 #   backend= convention. That record is NOT auto-replayed by this script on a
 #   plain respawn - a caller wanting Remote Control to survive a respawn passes
@@ -392,6 +392,13 @@ spawn_remote_secondmate() {
   local -a launch_args
   id=${POS[0]:-}
   fm_task_id_creation_valid "$id" || { echo "error: invalid task id" >&2; return 2; }
+  if [ "$REMOTE_CONTROL" -eq 1 ]; then
+    remote=$(secondmate_registry_field "$DATA/secondmates.md" "$id" remote 2>/dev/null || true)
+    if [ "$remote" = 1 ]; then
+      echo "error: --remote-control (--rc) is not yet supported for remote secondmates" >&2
+      return 1
+    fi
+  fi
   mkdir -p "$STATE" || { echo "error: could not create parent state directory" >&2; return 1; }
   SPAWN_TASK_LOCK="$STATE/.spawn-$id.lock"
   if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
@@ -409,6 +416,12 @@ spawn_remote_secondmate() {
     fm_lock_release "$registry_lock" || true
     fm_lock_release "$SPAWN_TASK_LOCK" || true
     return 3
+  fi
+  if [ "$REMOTE_CONTROL" -eq 1 ]; then
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    echo "error: --remote-control (--rc) is not yet supported for remote secondmates" >&2
+    return 1
   fi
   host=$(secondmate_registry_field "$DATA/secondmates.md" "$id" host)
   root=$(secondmate_registry_field "$DATA/secondmates.md" "$id" root)
@@ -943,6 +956,10 @@ launch_template() {
 
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
+    if [ "$REMOTE_CONTROL" -eq 1 ]; then
+      echo "error: --remote-control cannot be reliably applied to a raw launch command" >&2
+      exit 1
+    fi
     LAUNCH=$ARG3
     HARNESS=""
     for word in $LAUNCH; do
