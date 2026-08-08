@@ -97,7 +97,8 @@ pass "a real captured send normalizes to one request through the published poll 
 pass "a note containing intent=merge cannot change the parsed intent"
 
 U="$TMP_ROOT/unicode.txt"
-unicode_note='Captain’s café 🚀'
+# Build the exact UTF-8 bytes without a literal Unicode quote that trips SC1112.
+unicode_note=$(printf 'Captain\342\200\231s caf\303\251 \360\237\232\200')
 unicode_body=$(jq -cn --arg n "$unicode_note" \
   '{v:1,intent:"ask",home:"main",note:$n}')
 result_file "$U" "$(record 1 "$(envelope "$unicode_body")")"
