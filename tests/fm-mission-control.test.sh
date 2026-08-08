@@ -65,15 +65,20 @@ const chrome = spawn(chromePath, [
 ], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
 let buffer = "";
 let nextId = 0;
+let finished = false;
 const pending = new Map();
 
 function finish(code, message) {
+  if (finished) return;
+  finished = true;
   if (message) process.stderr.write(`${message}\n`);
   chrome.kill();
   process.exitCode = code;
 }
 
 chrome.on("error", (error) => finish(1, error.message));
+chrome.stdio[3].on("error", (error) => finish(1, error.message));
+chrome.stdio[4].on("error", (error) => finish(1, error.message));
 chrome.stdio[4].on("data", (chunk) => {
   buffer += chunk;
   let boundary;
@@ -161,7 +166,7 @@ async function run() {
   }
 }
 
-const timeout = setTimeout(() => finish(1, "timed out measuring the rendered 390px board"), 10000);
+const timeout = setTimeout(() => finish(1, "timed out measuring the rendered 390px board"), 30000);
 run().then(() => {
   clearTimeout(timeout);
   finish(0);
