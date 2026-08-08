@@ -96,6 +96,7 @@ EOF
     "worktree=$home/projects/alpha-worktree" \
     "project=alpha" \
     "harness=claude" \
+    "model=claude-opus-5" \
     "kind=ship" \
     "mode=direct-PR" \
     "yolo=on" \
@@ -105,20 +106,213 @@ EOF
 
 # A minimal but schema-shaped snapshot, so a case can drive fields no local
 # fixture produces (another home's decisions, hostile prose, path-form repos).
-snapshot_json() {  # <records-json> <secondmate-records-json>
-  jq -n --argjson records "$1" --argjson sm "$2" '{
+snapshot_json() {  # <records-json> <secondmate-records-json> [<tasks-json>]
+  jq -n --argjson records "$1" --argjson sm "$2" --argjson tasks "${3:-[]}" '{
     schema: "fm-fleet-snapshot.v1",
     generated: "2026-01-04T00:00:00Z",
     fm_home: "/fixture/home",
     roots: {state: "/fixture/home/state", data: "/fixture/home/data",
             projects: "/fixture/home/projects"},
     backlog: {path: "/fixture/home/data/backlog.md", present: true, records: $records},
-    tasks: [],
+    tasks: $tasks,
     secondmate_current: {registry: {
       present: false, available: true, complete: true,
       input_truncated: false, records_truncated: false, records: []
     }, records: $sm}
   }'
+}
+
+# One live task exactly as the snapshot reports it. The stage is given as the
+# derived object the snapshot attaches, because that is what the board consumes;
+# bin/fm-fleet-snapshot.sh owns deriving it from live state and tests/fm-fleet-
+# snapshot-view.test.sh pins that half.
+live_task() {  # <id> <title> <repo> <model> <ordinal> <label> <motion>
+  jq -n --arg id "$1" --arg title "$2" --arg repo "$3" --arg model "$4" \
+        --argjson ordinal "$5" --arg label "$6" --arg motion "$7" '{
+    id: $id, kind: "ship", harness: "claude", model: $model,
+    project: $repo, backend: "tmux",
+    current_state: {state: "working", source: "pane", detail: "", raw: "",
+      stage: {ordinal: $ordinal, of: 5, label: $label, motion: $motion}},
+    endpoint: {target: ("firstmate:fm-" + $id), exists: true},
+    pr: {url: null, source: "absent"},
+    hints: {pending_decision: false, blocked_event: false, open_decisions: []},
+    backlog: {id: $id, title: $title, repo: $repo, state: "in_flight",
+              kind: "ship", structured: true}
+  }'
+}
+
+in_flight_record() {  # <id> <title> <repo>
+  jq -n --arg id "$1" --arg title "$2" --arg repo "$3" '{
+    id: $id, title: $title, raw: $title, repo: $repo, state: "in_flight",
+    kind: "ship", structured: true, captain_actionable: false,
+    captain_deferred: false, unresolved_blocker_ids: [], completion: {date: null}}'
+}
+
+# A count tells the captain something is happening without telling them what, so
+# each in-progress item names itself and carries the two facts the count hides:
+# how far it has travelled and which model is on it.
+test_in_progress_items_are_listed_with_stage_and_model() {
+  local snap board
+  snap=$TMP_ROOT/items.json
+  board=$TMP_ROOT/items.html
+  snapshot_json "[$(in_flight_record early 'Rebuild the intake form' alpha),
+                  $(in_flight_record mid 'Fix search ranking' alpha),
+                  $(in_flight_record late 'Migrate the billing webhooks' alpha)]" '[]' \
+    "[$(live_task early 'Rebuild the intake form' alpha claude-opus-5 2 Building live),
+      $(live_task mid 'Fix search ranking' alpha claude-sonnet-5 3 Validating live),
+      $(live_task late 'Migrate the billing webhooks' alpha claude-opus-5 4 'Checks running' live)]" \
+    > "$snap"
+
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a board with in-progress items must render"
+
+  assert_grep 'Rebuild the intake form' "$board" "an in-progress item must be named, not just counted"
+  assert_grep 'Fix search ranking' "$board" "every in-progress item must be named"
+  assert_grep 'Migrate the billing webhooks' "$board" "every in-progress item must be named"
+  assert_grep '3 tasks under way' "$board" "the count above the list must survive"
+
+  # The rung a bar fills and the rung its label claims are two renderings of one
+  # fact. They are asserted together because a bar that drifted from its label is
+  # exactly the silent overstatement the ladder exists to avoid.
+  assert_grep 'aria-label="Stage 2 of 5: Building"' "$board" \
+    "a bar must state its position in words for anyone who cannot see it"
+  assert_grep '<i class="on"></i><i class="on"></i><i></i><i></i><i></i>' "$board" \
+    "rung 2 of 5 must fill exactly two rungs"
+  assert_grep '<i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i>' "$board" \
+    "rung 3 of 5 must fill exactly three rungs"
+  assert_grep '<i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i>' "$board" \
+    "rung 4 of 5 must fill exactly four rungs"
+  assert_grep '>Building</span>' "$board" "the stage must be named beside its bar"
+  assert_grep '>Checks running</span>' "$board" "the stage must be named beside its bar"
+
+  assert_grep '>Opus 5</span>' "$board" "the model on an item must be shown readably"
+  assert_grep '>Sonnet 5</span>' "$board" "the model on an item must be shown readably"
+
+  # The whole point of a stage ladder is that it is not a completion estimate.
+  assert_no_grep '% complete' "$board" "a stage must never be dressed up as a percentage"
+  assert_no_grep 'ETA' "$board" "a stage must never be dressed up as an ETA"
+  pass "each in-progress item is listed with its stage and its model"
+}
+
+# Colour says whether an item is MOVING, which is a different question from how
+# far it has come. An item stopped at rung four is still stopped, and a board
+# that painted it as live progress would be actively misleading.
+test_stalled_items_do_not_read_as_progress() {
+  local snap board
+  snap=$TMP_ROOT/motion.json
+  board=$TMP_ROOT/motion.html
+  snapshot_json "[$(in_flight_record held 'Replace the session cookie' alpha),
+                  $(in_flight_record stuck 'Speed up the import job' alpha)]" '[]' \
+    "[$(live_task held 'Replace the session cookie' alpha claude-opus-5 3 'Waiting on a decision' waiting),
+      $(live_task stuck 'Speed up the import job' alpha claude-opus-5 2 Blocked stopped)]" \
+    > "$snap"
+
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a board with stalled items must render"
+  assert_grep 'class="wi-bar m-waiting"' "$board" \
+    "an item waiting on the captain must be toned apart from one that is moving"
+  assert_grep 'class="wi-bar m-stopped"' "$board" \
+    "a blocked item must be toned apart from one that is moving"
+  assert_grep 'class="wi-stage m-stopped">Blocked</span>' "$board" \
+    "a blocked item must say so in words, not only in colour"
+  assert_grep 'aria-label="Stage 3 of 5: Waiting on a decision"' "$board" \
+    "a stalled item must keep the rung it reached rather than falling back to zero"
+  pass "a stalled item keeps its rung but never reads as progress"
+}
+
+# A model id is a dispatch identifier. The captain reads a name.
+test_model_ids_are_shown_as_readable_names() {
+  local snap board
+  snap=$TMP_ROOT/models.json
+  board=$TMP_ROOT/models.html
+  snapshot_json "[$(in_flight_record m1 'Vendor prefixed' alpha),
+                  $(in_flight_record m2 'Namespaced provider' alpha),
+                  $(in_flight_record m3 'Tagged local model' alpha),
+                  $(in_flight_record m4 'Dated release' alpha),
+                  $(in_flight_record m5 'Single word' alpha)]" '[]' \
+    "[$(live_task m1 'Vendor prefixed' alpha claude-opus-5 2 Building live),
+      $(live_task m2 'Namespaced provider' alpha openai-codex/gpt-5.6-terra 2 Building live),
+      $(live_task m3 'Tagged local model' alpha ollama/qwen3.6:35b-fm 2 Building live),
+      $(live_task m4 'Dated release' alpha claude-haiku-4-5-20251001 2 Building live),
+      $(live_task m5 'Single word' alpha sonnet 2 Building live)]" \
+    > "$snap"
+
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a board with varied model ids must render"
+  assert_grep '>Opus 5</span>' "$board" "a vendor prefix must be dropped from the name"
+  assert_grep '>GPT-5.6 Terra</span>' "$board" \
+    "a namespaced provider must be dropped and the model read as a name"
+  assert_grep '>qwen3.6:35b-fm</span>' "$board" \
+    "a tagged local model must keep the exact tag it is addressed by"
+  assert_grep '>Haiku 4.5</span>' "$board" \
+    "a release stamp must be dropped and a split version rejoined"
+  assert_grep '>Sonnet</span>' "$board" "a single-word model must still read as a name"
+  assert_no_grep 'claude-opus-5' "$board" "a raw dispatch id must not reach the card"
+  assert_no_grep '20251001' "$board" "a release stamp must not reach the card"
+  pass "recorded model ids are shown as names the captain reads"
+}
+
+# An older secondmate home reports a routed task without the title, model, or
+# stage this board wants. Absent is not the same as empty, and a blank where a
+# fact belongs reads as a fact.
+test_unrecorded_item_facts_are_disclosed_rather_than_blanked() {
+  local snap board
+  snap=$TMP_ROOT/unrecorded.json
+  board=$TMP_ROOT/unrecorded.html
+  snapshot_json '[]' '[{
+    "id": "docsmate", "registered": true, "provenance": {"selected": "structured-home"},
+    "current": {"state": "active_child_work", "reason": ""},
+    "active_children": [
+      {"id": "docs-legacy", "kind": "ship", "state": "working", "source": "pane"},
+      {"id": "docs-new", "kind": "ship", "state": "working", "source": "run-step",
+       "title": "Refresh the operator guide", "model": "claude-opus-5",
+       "stage": {"ordinal": 3, "of": 5, "label": "Validating", "motion": "live"}}
+    ],
+    "decisions_open": [], "holds": [], "queued": [],
+    "counts": {"active_children": 2, "decisions_open": 0, "holds": 0, "queued": 0},
+    "omitted": []
+  }]' > "$snap"
+
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a secondmate reporting partial item facts must render"
+  assert_grep 'Refresh the operator guide' "$board" "a routed task must be named on the card"
+  assert_grep '>Opus 5</span>' "$board" "a routed task must show the model running it"
+  assert_grep 'aria-label="Stage 3 of 5: Validating"' "$board" \
+    "a routed task must carry its stage onto the card"
+  assert_grep 'docs-legacy' "$board" \
+    "a task reported without a title must fall back to its id rather than vanish"
+  assert_grep 'model not recorded' "$board" \
+    "an unrecorded model must be stated, never shown as a blank"
+  assert_grep 'Stage unavailable' "$board" \
+    "an unreported stage must be stated, never drawn as an honest-looking empty bar"
+  assert_grep 'class="wi-bar m-unknown"' "$board" \
+    "an unreported stage must not fill a rung it cannot prove"
+  pass "an item fact the fleet did not record is disclosed rather than blanked"
+}
+
+# A card long enough to stop being readable is shortened in view. The count above
+# it is never capped, so the shortening has to say so or the list reads complete.
+test_long_item_list_is_shortened_without_hiding_the_count() {
+  local snap board records tasks i
+  snap=$TMP_ROOT/many.json
+  board=$TMP_ROOT/many.html
+  records=""
+  tasks=""
+  for i in 1 2 3 4 5 6 7 8; do
+    [ -z "$records" ] || { records="$records,"; tasks="$tasks,"; }
+    records="$records$(in_flight_record "t$i" "Task number $i" alpha)"
+    tasks="$tasks$(live_task "t$i" "Task number $i" alpha claude-opus-5 2 Building live)"
+  done
+  snapshot_json "[$records]" '[]' "[$tasks]" > "$snap"
+
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a card with many in-progress items must render"
+  assert_grep '8 tasks under way' "$board" "the full count must never be capped"
+  assert_grep 'Task number 6' "$board" "the listed items must reach the cap"
+  assert_no_grep 'Task number 7' "$board" "a shortened list must actually be shortened"
+  assert_grep '2 more under way, not listed here.' "$board" \
+    "a shortened list must state what it left out"
+  pass "a long item list is shortened in view but never silently"
 }
 
 test_renders_live_fixture_home() {
@@ -138,8 +332,13 @@ test_renders_live_fixture_home() {
   assert_grep 'Two rollout windows both cost money' "$board" "the captain-held reason must be shown"
   assert_grep 'https://github.com/example/alpha/pull/9' "$board" "a recorded PR must be surfaced as a call"
 
-  assert_grep 'Under way: Rebuild the alpha intake form' "$board" \
+  # End to end from the task metadata: the recorded model reaches the card as a
+  # readable name, and the item names itself rather than hiding behind the count.
+  assert_grep '1 task under way' "$board" "the live count must survive on the card"
+  assert_grep 'Rebuild the alpha intake form' "$board" \
     "the live task must name itself on its project card"
+  assert_grep '>Opus 5</span>' "$board" \
+    "the model recorded for the live task must reach its card as a name"
   assert_grep '1 decision and 1 PR await you' "$board" \
     "a project card must total the calls waiting on the captain"
   assert_grep 'class="proj-name">alpha' "$board" "each registered project must get a card"
@@ -863,8 +1062,12 @@ test_live_work_outside_the_registry_stays_visible() {
   # project was never registered.
   assert_grep '<div class="n">1</div><div class="l">In progress</div>' "$board" \
     "work under way must be counted"
-  assert_grep 'Under way: Rework the gamma importer' "$board" \
+  assert_grep 'Rework the gamma importer' "$board" \
     "work on an unregistered project must still name itself"
+  # This row also arrives with no model and no stage, which is what a task row
+  # from an older producer looks like: it stays listed, and says what it lacks.
+  assert_grep 'Stage unavailable' "$board" \
+    "a task row carrying no stage must be listed with the gap stated"
   assert_grep 'unregistered' "$board" "an unregistered project card must say so"
   pass "live work outside the registry is shown rather than silently dropped"
 }
@@ -1142,6 +1345,11 @@ test_control_targets_are_escaped() {
   pass "fleet prose stays escaped where a control carries it"
 }
 
+test_in_progress_items_are_listed_with_stage_and_model
+test_stalled_items_do_not_read_as_progress
+test_model_ids_are_shown_as_readable_names
+test_unrecorded_item_facts_are_disclosed_rather_than_blanked
+test_long_item_list_is_shortened_without_hiding_the_count
 test_renders_live_fixture_home
 test_project_last_change_comes_from_the_clone
 test_yesterday_uses_local_calendar_arithmetic

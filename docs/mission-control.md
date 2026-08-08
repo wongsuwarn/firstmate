@@ -16,6 +16,10 @@ By default it shows nothing else: no reply controls, no review surface, no netwo
 The board never shows a completion percentage or an estimated finish time.
 Progress judgement is firstmate's, derived from evidence a renderer cannot see, so inventing a number here would be a guess presented as a measurement.
 Each project card instead states only what live state can prove: what is under way, what waits on the captain, and when the project last changed.
+"What is under way" is listed item by item, because a count says something is happening without saying what.
+Each item names itself, names the model its worker is running on, and shows how far it has travelled as a five-rung ladder - Setup, Building, Validating, Checks, Ready - always labelled with the stage it has reached.
+A rung is a lifecycle position the fleet can prove, never a fraction of the work done, and the colour of the filled rungs says whether the item is still moving, so an item stopped at rung four keeps the rungs it earned and still reads as stopped.
+The stage itself is derived by the snapshot rather than by the board; see `bin/fm-fleet-snapshot.sh` for the `current_state.stage` contract.
 
 ## Sections
 
@@ -32,7 +36,9 @@ Each project card instead states only what live state can prove: what is under w
 - **The stat strip** counts what is awaiting the captain, what is under way, what landed today, and how many project cards the board is showing.
 - **Projects** shows one card per registered project, plus a card for each second mate and for any unregistered project that has work under way.
   A task the captain can see running is never invisible just because its project was never registered.
-  Each card carries a status pill, a one-line live state, the calls waiting on the captain, and when the project last changed.
+  Each card carries a status pill, a one-line live state, a row per in-progress item, the calls waiting on the captain, and when the project last changed.
+  A card long enough to stop being readable lists the first few items and states how many it left out; the count above the list is never capped.
+  A fact the fleet never recorded - a model, or a stage from a second mate home running an older firstmate - is stated as unrecorded rather than shown as a blank or drawn as an empty bar.
   If the backlog is unavailable, a card whose calm state cannot be proved says `Unconfirmed` rather than `Idle`.
 - **Shipped today** lists the backlog items that landed on the board's own current date, with their PR or report links.
   Done records without a completion date are excluded from the list and disclosed in the stat tile instead of being silently counted as today.

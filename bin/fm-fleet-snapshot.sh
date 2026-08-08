@@ -26,8 +26,16 @@
 #     blocked, and it is excluded from the secondmate holds projection for that
 #     reason.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
+#     harness and model are the recorded worker runtime and model, verbatim from
+#     state/<id>.meta; either is "" when that task recorded none.
 #     current_state is parsed from bin/fm-crew-state.sh <id> and preserves
 #     state, source, detail, and raw line separately.
+#     current_state.stage is the derived lifecycle position: {ordinal,of,label,
+#     motion} on a fixed five-rung Setup/Building/Validating/Checks/Ready scale,
+#     with motion one of live, waiting, stopped, done, or unknown. A rung is a
+#     position live state can prove and carries NO completion estimate; ordinal 0
+#     means the stage is unconfirmed. Renderers show this rather than deriving a
+#     stage from current_state.detail prose themselves.
 #     paths.status_log.last_event is historical wake-event data only, never
 #     current state.
 #     hints.open_decisions is the keyed open-decision set returned by
@@ -52,6 +60,10 @@
 #     Each structured-home record carries active_children, decisions_open, holds,
 #     queued, landed, endpoints, counts, and omitted. Actionable captain holds
 #     appear in decisions_open; blocked captain holds remain queued with metadata.
+#     An active_children row carries title, model, harness, and stage alongside
+#     its id and doing detail. Those four are additive within the summary schema,
+#     so a home running an older firstmate omits them and a reader must treat an
+#     absent one as unrecorded rather than as an empty value.
 #   secondmate_landed: {records[],truncated[],unreadable[],partial[]} - the
 #     compatibility landed-work roll-up derived from secondmate_current. Readable
 #     structured homes with an unknown current classification are partial, not
@@ -228,8 +240,42 @@ crew_state_json() {  # <id>
       esac
       ;;
   esac
-  jq -n --arg raw "$raw" --arg state "$state" --arg source "$source" --arg detail "$detail" \
-    '{state:$state,source:$source,detail:$detail,raw:$raw}'
+  jq -n --arg raw "$raw" --arg state "$state" --arg source "$source" --arg detail "$detail" '
+    # How far this task has travelled along the delivery ladder, as an ordinal on
+    # a fixed five-rung scale plus how it is currently moving. It is derived here,
+    # beside the state/source/detail parse it already shares an owner with, so a
+    # renderer shows a stage without ever re-deriving one from this prose.
+    #
+    # The scale is deliberately coarse and carries NO completion estimate: a rung
+    # is a lifecycle position that live state can prove, never a fraction of the
+    # work done. Setup is a task with no activity source yet, Building is a worker
+    # active before validation, Validating is an attributed run, Checks is that
+    # run in CI, and Ready is checks green or better.
+    #
+    # `state` alone fixes the rung a task is entitled to and how it is moving.
+    # `detail` only ever REFINES within that, and every refinement falls back to a
+    # LOWER rung when fm-crew-state.sh rewords itself, so wording drift can lose
+    # precision but can never overstate progress.
+    (if $source == "run-step" then 3
+     elif $source == "pane" or $source == "status-log" then 2
+     else 1 end) as $reached |
+    (if $state == "working" then
+       if $source == "run-step" then
+         (if ($detail | test("^ci running")) then {ordinal: 4, label: "Checks running"}
+          else {ordinal: 3, label: "Validating"} end) + {motion: "live"}
+       elif $source == "pane" or $source == "status-log" then
+         {ordinal: 2, label: "Building", motion: "live"}
+       else {ordinal: 1, label: "Starting up", motion: "live"} end
+     elif $state == "done" then
+       (if ($detail | test("checks green")) then {label: "Checks green"}
+        else {label: "Done"} end) + {ordinal: 5, motion: "done"}
+     elif $state == "parked" then {ordinal: $reached, label: "Waiting on a decision", motion: "waiting"}
+     elif $state == "paused" then {ordinal: $reached, label: "Paused", motion: "waiting"}
+     elif $state == "blocked" then {ordinal: $reached, label: "Blocked", motion: "stopped"}
+     elif $state == "failed" then {ordinal: $reached, label: "Failed", motion: "stopped"}
+     else {ordinal: 0, label: "Stage unconfirmed", motion: "unknown"} end) as $stage |
+    {state: $state, source: $source, detail: $detail, raw: $raw,
+     stage: ($stage + {of: 5})}'
 }
 
 status_event_json() {  # <status-log>
@@ -413,7 +459,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
 }
 
 task_json_lines() {
-  local meta id kind harness mode yolo project worktree home projects backend target status_log report_path
+  local meta id kind harness model mode yolo project worktree home projects backend target status_log report_path
   local remote_host remote_root remote_state remote_rc remote_home_present
   local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
   local last_event_raw current_state current_source pending_decision blocked_event report_present=0 pr_from_status
@@ -425,6 +471,7 @@ task_json_lines() {
     kind=$(meta_value "$meta" kind)
     [ -n "$kind" ] || kind=ship
     harness=$(meta_value "$meta" harness)
+    model=$(meta_value "$meta" model)
     mode=$(meta_value "$meta" mode)
     yolo=$(meta_value "$meta" yolo)
     project=$(meta_value "$meta" project)
@@ -544,6 +591,7 @@ task_json_lines() {
       --arg id "$id" \
       --arg kind "$kind" \
       --arg harness "$harness" \
+      --arg model "$model" \
       --arg mode "$mode" \
       --arg yolo "$yolo" \
       --arg project "$project" \
@@ -574,6 +622,7 @@ task_json_lines() {
         id:$id,
         kind:$kind,
         harness:($harness // ""),
+        model:($model // ""),
         mode:($mode // ""),
         yolo:($yolo // ""),
         project:($project // ""),
@@ -715,6 +764,10 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
          | $tasks[]
          | select(.id == $work.id and .current_state.state == "working")
          | {id,kind,state:.current_state.state,source:.current_state.source,
+            title:(($work.title // .id) | trunc(90)),
+            model:((.model // "") | trunc(60)),
+            harness:((.harness // "") | trunc(40)),
+            stage:(.current_state.stage // null),
             doing:((.current_state.detail // "") | trunc(120))} ]) as $active_all
     | ($captain_holds_all
        + ([ $tasks[] as $t | ($t.hints.open_decisions // [])[]

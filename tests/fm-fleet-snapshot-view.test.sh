@@ -609,6 +609,147 @@ EOF
   pass "snapshot parses tasks-axi rows and respects operational overrides"
 }
 
+# A fake no-mistakes that serves one canned `axi status` payload, so a case can
+# put a task on a real run step and read the lifecycle stage the snapshot derives
+# from it. Only the surface fm-crew-state.sh actually consults is served.
+make_run_fakebin() {  # <dir>
+  local fb
+  fb=$(fm_fakebin "$1")
+  cat > "$fb/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-}${2:-}" in
+  axistatus) printf '%s\n' "${FM_FAKE_AXI_STATUS:-}" ;;
+  axilogs) printf '%s\n' "${FM_FAKE_CI_LOGS:-}" ;;
+esac
+exit 0
+SH
+  cat > "$fb/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fb/no-mistakes" "$fb/tmux"
+  printf '%s\n' "$fb"
+}
+
+# One task on a branch whose worktree HEAD matches the run head, which is what
+# fm-crew-state.sh requires before it will attribute a run to that task.
+stage_of() {  # <home> <id> -> echoes the derived stage as compact JSON
+  local home=$1 id=$2 fakebin
+  fakebin=$(make_run_fakebin "$home")
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json \
+    | jq -c --arg id "$id" '.tasks[] | select(.id == $id) | .current_state.stage'
+}
+
+# The five-rung ladder is the board's honest substitute for a completion
+# percentage, so every rung it can claim is pinned to the live state that earns
+# it. A stage that drifted up a rung would overstate progress on every card at
+# once, and the ladder is only worth drawing while each rung means one thing.
+test_lifecycle_stage_is_derived_from_live_state() {
+  local home wt head stage
+  home=$(make_home stage-ladder)
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  wt="$home/projects/stage-wt"
+  fm_git_worktree "$home/projects/stage-repo" "$wt" fm/stage
+  head=$(git -C "$wt" rev-parse HEAD)
+  fm_write_meta "$home/state/stage-task.meta" \
+    "window=firstmate:fm-stage-task" \
+    "worktree=$wt" \
+    "project=alpha" \
+    "harness=claude" \
+    "model=claude-opus-5" \
+    "kind=ship" \
+    "mode=no-mistakes"
+
+  # A run attributed and validating sits mid-ladder.
+  export FM_FAKE_AXI_STATUS FM_FAKE_CI_LOGS
+  FM_FAKE_AXI_STATUS="run:
+  id: \"01RUN\"
+  branch: fm/stage
+  status: running
+  head: \"$head\"
+  pr: \"\"
+  findings: none"
+  FM_FAKE_CI_LOGS=""
+  stage=$(stage_of "$home" stage-task)
+  printf '%s' "$stage" | jq -e '.ordinal == 3 and .of == 5 and .motion == "live"' >/dev/null \
+    || fail "a validating run must sit at rung 3 of 5 and read as moving: $stage"
+
+  # The same run in CI has travelled one rung further, and no further.
+  FM_FAKE_AXI_STATUS="run:
+  id: \"01RUN\"
+  branch: fm/stage
+  status: ci
+  head: \"$head\"
+  pr: \"https://github.com/example/alpha/pull/3\"
+  findings: none"
+  stage=$(stage_of "$home" stage-task)
+  printf '%s' "$stage" | jq -e '.ordinal == 4 and .motion == "live"' >/dev/null \
+    || fail "a run in CI must sit at rung 4 of 5: $stage"
+
+  # Parked at a gate keeps the rung it reached but stops reading as moving, so a
+  # card cannot show a decision that is waiting on the captain as progress.
+  FM_FAKE_AXI_STATUS="run:
+  id: \"01RUN\"
+  branch: fm/stage
+  status: awaiting_approval
+  awaiting_agent: parked 2m10s
+  head: \"$head\"
+  pr: \"\"
+  findings[1]{id,severity,file,line,action,description}:
+    r1,error,b.go,,ask-user,changes product behavior
+gate: review"
+  stage=$(stage_of "$home" stage-task)
+  printf '%s' "$stage" | jq -e '.ordinal == 3 and .motion == "waiting"' >/dev/null \
+    || fail "a run parked at a gate must hold its rung and stop reading as moving: $stage"
+
+  # A terminal run tops the ladder.
+  FM_FAKE_AXI_STATUS="run:
+  id: \"01RUN\"
+  branch: fm/stage
+  status: completed
+  outcome: passed
+  head: \"$head\"
+  pr: \"https://github.com/example/alpha/pull/3\"
+  findings: none"
+  stage=$(stage_of "$home" stage-task)
+  printf '%s' "$stage" | jq -e '.ordinal == 5 and .motion == "done"' >/dev/null \
+    || fail "a passed run must top the ladder: $stage"
+
+  # No attributable run and no readable activity proves nothing, so the ladder
+  # claims nothing rather than showing an honest-looking empty bar.
+  FM_FAKE_AXI_STATUS=""
+  stage=$(stage_of "$home" stage-task)
+  printf '%s' "$stage" | jq -e '.ordinal == 0 and .motion == "unknown"' >/dev/null \
+    || fail "an unreadable task must claim no rung at all: $stage"
+  pass "the lifecycle stage is derived from live state, one rung per proven step"
+}
+
+# The model is what the captain reads to know which worker is on a task, and it
+# is recorded nowhere but the task metadata.
+test_recorded_model_reaches_the_task_row() {
+  local home fakebin out
+  home=$(make_home task-model)
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  mkdir -p "$home/projects/model-wt" "$home/projects/nomodel-wt"
+  fm_write_meta "$home/state/model-task.meta" \
+    "window=firstmate:fm-model-task" \
+    "worktree=$home/projects/model-wt" \
+    "project=alpha" "harness=codex" "model=openai-codex/gpt-5.6-terra" "kind=ship"
+  fm_write_meta "$home/state/nomodel-task.meta" \
+    "window=firstmate:fm-nomodel-task" \
+    "worktree=$home/projects/nomodel-wt" \
+    "project=alpha" "harness=claude" "kind=ship"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.tasks[] | select(.id == "model-task")
+      | .model == "openai-codex/gpt-5.6-terra" and .harness == "codex")
+    and (.tasks[] | select(.id == "nomodel-task") | .model == "")
+  ' >/dev/null || fail "a recorded model must reach its task row verbatim: $out"
+  pass "the recorded model reaches the task row, and an unrecorded one stays empty"
+}
+
 test_view_renders_snapshot() {
   local home fakebin view
   home=$(make_home view)
@@ -840,5 +981,7 @@ test_completed_scout_report_is_pointer_not_pending
 test_parked_scout_decision_stays_pending
 test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
+test_lifecycle_stage_is_derived_from_live_state
+test_recorded_model_reaches_the_task_row
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
