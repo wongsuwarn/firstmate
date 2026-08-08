@@ -735,7 +735,7 @@ gate: review"
   # current-state source, proves only the weaker Setup claim and no later rung.
   FM_FAKE_AXI_STATUS=""
   current=$(current_state_of "$home" stage-task)
-  printf '%s' "$current" | jq -e '.source == "none" and .stage.ordinal == 1 and .stage.label == "Setup: endpoint present" and .stage.motion == "live"' >/dev/null \
+  printf '%s' "$current" | jq -e '.source == "none" and .stage.ordinal == 1 and .stage.label == "Setup: endpoint present" and .stage.motion == "quiet"' >/dev/null \
     || fail "registered work with a present endpoint and no observed activity must sit at Setup: $current"
 
   FM_FAKE_AXI_STATUS="run:
@@ -779,7 +779,8 @@ test_setup_stage_uses_existing_secondmate_liveness() {
       | .endpoint.exists == true and .endpoint.agent_alive == "alive"
         and .current_state.source == "none"
         and .current_state.stage.ordinal == 1
-        and .current_state.stage.label == "Setup: endpoint present")
+        and .current_state.stage.label == "Setup: endpoint present"
+        and .current_state.stage.motion == "quiet")
     and (.tasks[] | select(.id == "dead-secondmate")
       | .endpoint.exists == true and .endpoint.agent_alive == "dead"
         and .current_state.stage.ordinal == 0

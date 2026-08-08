@@ -26,6 +26,8 @@
 # the stage name, so it reads as "this has reached Validating" and never as a
 # fraction of the work done. The stage itself is never re-derived here; the
 # snapshot owns it, as it owns every other piece of fleet state on this page.
+# Setup uses the neutral slate quiet tone because endpoint presence does not prove
+# movement; observed work alone uses the green live tone.
 # The first six items stay open at a glance and every additional received item
 # remains available in the same expandable shelf idiom as Deferred. Rows omitted
 # upstream remain disclosed separately and are never presented as shelf contents.
@@ -800,7 +802,7 @@ def work_row:
   (if $st == null then "Stage unavailable"
    else (($st.label // "Stage unconfirmed") | if type == "string" and . != "" then . else "Stage unconfirmed" end) end) as $label |
   ((if $st == null then "unknown" else ($st.motion // "unknown") end)
-   | if IN("live", "ready", "waiting", "stopped", "done", "unknown") then . else "unknown" end) as $motion |
+   | if IN("quiet", "live", "ready", "waiting", "stopped", "done", "unknown") then . else "unknown" end) as $motion |
   (if $ord > 0 then "Stage \($ord) of \($of): \($label)" else $label end) as $bar_label |
   "<div class=\"wi\">"
   + "<div class=\"wi-head\">"
@@ -1331,6 +1333,8 @@ a.need:hover{background:#fbfcfe;}
 .wi-run{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .wi-bar{display:flex;gap:3px;flex:0 0 92px;}
 .wi-bar i{flex:1 1 0;height:5px;border-radius:2px;background:#e3e7ee;}
+.wi-bar.m-quiet i{background:var(--slate-soft);}
+.wi-bar.m-quiet i.on{background:var(--slate);}
 .wi-bar.m-live i.on,.wi-bar.m-done i.on{background:var(--green);}
 .wi-bar.m-ready i.on,.wi-bar.m-waiting i.on{background:var(--amber);}
 .wi-bar.m-stopped i.on{background:var(--red);}
@@ -1338,6 +1342,7 @@ a.need:hover{background:#fbfcfe;}
    empty ladder is hatched rather than left looking like honest zero progress. */
 .wi-bar.m-unknown i{background:repeating-linear-gradient(90deg,#c9d0da 0 2px,transparent 2px 5px);}
 .wi-stage{flex:1 1 auto;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere;}
+.wi-stage.m-quiet{color:var(--slate);}
 .wi-stage.m-ready,.wi-stage.m-waiting{color:var(--amber);}
 .wi-stage.m-stopped{color:var(--red);}
 .wi-more{margin:0;font-size:11.5px;color:var(--faint);}

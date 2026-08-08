@@ -32,8 +32,8 @@
 #     state, source, detail, and raw line separately.
 #     current_state.stage is the derived lifecycle position: {ordinal,of,label,
 #     motion} on a fixed five-rung Setup/Building/Validating/Checks/Ready scale,
-#     with motion one of live, ready, waiting, stopped, done, or unknown. Setup
-#     claims only present metadata, a present recorded endpoint, and no observed
+#     with motion one of quiet, live, ready, waiting, stopped, done, or unknown.
+#     Setup claims only present metadata, a present recorded endpoint, and no observed
 #     current-state source or activity; secondmates additionally require their
 #     already-populated agent liveness to be alive. Ready is checks-green work
 #     awaiting the captain and is distinct from terminal Done. A rung is a
@@ -283,7 +283,7 @@ crew_state_json() {  # <id> <setup-proven-json>
      elif $state == "blocked" then {ordinal: $reached, label: "Blocked", motion: "stopped"}
      elif $state == "failed" then {ordinal: $reached, label: "Failed", motion: "stopped"}
      elif $parsed and $state == "unknown" and $source == "none" and $setup_proven then
-       {ordinal: 1, label: "Setup: endpoint present", motion: "live"}
+       {ordinal: 1, label: "Setup: endpoint present", motion: "quiet"}
      else {ordinal: 0, label: "Stage unconfirmed", motion: "unknown"} end) as $stage |
     {state: $state, source: $source, detail: $detail, raw: $raw,
      stage: ($stage + {of: 5})}'

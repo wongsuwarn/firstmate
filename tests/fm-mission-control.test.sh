@@ -227,6 +227,27 @@ test_stalled_items_do_not_read_as_progress() {
   pass "a stalled item keeps its rung but never reads as progress"
 }
 
+test_setup_uses_neutral_tone() {
+  local snap board
+  snap=$TMP_ROOT/setup-tone.json
+  board=$TMP_ROOT/setup-tone.html
+  snapshot_json "[$(in_flight_record setup 'Start the worker endpoint' alpha)]" '[]' \
+    "[$(live_task setup 'Start the worker endpoint' alpha claude-opus-5 1 'Setup: endpoint present' quiet)]" \
+    > "$snap"
+
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a Setup item must render"
+  assert_grep 'class="wi-bar m-quiet" role="img" aria-label="Stage 1 of 5: Setup: endpoint present"' "$board" \
+    "Setup must use its bounded neutral motion"
+  assert_grep 'class="wi-stage m-quiet">Setup: endpoint present</span>' "$board" \
+    "the Setup label must use the same neutral tone as its ladder"
+  assert_grep '.wi-bar.m-quiet i.on{background:var(--slate);}' "$board" \
+    "the Setup ladder must use the board's slate tone"
+  assert_no_grep 'class="wi-bar m-live"' "$board" \
+    "Setup must not claim observed live movement"
+  pass "Setup uses one neutral slate tone"
+}
+
 # Ready has reached the top rung but still awaits the captain, while Done is
 # terminal. Position alone cannot distinguish them, so their tones must.
 test_ready_and_done_use_distinct_tones() {
@@ -1485,6 +1506,7 @@ test_control_targets_are_escaped() {
 
 test_in_progress_items_are_listed_with_stage_and_model
 test_stalled_items_do_not_read_as_progress
+test_setup_uses_neutral_tone
 test_ready_and_done_use_distinct_tones
 test_model_ids_are_shown_as_readable_names
 test_unrecorded_item_facts_are_disclosed_rather_than_blanked

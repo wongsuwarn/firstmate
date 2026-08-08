@@ -21,6 +21,7 @@ Each item names itself, names the model its worker is running on, and shows how 
 A rung is a lifecycle position the fleet can prove, never a fraction of the work done, and the colour of the filled rungs says whether the item is still moving, so an item stopped at rung four keeps the rungs it earned and still reads as stopped.
 Setup is labelled `Setup: endpoint present` only when task metadata and recorded endpoint presence are available but no current-state source or activity has been observed yet.
 For ordinary work this is an endpoint-presence claim, not proof that a live worker is running; second mates use their already-available agent-liveness result as an additional requirement.
+Every Setup rung uses the neutral slate `quiet` tone because even verified endpoint liveness does not prove movement.
 Ready keeps the top rung but uses the board's amber needs-you tone because green checks awaiting review or merge are not completed work.
 The stage itself is derived by the snapshot rather than by the board; see `bin/fm-fleet-snapshot.sh` for the `current_state.stage` contract.
 
