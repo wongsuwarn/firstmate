@@ -92,6 +92,12 @@
 #   Every single-task invocation holds one task-id-scoped lock across backend
 #   creation through metadata publication, so concurrent same-id spawns serialize
 #   even when they select different backends.
+#   Every local single-task launch also publishes a durable abort fence before
+#   endpoint creation. After an endpoint attempt, a later failure restores any
+#   previous task record only when the exact replacement endpoint is confirmed
+#   gone. Otherwise it retains the replacement identity when publishable,
+#   preserves any previous-record snapshot, and keeps the fence so same-id
+#   retries refuse until reconciliation.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
@@ -135,12 +141,9 @@
 #   home), refused in batch dispatch (one path cannot serve several tasks), and
 #   refused on backend=orca (Orca owns the worktree itself and addresses it by
 #   orca_worktree_id=, so path reuse needs Orca-side resume semantics that do not
-#   exist yet). The relaunch is transactional: the previous state/<id>.meta is
-#   snapshotted first, and any failure restores that record only after the exact
-#   endpoint this invocation created is confirmed gone. An unconfirmed cleanup
-#   retains a new endpoint record for reconciliation, leaving the copy's dirty
-#   files, commits, and branch untouched. Nothing here decides WHEN to hand a
-#   task over;
+#   exist yet). The relaunch snapshots the previous state/<id>.meta and uses the
+#   shared abort transaction above, leaving the copy's dirty files, commits, and
+#   branch untouched. Nothing here decides WHEN to hand a task over;
 #   bin/fm-provider-continuity.sh owns the handoff license and
 #   .agents/skills/provider-outage-continuity/SKILL.md owns the procedure.
 #   A successful resume adds resumed=1 to the success line.
@@ -1689,7 +1692,7 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
 # relaunches the SAME task id in the SAME isolated copy rather than allocating a
 # second one. Prove the copy is a real worktree root distinct from the primary
 # checkout BEFORE any endpoint exists, and snapshot the previous authoritative
-# record so a failed relaunch restores it (spawn_abort_cleanup).
+# record for the shared abort transaction described in this script's header.
 RESUME_WT_REAL=
 if [ "$RESUME_WT_SET" -eq 1 ]; then
   RESUME_WT=$RESUME_WT_ARG
