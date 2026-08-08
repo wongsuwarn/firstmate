@@ -111,7 +111,9 @@ async function run() {
     deviceScaleFactor: 1,
     mobile: true,
   }, sessionId);
-  await send("Page.navigate", { url: pathToFileURL(htmlPath).href }, sessionId);
+  const boardUrl = pathToFileURL(htmlPath);
+  boardUrl.hash = "tab=system";
+  await send("Page.navigate", { url: boardUrl.href }, sessionId);
 
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const ready = await send("Runtime.evaluate", {
@@ -136,6 +138,8 @@ async function run() {
         return {
           left: rect.left,
           right: rect.right,
+          width: rect.width,
+          height: rect.height,
           clientWidth: element.clientWidth,
           scrollWidth: element.scrollWidth,
         };
@@ -149,6 +153,7 @@ async function run() {
   const geometry = evaluated.result.result.value;
   const documentFits = geometry.documentWidth <= geometry.viewportWidth;
   const labelsFit = geometry.targets.every((target) => target &&
+    target.width > 0 && target.height > 0 &&
     target.left >= 0 && target.right <= geometry.viewportWidth + 0.5 &&
     target.scrollWidth <= target.clientWidth + 1);
   if (!documentFits || !labelsFit) {
