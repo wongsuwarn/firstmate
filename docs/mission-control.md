@@ -177,6 +177,12 @@ Every value that comes from fleet state, the registry, or either allowance sourc
 Firstmate regenerates the board by running the script again; the output is written to a temporary file and renamed into place, so a browser refreshing on its own cadence never reads a half-written page.
 With script available, the page reloads on a managed cadence of 25 seconds by default, configurable with `--refresh`, and the no-script fallback carries the equivalent meta refresh.
 The page shows how long ago it was rendered, so a board whose generator has stopped is visibly stale rather than quietly wrong.
+To have Firstmate also surface that condition at session start, opt in with the local, gitignored `config/mission-control-board` file described in [`docs/configuration.md`](configuration.md#mission-control-board-freshness-configmission-control-board--fm_mission_control_stale_secs).
+Its one line names either the generated board's absolute local file path or an `http://127.0.0.1` URL, optionally with a local port.
+The optional check reads the existing `rendered <ISO-8601 UTC timestamp>` footer without changing the board, and reports only a proved age beyond its default five-minute threshold.
+Set `FM_MISSION_CONTROL_STALE_SECS` to a positive decimal value to override that threshold.
+An unreadable target or malformed timestamp remains silent, so this detects a stale board without turning an unavailable local service into a startup alarm.
+When it does report staleness, restore or refresh the local generator and run another session start to confirm the board is current.
 
 The page is fully self-contained with inline styles and no external requests, so it renders correctly from a local file and over a private network.
 The generator does not serve it; how the file is exposed is decided outside it.

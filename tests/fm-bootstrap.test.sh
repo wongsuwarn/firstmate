@@ -16,7 +16,7 @@
 # which lavish-axi version is on PATH.
 # Dedicated fleet-sync cases pin the computed bootstrap timeout, explicit
 # override, blank-env defaulting, partial-output relay, and pre-launch timeout
-# scan.
+# scan. Mission Control cases pin its opt-in local board freshness diagnostic.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -877,6 +877,44 @@ test_routine_bootstrap_contract_runs_under_system_bash() {
   pass "bootstrap routine contract runs under system /bin/bash"
 }
 
+test_mission_control_board_staleness_check() {
+  local case_dir home fakebin board out fresh
+  case_dir="$TMP_ROOT/mission-control-staleness"
+  home="$case_dir/home"
+  mkdir -p "$home/config"
+  fakebin=$(make_fake_toolchain "$case_dir")
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "unconfigured Mission Control board check should be silent, got: $out"
+
+  board="$case_dir/board.html"
+  fresh=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  printf '<footer>rendered %s</footer>\n' "$fresh" > "$board"
+  printf '%s\n' "$board" > "$home/config/mission-control-board"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "fresh Mission Control board should be silent, got: $out"
+
+  printf '%s\n' '<footer>rendered 2000-01-01T00:00:00Z</footer>' > "$board"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  printf '%s\n' "$out" | grep -Eq '^MISSION_CONTROL_STALE: board last rendered 2000-01-01T00:00:00Z \(age [0-9]+s, threshold 300s\); refresh its local generator$' \
+    || fail "stale Mission Control board should report its diagnostic, got: $out"
+
+  printf '%s\n' "$case_dir/missing-board.html" > "$home/config/mission-control-board"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "unreadable Mission Control board should fail closed, got: $out"
+
+  printf '%s\n' '<footer>rendered 2025-02-30T00:00:00Z</footer>' > "$board"
+  printf '%s\n' "$board" > "$home/config/mission-control-board"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "malformed Mission Control timestamp should fail closed, got: $out"
+  pass "bootstrap checks opted-in fresh Mission Control boards and reports only proved staleness"
+}
+
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   local case_dir fakebin out expect
   case_dir="$TMP_ROOT/dispatch-active"
@@ -982,5 +1020,6 @@ test_fleet_sync_timeout_empty_override_uses_default
 test_fleet_sync_timeout_is_computed_before_launch
 test_routine_bootstrap_confirmations_are_silent
 test_routine_bootstrap_contract_runs_under_system_bash
+test_mission_control_board_staleness_check
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
 test_crew_dispatch_validation
