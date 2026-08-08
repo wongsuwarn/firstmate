@@ -735,7 +735,6 @@ CONFIG_INHERIT_LOCK_HELD=0
 SPAWN_REGISTRY_LOCK=
 SPAWN_REGISTRY_LOCK_HELD=0
 SPAWN_RESTART_HANDOFF=0
-SPAWN_RESTART_ENDPOINT_CREATED=0
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -786,7 +785,7 @@ spawn_record_publish() {  # <record> <destination> [recovery-prefix]
 }
 
 spawn_abort_cleanup() {
-  local status=$? endpoint_state=missing record_tmp='' record_ready=1 record_window=${T:-} restart_backup restart_endpoint_state record
+  local status=$? endpoint_state=missing record_tmp='' record_ready=1 record_window=${T:-} record
   if [ -n "$META_TMP" ]; then
     rm -f -- "$META_TMP" || true
     META_TMP=
@@ -857,6 +856,10 @@ spawn_abort_cleanup() {
       fm_backend_kill "$BACKEND" "$T" 2>/dev/null || true
       endpoint_state=$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null || printf 'unreadable')
     fi
+  fi
+  if [ "$LAUNCH_ENDPOINT_ATTEMPTED" = 1 ] && [ "$endpoint_state" = unreadable ] \
+     && [ -n "${T:-}" ]; then
+    endpoint_state=$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null || printf 'unreadable')
   fi
   if [ "$endpoint_state" != missing ]; then
     RESUME_META_RESTORE=0
@@ -936,23 +939,6 @@ spawn_abort_cleanup() {
      && [ "$LAUNCH_ABORT_FENCE_OWNED" = 1 ]; then
     if rm -f "$LAUNCH_ABORT_FENCE" 2>/dev/null; then
       LAUNCH_ABORT_FENCE_OWNED=0
-    fi
-  fi
-  if [ "$status" -ne 0 ] && [ "$SPAWN_RESTART_HANDOFF" = 1 ]; then
-    restart_backup="$STATE/.secondmate-restart-$ID.meta.bak"
-    restart_endpoint_state=missing
-    if [ "$SPAWN_RESTART_ENDPOINT_CREATED" = 1 ]; then
-      fm_backend_kill "$BACKEND" "$T" 2>/dev/null || true
-      restart_endpoint_state=$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null) \
-        || restart_endpoint_state=unreadable
-    fi
-    if [ "$restart_endpoint_state" = missing ]; then
-      if [ -f "$restart_backup" ] && [ ! -L "$restart_backup" ]; then
-        mv -f "$restart_backup" "$STATE/$ID.meta" 2>/dev/null \
-          || echo "warning: could not restore the previous secondmate record for $ID; it is preserved at $restart_backup" >&2
-      fi
-    else
-      echo "warning: failed restart replacement for $ID remains $restart_endpoint_state at $BACKEND endpoint $T; retaining its current record and the previous snapshot at $restart_backup" >&2
     fi
   fi
   if [ "$SPAWN_REGISTRY_LOCK_HELD" = 1 ]; then
@@ -2004,7 +1990,6 @@ fi
 # WT_TARGET to $T for them (and for any future backend) - the shared treehouse-get +
 # worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
 : "${WT_TARGET:=$T}"
-[ "$SPAWN_RESTART_HANDOFF" != 1 ] || SPAWN_RESTART_ENDPOINT_CREATED=1
 spawn_send_text_line() {  # <target> <text>
   case "$BACKEND" in
     tmux) fm_backend_tmux_send_text_line "$1" "$2" ;;
