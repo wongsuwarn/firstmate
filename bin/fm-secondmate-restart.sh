@@ -171,6 +171,7 @@ RESTART_LOCK="$STATE/.spawn-$ID.lock"
 REGISTRY_LOCK=$(secondmate_registry_lock_path "$STATE")
 RESTART_LOCK_HELD=0
 REGISTRY_LOCK_HELD=0
+# shellcheck disable=SC2329 # Registered by the EXIT trap below.
 release_restart_locks() {
   if [ "$REGISTRY_LOCK_HELD" = 1 ]; then
     REGISTRY_LOCK_HELD=0
