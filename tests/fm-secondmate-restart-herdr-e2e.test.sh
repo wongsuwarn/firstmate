@@ -74,6 +74,7 @@ HOME_DIR="$SCRATCH/home"
 SUB="$SCRATCH/sub"
 FAKEBIN="$SCRATCH/fakebin"
 mkdir -p "$HOME_DIR/data" "$HOME_DIR/state" "$HOME_DIR/config" "$HOME_DIR/projects" "$FAKEBIN"
+printf 'claude\n' > "$HOME_DIR/config/secondmate-harness"
 
 # A stand-in "claude" that registers itself as a real agent on its own Herdr
 # pane (Herdr injects HERDR_PANE_ID into every pane process) and then idles, so
