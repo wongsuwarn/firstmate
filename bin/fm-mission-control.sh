@@ -779,13 +779,24 @@ def updated_line($key):
 # never the sole claim. Colour states how the item is MOVING, which is a
 # different question from how far it has come: an item stopped at rung four is
 # still stopped.
+# A stage on a routed task crosses a home boundary - for a remote second mate,
+# a host boundary - and the summary validator type-checks the surfaces it carries
+# rather than the fields inside each row. So every number here is bounded before
+# it is drawn, and an unrecognised motion falls back to unknown rather than
+# reaching the page as a class with no colour rule behind it. The failure that
+# would cause is the exact one this ladder exists to prevent: rungs rendering
+# unfilled while the label beside them still claims a rung was reached.
 def work_row:
   . as $w |
   ($w.stage // null) as $st |
-  (if $st == null then 0 else ($st.ordinal // 0) end) as $ord |
-  (if $st == null then 5 else ($st.of // 5) end) as $of |
-  (if $st == null then "Stage unavailable" else ($st.label // "Stage unconfirmed") end) as $label |
-  (if $st == null then "unknown" else ($st.motion // "unknown") end) as $motion |
+  ((if $st == null then 5 else ($st.of // 5) end)
+   | if type != "number" then 5 else (floor | if . < 1 then 1 elif . > 5 then 5 else . end) end) as $of |
+  ((if $st == null then 0 else ($st.ordinal // 0) end)
+   | if type != "number" then 0 else (floor | if . < 0 then 0 elif . > $of then $of else . end) end) as $ord |
+  (if $st == null then "Stage unavailable"
+   else (($st.label // "Stage unconfirmed") | if type == "string" and . != "" then . else "Stage unconfirmed" end) end) as $label |
+  ((if $st == null then "unknown" else ($st.motion // "unknown") end)
+   | if IN("live", "waiting", "stopped", "done", "unknown") then . else "unknown" end) as $motion |
   (if $ord > 0 then "Stage \($ord) of \($of): \($label)" else $label end) as $bar_label |
   "<div class=\"wi\">"
   + "<div class=\"wi-head\">"
@@ -800,16 +811,22 @@ def work_row:
   + (@html "<span class=\"wi-stage m-\($motion)\">\($label)</span>")
   + "</div></div>";
 
-# The list a card shows beneath its count. The count above it is never capped,
-# so a shortened list states what it left out rather than reading as complete.
-def work_list($items):
+# The list a card shows beneath its count. The count above it is never capped, so
+# a shortened list states what it left out rather than reading as complete.
+#
+# The remainder is counted against the AUTHORITATIVE total on the card, not against
+# the rows that happened to arrive. A second mate home can bound its own reported
+# children before this board ever sees them, so counting the arrivals would state
+# a remainder smaller than the truth on exactly the busiest card.
+def work_list($items; $total):
   ($items // []) as $all |
+  ([($total // 0), ($all | length)] | max) as $count |
   if ($all | length) == 0 then ""
   else
     "<div class=\"wi-list\">"
     + (($all[0:$items_per_card] | map(work_row) | add) // "")
-    + (if ($all | length) > $items_per_card
-       then (@html "<p class=\"wi-more\">\(($all | length) - $items_per_card) more under way, not listed here.</p>")
+    + (if $count > ($all[0:$items_per_card] | length)
+       then (@html "<p class=\"wi-more\">\($count - ($all[0:$items_per_card] | length)) more under way, not listed here.</p>")
        else "" end)
     + "</div>"
   end;
@@ -961,7 +978,7 @@ def project_card:
   + (if $p.registered then "" else "<span class=\"sub-role\">&middot; unregistered</span>" end)
   + (@html "</span><span class=\"pill \(if $tone == "attn" then "attn" elif $tone == "live" then "live" elif $tone == "unknown" then "unknown" else "idle" end)\">\($pill)</span></div>
      <div class=\"proj-state\">\($state_line)</div>")
-  + work_list($p.items)
+  + work_list($p.items; $p.active)
   + meta_block($meta_line; $p.items)
   + updated_line($p.key)
   + (if ($p.mode // "") == "" then ""
@@ -1000,7 +1017,7 @@ def secondmate_card:
   + (@html "</span><span class=\"proj-name\">\($s.name)<span class=\"sub-role\">&middot; second mate</span></span>
      <span class=\"pill \(if $tone == "attn" then "attn" elif $tone == "live" then "live" elif $tone == "unknown" then "unknown" else "idle" end)\">\($pill)</span></div>
      <div class=\"proj-state\">\($state_line)</div>")
-  + work_list($s.items)
+  + work_list($s.items; $s.children)
   + meta_block($meta_line; $s.items)
   + updated_line($s.key)
   + "</div></div>";

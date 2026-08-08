@@ -72,7 +72,7 @@ make_clone() {  # <home> <name> <commit-epoch>
 # the board's own "today", one live ship task, a recorded PR, and a real clone
 # for one of the two registered projects.
 write_fixture() {  # <home>
-  local home=$1
+  local home=$1 fixture_gen
   mkdir -p "$home/projects/alpha-worktree"
   make_clone "$home" alpha "$TODAY_0905"
   cat > "$home/data/projects.md" <<'EOF'
@@ -102,6 +102,13 @@ EOF
     "yolo=on" \
     "pr=https://github.com/example/alpha/pull/9"
   printf 'working: intake form wired up\n' > "$home/state/ship-task.status"
+  # A task that is actually working proves it through its own semantic busy-state
+  # record (bin/fm-busy-lib.sh), which is what the current-state read consults;
+  # rendered pane text is not a state source. Without this the task reads
+  # unknown, and the live fixture would never exercise a real ladder rung.
+  fixture_gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" ship-task)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" ship-task busy --gen "$fixture_gen" \
+    --source claude-hook --event user-prompt-submit
 }
 
 # A minimal but schema-shaped snapshot, so a case can drive fields no local
@@ -290,6 +297,47 @@ test_unrecorded_item_facts_are_disclosed_rather_than_blanked() {
   pass "an item fact the fleet did not record is disclosed rather than blanked"
 }
 
+# A stage on a routed task crosses a home boundary, and for a remote second mate
+# a host boundary, so its numbers are another producer's. An out-of-range rung, a
+# huge scale, or a motion this board has no rule for must not be drawn as given:
+# the failure mode is a bar and its own label disagreeing, which is precisely
+# what the ladder exists to prevent.
+test_out_of_range_stage_values_are_bounded_before_they_are_drawn() {
+  local snap board
+  snap=$TMP_ROOT/hostile-stage.json
+  board=$TMP_ROOT/hostile-stage.html
+  snapshot_json '[]' '[{
+    "id": "oddmate", "registered": true, "provenance": {"selected": "structured-home"},
+    "current": {"state": "active_child_work", "reason": ""},
+    "active_children": [
+      {"id": "huge", "kind": "ship", "state": "working", "source": "pane",
+       "title": "Scale far beyond the ladder", "model": "claude-opus-5",
+       "stage": {"ordinal": 99, "of": 5000, "label": "Validating", "motion": "live"}},
+      {"id": "unknown-motion", "kind": "ship", "state": "working", "source": "pane",
+       "title": "Motion this board has no rule for", "model": "claude-opus-5",
+       "stage": {"ordinal": 3, "of": 5, "label": "Validating", "motion": "sideways"}}
+    ],
+    "decisions_open": [], "holds": [], "queued": [],
+    "counts": {"active_children": 2, "decisions_open": 0, "holds": 0, "queued": 0},
+    "omitted": []
+  }]' > "$snap"
+
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "an out-of-range stage must render rather than break the board"
+  assert_no_grep 'Stage 99 of 5000' "$board" \
+    "a rung and a scale from another home must be bounded before they are claimed"
+  assert_grep 'aria-label="Stage 5 of 5: Validating"' "$board" \
+    "an over-range rung must be clamped to the top of the ladder it is drawn on"
+  # Five rungs drawn and five filled: the bar and its label still agree.
+  assert_grep '<i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i>' "$board" \
+    "a clamped rung must fill exactly the rungs its label claims"
+  assert_no_grep 'm-sideways' "$board" \
+    "a motion with no rule behind it must never reach the page as a class"
+  assert_grep 'class="wi-bar m-unknown"' "$board" \
+    "an unrecognised motion must fall back to the tone that claims nothing"
+  pass "stage values from another home are bounded before the ladder is drawn"
+}
+
 # A card long enough to stop being readable is shortened in view. The count above
 # it is never capped, so the shortening has to say so or the list reads complete.
 test_long_item_list_is_shortened_without_hiding_the_count() {
@@ -315,6 +363,43 @@ test_long_item_list_is_shortened_without_hiding_the_count() {
   pass "a long item list is shortened in view but never silently"
 }
 
+# A second mate home bounds its own reported children before this board sees
+# them, so two different shortenings stack on one card. Counting the remainder
+# against the rows that arrived would understate it on exactly the busiest card.
+test_shortened_list_counts_against_the_authoritative_total() {
+  local snap board children i
+  snap=$TMP_ROOT/stacked.json
+  board=$TMP_ROOT/stacked.html
+  children=""
+  for i in 1 2 3 4 5 6 7 8; do
+    [ -z "$children" ] || children="$children,"
+    children="$children{\"id\": \"c$i\", \"kind\": \"ship\", \"state\": \"working\",
+      \"source\": \"pane\", \"title\": \"Routed task $i\", \"model\": \"claude-opus-5\",
+      \"stage\": {\"ordinal\": 2, \"of\": 5, \"label\": \"Building\", \"motion\": \"live\"}}"
+  done
+  # The home reports 20 active children and hands over only 8 of them.
+  snapshot_json '[]' "[{
+    \"id\": \"busymate\", \"registered\": true, \"provenance\": {\"selected\": \"structured-home\"},
+    \"current\": {\"state\": \"active_child_work\", \"reason\": \"\"},
+    \"active_children\": [$children],
+    \"decisions_open\": [], \"holds\": [], \"queued\": [],
+    \"counts\": {\"active_children\": 20, \"decisions_open\": 0, \"holds\": 0, \"queued\": 0},
+    \"omitted\": [{\"surface\": \"active_children\", \"count\": 12}]
+  }]" > "$snap"
+
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "a card whose home already bounded its children must render"
+  # 6 listed of 20 really under way: the remainder is 14, not the 2 that would
+  # come from counting only the 8 rows that reached this board.
+  assert_grep '14 more under way, not listed here.' "$board" \
+    "the remainder must be counted against the real total, not against the rows that arrived"
+  assert_no_grep '2 more under way, not listed here.' "$board" \
+    "counting only the delivered rows would understate what the captain cannot see"
+  assert_grep '20 active tasks (8 shown)' "$board" \
+    "the home bound must stay separately disclosed on the card"
+  pass "a shortened list counts its remainder against the authoritative total"
+}
+
 test_renders_live_fixture_home() {
   local home fakebin out board
   home=$(make_home live)
@@ -332,13 +417,20 @@ test_renders_live_fixture_home() {
   assert_grep 'Two rollout windows both cost money' "$board" "the captain-held reason must be shown"
   assert_grep 'https://github.com/example/alpha/pull/9' "$board" "a recorded PR must be surfaced as a call"
 
-  # End to end from the task metadata: the recorded model reaches the card as a
-  # readable name, and the item names itself rather than hiding behind the count.
+  # End to end from the task metadata through the snapshot to the card. Every
+  # other item case injects a stage object, so this is the only place that proves
+  # the board reads the stage at the path the snapshot writes it: a field-name
+  # drift between the two would quietly degrade every card to "Stage unavailable"
+  # while leaving the injected cases green.
   assert_grep '1 task under way' "$board" "the live count must survive on the card"
   assert_grep 'Rebuild the alpha intake form' "$board" \
     "the live task must name itself on its project card"
   assert_grep '>Opus 5</span>' "$board" \
     "the model recorded for the live task must reach its card as a name"
+  assert_grep 'aria-label="Stage 2 of 5: Building"' "$board" \
+    "a task working before validation must reach its card at the rung it earned"
+  assert_no_grep 'Stage unavailable' "$board" \
+    "a stage the snapshot derived must never read as unavailable on the card"
   assert_grep '1 decision and 1 PR await you' "$board" \
     "a project card must total the calls waiting on the captain"
   assert_grep 'class="proj-name">alpha' "$board" "each registered project must get a card"
@@ -1203,10 +1295,11 @@ controls_snapshot() {
          {"id": "t9", "key": "api-shape", "verb": "needs-decision", "summary": "Which API shape",
           "reason": null, "source": "status"}],
        "holds": [], "queued": [], "counts": {}, "omitted": []}]' \
-  | jq '.tasks = [{id: "t1", kind: "ship", project: "alpha",
+  | jq '.tasks = [{id: "t1", kind: "ship", project: "alpha", model: "claude-opus-5",
         backlog: {title: "Wire the intake form", repo: "alpha"},
         pr: {url: "https://github.com/example/alpha/pull/9"},
-        current_state: {state: "working"}}]'
+        current_state: {state: "working",
+          stage: {ordinal: 4, of: 5, label: "Checks running", motion: "live"}}}]'
 }
 
 # The reply layer must never appear unless it was asked for, because the same
@@ -1276,6 +1369,14 @@ test_controls_match_what_each_row_can_actually_resolve() {
   assert_contains "$block" 'data-open="reply"' "a PR awaiting the captain must offer a reply"
 
   assert_grep 'data-intent="ask"' "$board" "the board must offer one composer for a new ask"
+
+  # The item rows are read-only display and carry no control of their own, so the
+  # reply layer must be unchanged by their presence: this snapshot renders a full
+  # item row on the alpha card, and every control assertion above still holds.
+  assert_grep 'aria-label="Stage 4 of 5: Checks running"' "$board" \
+    "an item row must still render with the reply layer on"
+  assert_grep '>Opus 5</span>' "$board" \
+    "an item row must still name its model with the reply layer on"
 
   # Every control that can hold the refresh has to say so. The composer is
   # always open, so text left in it holds the board with no form to close.
@@ -1349,7 +1450,9 @@ test_in_progress_items_are_listed_with_stage_and_model
 test_stalled_items_do_not_read_as_progress
 test_model_ids_are_shown_as_readable_names
 test_unrecorded_item_facts_are_disclosed_rather_than_blanked
+test_out_of_range_stage_values_are_bounded_before_they_are_drawn
 test_long_item_list_is_shortened_without_hiding_the_count
+test_shortened_list_counts_against_the_authoritative_total
 test_renders_live_fixture_home
 test_project_last_change_comes_from_the_clone
 test_yesterday_uses_local_calendar_arithmetic
