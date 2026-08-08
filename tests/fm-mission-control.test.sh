@@ -1968,6 +1968,9 @@ test_decision_context_links_and_submission_state_in_a_browser() {
     {"state":"queued","id":"d-valid-ipv6","captain_actionable":true,
      "title":"Choose with an IPv6 aid","hold_reason":"The authority is private IPv6",
      "decision_url":"https://[fd00::1]/aid","repo":"sample"},
+    {"state":"queued","id":"d-valid-fqdn","captain_actionable":true,
+     "title":"Choose with an absolute FQDN aid","hold_reason":"The terminal root dot is valid",
+     "decision_url":"https://decision.example.com./aid","repo":"sample"},
     {"state":"queued","id":"d-invalid-port","captain_actionable":true,
      "title":"Choose despite an invalid port","hold_reason":"The port is out of range",
      "decision_url":"https://example.invalid:99999/aid","repo":"sample"},
@@ -2064,6 +2067,12 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   await send("Page.enable", {}, sid);
   await send("Runtime.enable", {}, sid);
   await send("Page.addScriptToEvaluateOnNewDocument", {source:`
+    window.__fmFrameTops=[];
+    window.addEventListener('DOMContentLoaded',function(){var left=8; function sample(){
+      var target=document.querySelector('[data-scroll-anchor="call:main:d-fallback::decision"]');
+      window.__fmFrameTops.push(target?target.getBoundingClientRect().top:null);
+      if(--left>0)requestAnimationFrame(sample);
+    } requestAnimationFrame(sample);});
     window.lavish={
       queuePrompt:function(prompt){
         if(localStorage.getItem("test-bridge-fail")==="1") throw new Error("queue failed");
@@ -2091,6 +2100,7 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       malformedAid:!!block('main','d-malformed-link').closest('.need-wrap').querySelector('.decision-aid'),
       invalidIpv6Aid:!!block('main','d-invalid-ipv6').closest('.need-wrap').querySelector('.decision-aid'),
       validIpv6Aid:!!block('main','d-valid-ipv6').closest('.need-wrap').querySelector('.decision-aid'),
+      validFqdnAid:!!block('main','d-valid-fqdn').closest('.need-wrap').querySelector('.decision-aid'),
       invalidPortAid:!!block('main','d-invalid-port').closest('.need-wrap').querySelector('.decision-aid'),
       localReport:(()=>{var row=block('main','local-lane-bakeoff-v2-powered-decision-widen-bounded-judgment-rung').closest('.need-wrap');
         var ref=row.querySelector('.local-ref'); return {text:ref&&ref.textContent,anchor:!!row.querySelector('a[href="data/local-lane-bakeoff-v2-powered/report.md"]')};})(),
@@ -2103,7 +2113,7 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(dom.empty === "Your answer", "an empty decision invented context");
   assert(dom.hostile === 'Question " ><img src=x onerror=alert(1)> stays text?' && dom.injectedImages === 0, "hostile question escaped its text context");
   assert(dom.aids.includes("https://sample.tailnet.invalid/decision-aid") && dom.aids.includes("https://ios.tailnet.invalid/decision-aid"), "main or secondmate decision aid was missing");
-  assert(dom.aids.includes("https://safe.invalid/?q=%22%3E%3Cscript%3E") && dom.validIpv6Aid && !dom.badAid && !dom.malformedAid
+  assert(dom.aids.includes("https://safe.invalid/?q=%22%3E%3Cscript%3E") && dom.validIpv6Aid && dom.validFqdnAid && !dom.badAid && !dom.malformedAid
     && !dom.invalidIpv6Aid && !dom.invalidPortAid, "valid hostile text or malformed link handling was wrong");
   assert(dom.localReport.text === "Local report: data/local-lane-bakeoff-v2-powered/report.md" && !dom.localReport.anchor,
     "the Qwen bounded-judgment report path was not preserved as non-clickable context");
@@ -2194,16 +2204,29 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
     var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d-empty');
     b.querySelector('[data-open=answer]').click(); var t=b.querySelector('textarea'); t.value='Frozen asynchronous answer';
     b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
-    var during={value:t.value,textLocked:t.disabled,closeLocked:b.querySelector('.rc-x').disabled,
-      submitLocked:b.querySelector('.rc-go').disabled};
-    t.value='Edited while queuing'; t.dispatchEvent(new Event('input',{bubbles:true})); b.querySelector('.rc-x').click();
-    await new Promise(r=>setTimeout(r,100)); localStorage.removeItem('test-queue-delay');
-    return {during,afterValue:t.value,label:b.querySelector('[data-open=answer]').textContent};
+    var saved=JSON.parse(sessionStorage.getItem('fm-mission-control-drafts-v1:'+window.__fmBoardScope)||'[]')
+      .find(x=>decodeURIComponent(x.identity.split(':')[1])==='d-empty');
+    return {value:t.value,textLocked:t.disabled,closeLocked:b.querySelector('.rc-x').disabled,
+      submitLocked:b.querySelector('.rc-go').disabled,saved,prompts:JSON.parse(localStorage.getItem('test-prompts')||'[]').length};
   })()`);
-  assert(asynchronous.during.value === 'Frozen asynchronous answer' && asynchronous.during.textLocked
-    && asynchronous.during.closeLocked && asynchronous.during.submitLocked
-    && asynchronous.afterValue === '' && asynchronous.label === 'Answer sent',
-    'an asynchronous queue allowed the frozen answer to be edited or cancelled: '+JSON.stringify(asynchronous));
+  assert(asynchronous.value === 'Frozen asynchronous answer' && asynchronous.textLocked
+    && asynchronous.closeLocked && asynchronous.submitLocked && asynchronous.saved
+    && asynchronous.saved.queued && asynchronous.saved.queued.status === 'queuing',
+    'an asynchronous enqueue attempt was not frozen and durably bound before acceptance: '+JSON.stringify(asynchronous));
+  await reload(sid);
+  const asynchronousRetry = await evaluate(sid, `(async()=>{
+    localStorage.removeItem('test-queue-delay');
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d-empty'); var t=b.querySelector('textarea');
+    var restored={value:t.value,textLocked:t.disabled,closeLocked:b.querySelector('.rc-x').disabled,
+      retry:!b.querySelector('.rc-go').disabled};
+    b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
+    return {restored,label:b.querySelector('[data-open=answer]').textContent,
+      prompts:JSON.parse(localStorage.getItem('test-prompts')||'[]').length};
+  })()`);
+  assert(asynchronousRetry.restored.value === 'Frozen asynchronous answer' && asynchronousRetry.restored.textLocked
+    && asynchronousRetry.restored.closeLocked && asynchronousRetry.restored.retry
+    && asynchronousRetry.label === 'Answer sent' && asynchronousRetry.prompts === asynchronous.prompts,
+    'reload during asynchronous queue acceptance re-queued or changed the frozen answer: '+JSON.stringify({asynchronous,asynchronousRetry}));
 
   const failed = await evaluate(sid, `(async()=>{
     localStorage.setItem('test-send-fail','1');
@@ -2278,10 +2301,12 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   })()`);
   fs.copyFileSync(shiftedPath, boardPath);
   await reload(sid);
-  const afterAnchorState = await evaluate(sid,"({top:document.querySelector('[data-scroll-anchor=\\\"call:main:d-fallback::decision\\\"]').getBoundingClientRect().top,hash:location.hash})");
+  const afterAnchorState = await evaluate(sid,"({top:document.querySelector('[data-scroll-anchor=\\\"call:main:d-fallback::decision\\\"]').getBoundingClientRect().top,hash:location.hash,frames:window.__fmFrameTops})");
   const afterAnchor = afterAnchorState.top;
   assert(Math.abs(afterAnchor - beforeAnchor) <= 3, `stable reading anchor shifted from ${beforeAnchor} to ${afterAnchor}`);
   assert(afterAnchorState.hash === '#tab=decisions', 'an internally generated tab fragment did not survive the external reload regression');
+  assert(afterAnchorState.frames.filter(x=>typeof x==='number').every(x=>Math.abs(x-beforeAnchor)<=3),
+    'the reading anchor visibly jumped during early refresh frames: '+JSON.stringify({beforeAnchor,afterAnchorState}));
 
   await evaluate(sid, `window.scrollTo(0,700); window.__fmSaveView(); sessionStorage.setItem(window.__fmReloadKey,'reload');`);
   await navigate(sid, readonlyPath);

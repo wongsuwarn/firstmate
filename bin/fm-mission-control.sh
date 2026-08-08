@@ -1019,8 +1019,10 @@ def valid_ipv4:
     test("^[0-9]{1,3}$") and (tonumber >= 0 and tonumber <= 255)));
 
 def valid_web_host:
-  . as $host |
-  ($host | length) > 0 and ($host | length) <= 253
+  . as $original |
+  (if ($original | endswith(".")) then $original[:-1] else $original end) as $host |
+  ($host | length) > 0
+  and (if ($original | endswith(".")) then ($original | length) <= 254 else ($original | length) <= 253 end)
   and ($host | split(".") | all(.[];
     (length > 0 and length <= 63 and test("^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$"))))
   and (if ($host | test("^[0-9.]+$"))
@@ -1936,6 +1938,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   window.__fmReloadKey = \"fm-mission-control-reload-v1:\" + scope;
   window.__fmExplicitEntry = !!(m && !(window.history && window.history.state
     && window.history.state.fmBoardScope === scope && window.history.state.fmBoardTab === m[1]));
+  try { if (window.history) { window.history.scrollRestoration = \"manual\"; } }
+  catch (e) { /* browser-native restoration remains the fallback */ }
   try {
     if (m && keys.indexOf(m[1]) !== -1) {
       window.localStorage.setItem(tabKey, m[1]);
@@ -2304,7 +2308,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     if (!restoringView) { saveView(); }
   }, {passive: true});
   window.addEventListener(\"pagehide\", saveView);
-  window.requestAnimationFrame(function () { window.requestAnimationFrame(restoreView); });
+  window.__fmRestoreView = restoreView;
+  if (!document.querySelector(\".rc\")) { restoreView(); }
 
   var every = " + (($refresh * 1000) | tostring) + ";
   var due = Date.now() + every;
@@ -2408,8 +2413,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         var pending = requestState[identity];
         if (!open && !note) { delete records[identity]; return; }
         records[identity] = {identity:identity,open:open,note:note};
-        if (pending && pending.status !== \"queuing\") {
-          records[identity].queued = {payload:pending.payload,note:pending.note};
+        if (pending) {
+          records[identity].queued = {status:pending.status,payload:pending.payload,note:pending.note};
         }
       });
     });
@@ -2436,6 +2441,9 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         if (record.open && form.hasAttribute(\"data-toggle\")) { shut(block); form.hidden = false; }
         if (record.queued && typeof record.queued.payload === \"string\"
             && typeof record.queued.note === \"string\") {
+          /* A persisted enqueue attempt is an identity receipt: after a reload
+             this page may flush that exact payload, but it must never enqueue
+             another one. The bridge reports an empty flush as failure. */
           requestState[record.identity] = {
             status:\"queued\", payload:record.queued.payload, note:record.queued.note
           };
@@ -2492,6 +2500,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   }
   restoreAcks();
   restoreDrafts();
+  if (window.__fmRestoreView) { window.__fmRestoreView(); }
 
   function freezePayload(block, form, state) {
     var area = form.querySelector(\".rc-t\");
@@ -2619,6 +2628,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         pending = {status:\"queuing\",payload:wire,note:note};
         requestState[requestIdentity] = pending;
         freezePayload(block, form, pending);
+        saveDrafts(true);
         var queued = lav.queuePrompt(wire, {
           tag: \"board-request\",
           text: summary(request.intent, block.getAttribute(\"data-what\") || \"\")

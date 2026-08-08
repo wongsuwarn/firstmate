@@ -114,6 +114,7 @@ A row the board cannot name unambiguously gets no controls, because a request fi
 The layer is hidden by CSS and revealed only after a script confirms the Lavish bridge is present.
 The same file served statically is therefore the read-only board exactly as before, with no controls and no dead affordances, and only the copy served through Lavish grows the reply layer.
 With script available, a managed reload preserves the active tab and meaningful reading position.
+Browser-native restoration is disabled and the saved anchor is applied synchronously after draft layout is restored, so refreshed content does not paint at an intermediate position and visibly jump back.
 With `--controls`, that reload also holds while a control is open or contains unsent text.
 The no-script fallback remains read-only and refreshes through its meta tag.
 
