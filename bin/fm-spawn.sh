@@ -786,11 +786,12 @@ spawn_record_publish() {  # <record> <destination> [recovery-prefix]
 }
 
 spawn_abort_cleanup() {
-  local status=$? endpoint_state=missing record_tmp='' record_ready=1 restart_backup restart_endpoint_state record
+  local status=$? endpoint_state=missing record_tmp='' record_ready=1 record_window=${T:-} restart_backup restart_endpoint_state record
   if [ -n "$META_TMP" ]; then
     rm -f -- "$META_TMP" || true
     META_TMP=
   fi
+  [ "$LAUNCH_ENDPOINT_ATTEMPTED" != 1 ] || endpoint_state=unreadable
   if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] \
      && [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
     if ! spawn_herdr_presentation_order_lock_acquire "${HERDR_PROJECTION_ABORT_SESSION:-}"; then
@@ -804,6 +805,10 @@ spawn_abort_cleanup() {
       "$HERDR_PROJECTION_ABORT_SESSION" \
       "$HERDR_PROJECTION_ABORT_TASK_PANE" \
       "$HERDR_PROJECTION_ABORT_SEEDED_PANE" || true
+    LAUNCH_ENDPOINT_CLEANUP=0
+    if [ -n "${T:-}" ]; then
+      endpoint_state=$(fm_backend_agent_state herdr "$T" 2>/dev/null || printf 'unreadable')
+    fi
   fi
   if [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" = 1 ]; then
     HERDR_PRESENTATION_ORDER_LOCK_HELD=0
@@ -811,11 +816,14 @@ spawn_abort_cleanup() {
   fi
   if [ "$ORCA_ABORT_CLEANUP" = 1 ]; then
     ORCA_ABORT_CLEANUP=0
+    LAUNCH_ENDPOINT_CLEANUP=0
     if [ -n "${ORCA_TERMINAL:-}" ]; then
       fm_backend_kill orca "$ORCA_TERMINAL" 2>/dev/null || true
     fi
     if [ -n "${ORCA_WORKTREE_ID:-}" ]; then
-      if ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
+      if fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
+        endpoint_state=missing
+      else
         mkdir -p "$STATE" 2>/dev/null || true
         if [ -d "$STATE" ]; then
           record="window=$W"$'\n'
@@ -843,7 +851,6 @@ spawn_abort_cleanup() {
       fi
     fi
   fi
-  [ "$LAUNCH_ENDPOINT_ATTEMPTED" != 1 ] || endpoint_state=unreadable
   if [ "$LAUNCH_ENDPOINT_CLEANUP" = 1 ]; then
     LAUNCH_ENDPOINT_CLEANUP=0
     if [ "$HERDR_PROJECTION_ABORT_CLEANUP" != 1 ] && [ -n "${T:-}" ]; then
@@ -854,11 +861,12 @@ spawn_abort_cleanup() {
   if [ "$endpoint_state" != missing ]; then
     RESUME_META_RESTORE=0
     if [ "$LAUNCH_NEW_META_PUBLISHED" != 1 ]; then
-      if [ -n "${T:-}" ]; then
+      [ "$BACKEND" != orca ] || record_window=$W
+      if [ -n "$record_window" ]; then
         RESUME_RECORD_WT=${WT:-${RESUME_WT:-}}
         record_tmp=$(umask 077; mktemp "$STATE/.spawn-abort-meta.XXXXXX") || record_ready=0
         if [ "$record_ready" = 1 ] && {
-          echo "window=$T"
+          echo "window=$record_window"
           echo "endpoint_task_id=$ID"
           echo "worktree=$RESUME_RECORD_WT"
           echo "project=$PROJ_ABS"
@@ -887,14 +895,17 @@ spawn_abort_cleanup() {
           fi
           if [ "$BACKEND" = orca ]; then
             echo "orca_worktree_id=${ORCA_WORKTREE_ID:-}"
-            echo "terminal=${ORCA_TERMINAL:-}"
+            [ -z "${ORCA_TERMINAL:-}" ] || echo "terminal=$ORCA_TERMINAL"
           fi
           if [ "$KIND" = secondmate ]; then
             echo "home=$PROJ_ABS"
             echo "projects=${SECONDMATE_PROJECTS:-}"
           fi
         } > "$record_tmp" 2>/dev/null; then
-          mv -f "$record_tmp" "$STATE/$ID.meta" 2>/dev/null || record_ready=0
+          if ! mv -f "$record_tmp" "$STATE/$ID.meta" 2>/dev/null \
+             || [ ! -f "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
+            record_ready=0
+          fi
         else
           record_ready=0
         fi
@@ -1981,7 +1992,6 @@ EOF
     T="$ORCA_TERMINAL"
     ;;
 esac
-[ "$BACKEND" != orca ] || ORCA_ABORT_CLEANUP=0
 LAUNCH_ENDPOINT_CLEANUP=1
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
@@ -2499,7 +2509,6 @@ if ! spawn_record_publish "$META_RECORD" "$STATE/$ID.meta"; then
   exit 1
 fi
 LAUNCH_NEW_META_PUBLISHED=1
-[ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
@@ -2646,6 +2655,7 @@ LAUNCH_ABORT_FENCE_OWNED=0
 LAUNCH_ENDPOINT_ATTEMPTED=0
 LAUNCH_ENDPOINT_CLEANUP=0
 LAUNCH_NEW_META_PUBLISHED=0
+ORCA_ABORT_CLEANUP=0
 RESUME_META_RESTORE=0
 [ -z "$RESUME_META_BACKUP" ] || rm -f "$RESUME_META_BACKUP" 2>/dev/null || true
 
