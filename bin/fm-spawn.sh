@@ -710,8 +710,10 @@ ORCA_ABORT_CLEANUP=0
 RESUME_WT=
 RESUME_META_BACKUP=
 RESUME_META_RESTORE=0
-RESUME_ENDPOINT_CLEANUP=0
-RESUME_NEW_META_PUBLISHED=0
+LAUNCH_ABORT_FENCE=
+LAUNCH_ABORT_FENCE_OWNED=0
+LAUNCH_ENDPOINT_CLEANUP=0
+LAUNCH_NEW_META_PUBLISHED=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
 HERDR_PROJECTION_ABORT_CLEANUP=0
@@ -780,7 +782,7 @@ spawn_record_publish() {  # <record> <destination> [recovery-prefix]
 }
 
 spawn_abort_cleanup() {
-  local status=$? restart_backup restart_endpoint_state record
+  local status=$? endpoint_state=unreadable record_tmp= record_ready=1 restart_backup restart_endpoint_state record
   if [ -n "$META_TMP" ]; then
     rm -f -- "$META_TMP" || true
     META_TMP=
@@ -837,27 +839,18 @@ spawn_abort_cleanup() {
       fi
     fi
   fi
-  # Resume transaction: the previous record may return only after the exact
-  # endpoint this invocation created is positively confirmed gone. A successful
-  # kill request is not proof - a delivery failure can occur after the agent has
-  # started, and a best-effort backend cleanup can leave that agent running.
-  # Keep a current endpoint record whenever its fate is anything but `missing`,
-  # so a retry cannot create an unrecorded duplicate on this task's worktree.
-  if [ "$RESUME_ENDPOINT_CLEANUP" = 1 ]; then
-    RESUME_ENDPOINT_CLEANUP=0
-    RESUME_ABORT_ENDPOINT_STATE=unreadable
+  if [ "$LAUNCH_ENDPOINT_CLEANUP" = 1 ]; then
+    LAUNCH_ENDPOINT_CLEANUP=0
     if [ "$HERDR_PROJECTION_ABORT_CLEANUP" != 1 ] && [ -n "${T:-}" ]; then
       fm_backend_kill "$BACKEND" "$T" 2>/dev/null || true
-      RESUME_ABORT_ENDPOINT_STATE=$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null || printf 'unreadable')
+      endpoint_state=$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null || printf 'unreadable')
     fi
-    if [ "$RESUME_ABORT_ENDPOINT_STATE" != missing ]; then
+    if [ "$endpoint_state" != missing ]; then
       RESUME_META_RESTORE=0
-      # Later launch-delivery failures already have a complete current record.
-      # Earlier failures need this minimal exact-endpoint record instead of the
-      # previous one, which may name another backend entirely.
-      if [ "$RESUME_NEW_META_PUBLISHED" != 1 ] && [ -n "${T:-}" ]; then
+      if [ "$LAUNCH_NEW_META_PUBLISHED" != 1 ] && [ -n "${T:-}" ]; then
         RESUME_RECORD_WT=${WT:-${RESUME_WT:-}}
-        {
+        record_tmp=$(umask 077; mktemp "$STATE/.spawn-abort-meta.XXXXXX") || record_ready=0
+        if [ "$record_ready" = 1 ] && {
           echo "window=$T"
           echo "endpoint_task_id=$ID"
           echo "worktree=$RESUME_RECORD_WT"
@@ -885,17 +878,44 @@ spawn_abort_cleanup() {
             echo "cmux_workspace_id=${CMUX_WORKSPACE_ID:-}"
             echo "cmux_surface_id=${CMUX_SURFACE_ID:-}"
           fi
-        } > "$STATE/$ID.meta" 2>/dev/null \
-          || echo "warning: could not retain the new endpoint record for $ID after unconfirmed cleanup" >&2
+          if [ "$BACKEND" = orca ]; then
+            echo "orca_worktree_id=${ORCA_WORKTREE_ID:-}"
+            echo "terminal=${ORCA_TERMINAL:-}"
+          fi
+          if [ "$KIND" = secondmate ]; then
+            echo "home=$PROJ_ABS"
+            echo "projects=${SECONDMATE_PROJECTS:-}"
+          fi
+        } > "$record_tmp" 2>/dev/null; then
+          mv -f "$record_tmp" "$STATE/$ID.meta" 2>/dev/null || record_ready=0
+        else
+          record_ready=0
+        fi
+        [ "$record_ready" = 1 ] || rm -f "$record_tmp" 2>/dev/null || true
       fi
-      echo "warning: resume cleanup for $ID left endpoint state $RESUME_ABORT_ENDPOINT_STATE; retained its new task record and previous record at $RESUME_META_BACKUP" >&2
+      if [ "$record_ready" = 1 ]; then
+        echo "warning: launch cleanup for $ID left endpoint state $endpoint_state; retained its new task record and retry fence" >&2
+      else
+        echo "warning: launch cleanup for $ID left endpoint state $endpoint_state; the retry fence remains because its new task record could not be published" >&2
+      fi
+    elif [ "$LAUNCH_NEW_META_PUBLISHED" = 1 ] && [ "$RESUME_META_RESTORE" != 1 ]; then
+      rm -f "$STATE/$ID.meta" 2>/dev/null || record_ready=0
     fi
   fi
   if [ "$RESUME_META_RESTORE" = 1 ]; then
     RESUME_META_RESTORE=0
     if [ -f "$RESUME_META_BACKUP" ]; then
       mv -f "$RESUME_META_BACKUP" "$STATE/$ID.meta" 2>/dev/null \
-        || echo "warning: could not restore the previous task record for $ID; it is preserved at $RESUME_META_BACKUP" >&2
+        || {
+          record_ready=0
+          echo "warning: could not restore the previous task record for $ID; it is preserved at $RESUME_META_BACKUP" >&2
+        }
+    fi
+  fi
+  if [ "$endpoint_state" = missing ] && [ "$record_ready" = 1 ] \
+     && [ "$LAUNCH_ABORT_FENCE_OWNED" = 1 ]; then
+    if rm -f "$LAUNCH_ABORT_FENCE" 2>/dev/null; then
+      LAUNCH_ABORT_FENCE_OWNED=0
     fi
   fi
   if [ "$status" -ne 0 ] && [ "$SPAWN_RESTART_HANDOFF" = 1 ]; then
@@ -1040,6 +1060,11 @@ else
     exit 1
   fi
   SPAWN_TASK_LOCK_HELD=1
+fi
+LAUNCH_ABORT_FENCE="$STATE/.spawn-$ID.abort"
+if [ -e "$LAUNCH_ABORT_FENCE" ] || [ -L "$LAUNCH_ABORT_FENCE" ]; then
+  echo "error: task $ID has an unresolved launch-abort fence; reconcile its recorded endpoint before retrying" >&2
+  exit 1
 fi
 PROJ=
 ARG3=
@@ -1668,19 +1693,36 @@ if [ "$RESUME_WT_SET" -eq 1 ]; then
   # The live pane read below is what actually records worktree=, so clear the
   # candidate again and let the same settle poll prove where the pane landed.
   WT=""
-  if [ -e "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
-    if [ ! -f "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
-      echo "error: the existing task record for $ID is not a regular file; refusing to resume against an unreadable identity" >&2
-      exit 1
-    fi
-    RESUME_META_BACKUP="$STATE/.resume-$ID.meta.bak"
-    cp "$STATE/$ID.meta" "$RESUME_META_BACKUP" || {
-      echo "error: could not snapshot the existing task record for $ID; refusing to resume without a recoverable record" >&2
-      exit 1
-    }
-    RESUME_META_RESTORE=1
-  fi
 fi
+
+RESUME_META_BACKUP="$STATE/.resume-$ID.meta.bak"
+if [ -e "$RESUME_META_BACKUP" ] || [ -L "$RESUME_META_BACKUP" ]; then
+  echo "error: task $ID has an unresolved launch record snapshot; reconcile it before retrying" >&2
+  exit 1
+fi
+if [ -e "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
+  if [ ! -f "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
+    echo "error: the existing task record for $ID is not a regular file; refusing to relaunch against an unreadable identity" >&2
+    exit 1
+  fi
+  cp "$STATE/$ID.meta" "$RESUME_META_BACKUP" || {
+    echo "error: could not snapshot the existing task record for $ID; refusing to relaunch without a recoverable record" >&2
+    exit 1
+  }
+  RESUME_META_RESTORE=1
+fi
+
+LAUNCH_ABORT_FENCE_TMP=$(umask 077; mktemp "$STATE/.spawn-abort-fence.XXXXXX") || {
+  echo "error: could not prepare a durable launch-abort fence for $ID" >&2
+  exit 1
+}
+if ! printf 'task=%s\n' "$ID" > "$LAUNCH_ABORT_FENCE_TMP" \
+   || ! mv -f "$LAUNCH_ABORT_FENCE_TMP" "$LAUNCH_ABORT_FENCE"; then
+  rm -f "$LAUNCH_ABORT_FENCE_TMP" 2>/dev/null || true
+  echo "error: could not publish a durable launch-abort fence for $ID" >&2
+  exit 1
+fi
+LAUNCH_ABORT_FENCE_OWNED=1
 
 W="fm-$ID"
 case "$BACKEND" in
@@ -1910,6 +1952,8 @@ EOF
     T="$ORCA_TERMINAL"
     ;;
 esac
+[ "$BACKEND" != orca ] || ORCA_ABORT_CLEANUP=0
+LAUNCH_ENDPOINT_CLEANUP=1
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
     propagate_inheritable_config "$CONFIG" "$PROJ_ABS/config" \
@@ -1922,9 +1966,6 @@ fi
 # worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
 : "${WT_TARGET:=$T}"
 [ "$SPAWN_RESTART_HANDOFF" != 1 ] || SPAWN_RESTART_ENDPOINT_CREATED=1
-# From here on a resume owns an endpoint it created, so an abort must remove
-# exactly that endpoint before restoring the previous record.
-[ "$RESUME_WT_SET" -eq 0 ] || RESUME_ENDPOINT_CLEANUP=1
 spawn_send_text_line() {  # <target> <text>
   case "$BACKEND" in
     tmux) fm_backend_tmux_send_text_line "$1" "$2" ;;
@@ -2428,7 +2469,7 @@ if ! spawn_record_publish "$META_RECORD" "$STATE/$ID.meta"; then
   echo "error: could not publish the task record for $ID; refusing to report a spawn firstmate cannot supervise" >&2
   exit 1
 fi
-RESUME_NEW_META_PUBLISHED=1
+LAUNCH_NEW_META_PUBLISHED=1
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
 sq_brief=$(shell_quote "$BRIEF")
@@ -2568,11 +2609,14 @@ fi
 
 # The relaunch landed: commit the resume transaction so the abort path stops
 # owning this endpoint and the previous record's snapshot is dropped.
-if [ "$RESUME_WT_SET" -eq 1 ]; then
-  RESUME_ENDPOINT_CLEANUP=0
-  RESUME_META_RESTORE=0
-  [ -z "$RESUME_META_BACKUP" ] || rm -f "$RESUME_META_BACKUP" 2>/dev/null || true
+if ! rm -f "$LAUNCH_ABORT_FENCE"; then
+  echo "error: launch for $ID completed, but its retry fence could not be cleared" >&2
+  exit 1
 fi
+LAUNCH_ABORT_FENCE_OWNED=0
+LAUNCH_ENDPOINT_CLEANUP=0
+RESUME_META_RESTORE=0
+[ -z "$RESUME_META_BACKUP" ] || rm -f "$RESUME_META_BACKUP" 2>/dev/null || true
 
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"

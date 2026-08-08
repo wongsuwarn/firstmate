@@ -436,8 +436,9 @@ test_repeated_handoff_attempts_stop_and_report_the_blocker() {
 # send (FM_FAKE_FAIL_LITERAL=1) so the post-record failure path is reachable
 # without a real harness.
 make_resume_fakebin() {
-  local dir=$1 fakebin
+  local dir=$1 fakebin real_mv
   fakebin=$(fm_fakebin "$dir")
+  real_mv=$(command -v mv)
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -493,6 +494,18 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  cat > "$fakebin/mv" <<SH
+#!/usr/bin/env bash
+last=
+for arg in "\$@"; do
+  last=\$arg
+done
+if [ -n "\${FM_FAKE_FAIL_META_PATH:-}" ] && [ "\$last" = "\$FM_FAKE_FAIL_META_PATH" ]; then
+  exit 1
+fi
+exec "$real_mv" "\$@"
+SH
+  chmod +x "$fakebin/mv"
   fm_fake_exit0 "$fakebin" treehouse
   printf '%s\n' "$fakebin"
 }
@@ -555,6 +568,8 @@ run_resume_spawn() {
     FM_FAKE_KILL_LOG="${FM_FAKE_KILL_LOG:-}" FM_FAKE_FAIL_LITERAL="${FM_FAKE_FAIL_LITERAL:-0}" \
     FM_FAKE_ENDPOINT_FILE="${FM_FAKE_ENDPOINT_FILE:-$home/.fake-endpoint}" \
     FM_FAKE_KEEP_ENDPOINT="${FM_FAKE_KEEP_ENDPOINT:-0}" \
+    FM_FAKE_FAIL_META_PATH="${FM_FAKE_FAIL_META_PATH:-}" \
+    FM_SKIP_SECONDMATE_INHERIT=1 \
     PATH="$fakebin:$PATH" "$SPAWN" "$@" 2>&1)
   SPAWN_STATUS=$?
   set -e
@@ -683,6 +698,63 @@ test_failed_relaunch_retains_new_record_when_cleanup_is_unconfirmed() {
   pass "a failed relaunch never restores an old record while its new endpoint remains unconfirmed"
 }
 
+test_failed_relaunch_keeps_retry_fence_when_record_publish_fails() {
+  local rec id
+  id=resume-fenced-cleanup-e5
+  rec=$(make_resume_case resume-fenced-cleanup "$id")
+  read_resume_record "$rec"
+
+  FM_FAKE_KEEP_ENDPOINT=1 FM_FAKE_FAIL_META_PATH="$HOME_DIR/state/$id.meta" \
+    run_resume_spawn "$HOME_DIR" "$FAKEBIN_DIR" "$OTHER_WT" \
+      "$id" "$PROJ_DIR" --mode no-mistakes --yolo off \
+      --harness claude --resume-worktree "$WT_DIR"
+  [ "$SPAWN_STATUS" != 0 ] || fail "a failed fallback record publication reported success"
+  assert_present "$HOME_DIR/state/.spawn-$id.abort" \
+    "fallback publication failure released the durable retry fence"
+  assert_present "$HOME_DIR/state/.resume-$id.meta.bak" \
+    "fallback publication failure discarded the previous task record"
+
+  FM_FAKE_FAIL_META_PATH= run_resume_spawn "$HOME_DIR" "$FAKEBIN_DIR" "$WT_DIR" \
+    "$id" "$PROJ_DIR" --mode no-mistakes --yolo off \
+    --harness claude --resume-worktree "$WT_DIR"
+  expect_code 1 "$SPAWN_STATUS" "an unresolved launch-abort fence must refuse a retry"
+  assert_contains "$SPAWN_OUT" "unresolved launch-abort fence" \
+    "the fenced retry refusal did not name its durable blocker"
+  pass "failed fallback publication leaves a durable fence that refuses duplicate retries"
+}
+
+test_secondmate_launch_failure_uses_the_shared_abort_fence() {
+  local case_dir home sm fakebin id
+  id=secondmate-abort-f6
+  case_dir="$TMP_ROOT/secondmate-abort"
+  home="$case_dir/home"
+  sm="$case_dir/secondmate"
+  fakebin=$(make_resume_fakebin "$case_dir/fake")
+  mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config" \
+    "$sm/bin" "$sm/data" "$sm/state" "$sm/config" "$sm/projects"
+  printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
+  printf '# Firstmate\n' > "$sm/AGENTS.md"
+  printf 'secondmate charter\n' > "$sm/data/charter.md"
+  touch "$home/state/.last-watcher-beat"
+
+  FM_FAKE_FAIL_LITERAL=1 FM_FAKE_KEEP_ENDPOINT=1 \
+    run_resume_spawn "$home" "$fakebin" "$sm" \
+      "$id" "$sm" --harness claude --secondmate
+  [ "$SPAWN_STATUS" != 0 ] || fail "a failed secondmate delivery reported success"
+  assert_grep 'kind=secondmate' "$home/state/$id.meta" \
+    "failed secondmate delivery did not retain its exact new task record"
+  assert_present "$home/state/.spawn-$id.abort" \
+    "failed secondmate delivery did not retain the shared retry fence"
+
+  FM_FAKE_FAIL_LITERAL=0 FM_FAKE_KEEP_ENDPOINT=0 \
+    run_resume_spawn "$home" "$fakebin" "$sm" \
+      "$id" "$sm" --harness claude --secondmate
+  expect_code 1 "$SPAWN_STATUS" "an unresolved secondmate endpoint must refuse a restart retry"
+  assert_contains "$SPAWN_OUT" "unresolved launch-abort fence" \
+    "the secondmate retry did not use the shared launch-abort refusal"
+  pass "secondmate delivery failures share the durable launch-abort fence"
+}
+
 test_resume_refuses_shapes_that_would_split_or_misplace_a_task() {
   local rec id
   id=resume-refusals-d4
@@ -782,6 +854,8 @@ test_resume_reuses_the_recorded_isolated_copy_and_preserves_work
 test_resume_refuses_a_pane_that_settled_on_another_copy
 test_failed_relaunch_leaves_the_original_record_and_work_recoverable
 test_failed_relaunch_retains_new_record_when_cleanup_is_unconfirmed
+test_failed_relaunch_keeps_retry_fence_when_record_publish_fails
+test_secondmate_launch_failure_uses_the_shared_abort_fence
 test_resume_refuses_shapes_that_would_split_or_misplace_a_task
 test_resume_preserves_backend_and_harness_validation
 test_ordinary_spawn_is_unchanged_without_the_resume_flag
