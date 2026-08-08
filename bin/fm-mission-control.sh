@@ -29,6 +29,8 @@
 # The first six items stay open at a glance and every additional received item
 # remains available in the same expandable shelf idiom as Deferred. Rows omitted
 # upstream remain disclosed separately and are never presented as shelf contents.
+# Only the Deferred shelf persists its open state; project overflow shelves do not
+# read or write that preference.
 #
 # A captain decision the captain has consciously set aside leaves "Awaiting your
 # decision" and its count, and appears in the quiet, closed-by-default Deferred
@@ -1502,7 +1504,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
      + (($waiting_prs | map(need_item) | add) // "") + "</div>" end)
 + ask_block
 + (if $deferred_count == 0 then ""
-   else "<details class=\"shelf\"><summary>"
+   else "<details class=\"shelf\" id=\"deferred-shelf\"><summary>"
      + "<svg class=\"chev\" viewBox=\"0 0 24 24\"><polyline points=\"9 6 15 12 9 18\"/></svg>"
      + "<span class=\"stitle\">Deferred</span>"
      + (@html "<span class=\"scount\">\($deferred_count) set aside</span>")
@@ -1655,7 +1657,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
      decisions must not be undone by the next self-reload. It is remembered the
      same way, so it stays shut for a captain who never opens it and stays open
      for one who does, until they close it again. */
-  var shelf = document.querySelector(\"details.shelf\");
+  var shelf = document.getElementById(\"deferred-shelf\");
   if (shelf) {
     try {
       if (window.localStorage.getItem(\"fm-mission-control-deferred\") === \"open\") { shelf.open = true; }

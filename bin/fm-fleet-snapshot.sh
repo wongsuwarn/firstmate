@@ -33,12 +33,13 @@
 #     current_state.stage is the derived lifecycle position: {ordinal,of,label,
 #     motion} on a fixed five-rung Setup/Building/Validating/Checks/Ready scale,
 #     with motion one of live, ready, waiting, stopped, done, or unknown. Setup
-#     requires present metadata and a live recorded endpoint with no observed
-#     activity. Ready is checks-green work awaiting the captain and is distinct
-#     from terminal Done. A rung is a position live state can prove and carries
-#     NO completion estimate; ordinal 0 means the stage is unconfirmed. Renderers
-#     show this rather than deriving a stage from current_state.detail prose
-#     themselves.
+#     claims only present metadata, a present recorded endpoint, and no observed
+#     current-state source or activity; secondmates additionally require their
+#     already-populated agent liveness to be alive. Ready is checks-green work
+#     awaiting the captain and is distinct from terminal Done. A rung is a
+#     position live state can prove and carries NO completion estimate; ordinal 0
+#     means the stage is unconfirmed. Renderers show this rather than deriving a
+#     stage from current_state.detail prose themselves.
 #     paths.status_log.last_event is historical wake-event data only, never
 #     current state.
 #     hints.open_decisions is the keyed open-decision set returned by
@@ -253,8 +254,8 @@ crew_state_json() {  # <id> <setup-proven-json>
     #
     # The scale is deliberately coarse and carries NO completion estimate: a rung
     # is a lifecycle position that live state can prove, never a fraction of the
-    # work done. Setup is a task with a verified live endpoint but no observed
-    # activity source yet, Building is a worker active before validation,
+    # work done. Setup is registered work with a present recorded endpoint but no
+    # observed activity source yet, Building is a worker active before validation,
     # Validating is an attributed run, Checks is that run in CI, and Ready is
     # checks green while awaiting review or merge.
     #
@@ -281,8 +282,8 @@ crew_state_json() {  # <id> <setup-proven-json>
      elif $state == "paused" then {ordinal: $reached, label: "Paused", motion: "waiting"}
      elif $state == "blocked" then {ordinal: $reached, label: "Blocked", motion: "stopped"}
      elif $state == "failed" then {ordinal: $reached, label: "Failed", motion: "stopped"}
-     elif $parsed and $state == "unknown" and $setup_proven then
-       {ordinal: 1, label: "Setup", motion: "live"}
+     elif $parsed and $state == "unknown" and $source == "none" and $setup_proven then
+       {ordinal: 1, label: "Setup: endpoint present", motion: "live"}
      else {ordinal: 0, label: "Stage unconfirmed", motion: "unknown"} end) as $stage |
     {state: $state, source: $source, detail: $detail, raw: $raw,
      stage: ($stage + {of: 5})}'

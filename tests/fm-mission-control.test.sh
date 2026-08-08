@@ -382,6 +382,8 @@ test_long_item_list_keeps_every_item_in_an_expandable_shelf() {
   assert_grep 'Task number 6' "$board" "the open item list must reach the shelf boundary"
   assert_grep '<details class="shelf"><summary>' "$board" \
     "overflow must reuse the board's expandable shelf"
+  assert_no_grep '<details class="shelf" id="deferred-shelf">' "$board" \
+    "a project overflow shelf must not identify itself as Deferred"
   assert_grep '<span class="stitle">More in progress</span><span class="scount">2 more</span>' "$board" \
     "the shelf summary must state how many received rows it contains"
   assert_grep 'Task number 7' "$board" "the first shelved item must remain in the page"
@@ -706,7 +708,8 @@ EOF
   # Present once, in the shelf, with the reason that identifies it.
   [ "$(grep -c 'Approve the Pushcut Pro subscription' "$board")" = 1 ] \
     || fail "a deferred decision must appear exactly once, in the shelf"
-  assert_grep 'class="shelf"' "$board" "a deferred decision must render a deferred shelf"
+  assert_grep 'class="shelf" id="deferred-shelf"' "$board" \
+    "a deferred decision must render the uniquely identified deferred shelf"
   assert_grep '1 set aside' "$board" "the shelf must say how many decisions are set aside"
   assert_grep 'class="defer"' "$board" "the deferred decision must render as a deferred row"
   assert_grep 'The subscription renews yearly' "$board" \
@@ -801,6 +804,10 @@ test_navigation_tabs_group_the_board() {
   # An opened shelf snapping shut mid-read is the same reset the tabs avoid.
   assert_grep 'localStorage.setItem("fm-mission-control-deferred"' "$board" \
     "an opened deferred shelf must survive the board's own reload"
+  assert_grep 'document.getElementById("deferred-shelf")' "$board" \
+    "deferred persistence must target only the deferred shelf"
+  assert_no_grep 'document.querySelector("details.shelf")' "$board" \
+    "project overflow shelves must not share deferred persistence"
   assert_no_grep 'src="http' "$board" "the tabs must not depend on a network asset"
   pass "the board groups its sections behind keyboard-reachable navigation tabs"
 }

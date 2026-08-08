@@ -641,12 +641,19 @@ stage_of() {  # <home> <id> -> echoes the derived stage as compact JSON
     | jq -c --arg id "$id" '.tasks[] | select(.id == $id) | .current_state.stage'
 }
 
+current_state_of() {  # <home> <id> -> echoes current state as compact JSON
+  local home=$1 id=$2 fakebin
+  fakebin=$(make_run_fakebin "$home")
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json \
+    | jq -c --arg id "$id" '.tasks[] | select(.id == $id) | .current_state'
+}
+
 # The five-rung ladder is the board's honest substitute for a completion
 # percentage, so every rung it can claim is pinned to the live state that earns
 # it. A stage that drifted up a rung would overstate progress on every card at
 # once, and the ladder is only worth drawing while each rung means one thing.
 test_lifecycle_stage_is_derived_from_live_state() {
-  local home wt head stage
+  local home wt head stage current
   home=$(make_home stage-ladder)
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
   wt="$home/projects/stage-wt"
@@ -724,20 +731,61 @@ gate: review"
   printf '%s' "$stage" | jq -e '.ordinal == 5 and .motion == "done"' >/dev/null \
     || fail "a passed run must top the ladder: $stage"
 
-  # Present metadata plus a verified live endpoint, with no observed activity,
-  # proves only Setup and no later rung.
+  # Present metadata plus a present endpoint, with no observed activity or
+  # current-state source, proves only the weaker Setup claim and no later rung.
   FM_FAKE_AXI_STATUS=""
-  stage=$(stage_of "$home" stage-task)
-  printf '%s' "$stage" | jq -e '.ordinal == 1 and .label == "Setup" and .motion == "live"' >/dev/null \
-    || fail "a live worker with no observed activity must sit at Setup: $stage"
+  current=$(current_state_of "$home" stage-task)
+  printf '%s' "$current" | jq -e '.source == "none" and .stage.ordinal == 1 and .stage.label == "Setup: endpoint present" and .stage.motion == "live"' >/dev/null \
+    || fail "registered work with a present endpoint and no observed activity must sit at Setup: $current"
+
+  FM_FAKE_AXI_STATUS="run:
+  id: \"01RUN\"
+  branch: fm/stage
+  status: completed
+  outcome: unrecognised
+  head: \"$head\"
+  pr: \"\"
+  findings: none"
+  current=$(current_state_of "$home" stage-task)
+  printf '%s' "$current" | jq -e '.state == "unknown" and .source == "run-step" and .stage.ordinal == 0 and .stage.label == "Stage unconfirmed"' >/dev/null \
+    || fail "an unknown run-step state must not be relabelled as Setup: $current"
 
   # An absent or unreadable endpoint cannot prove Setup from metadata alone.
+  FM_FAKE_AXI_STATUS=""
   FM_FAKE_TMUX_RC=1
   stage=$(stage_of "$home" stage-task)
   printf '%s' "$stage" | jq -e '.ordinal == 0 and .motion == "unknown"' >/dev/null \
     || fail "a task without a verifiably live endpoint must claim no rung at all: $stage"
   unset FM_FAKE_TMUX_RC
   pass "the lifecycle stage is derived from live state, one rung per proven step"
+}
+
+test_setup_stage_uses_existing_secondmate_liveness() {
+  local home fakebin out
+  home=$(make_home secondmate-setup)
+  mkdir -p "$home/alive-home" "$home/dead-home"
+  fm_write_meta "$home/state/alive-setup.meta" \
+    "window=firstmate:fm-alive-setup" "worktree=$home/alive-home" \
+    "project=$home/alive-home" "home=$home/alive-home" "harness=codex" \
+    "kind=secondmate" "mode=secondmate"
+  fm_write_meta "$home/state/dead-secondmate.meta" \
+    "window=firstmate:fm-dead-secondmate" "worktree=$home/dead-home" \
+    "project=$home/dead-home" "home=$home/dead-home" "harness=codex" \
+    "kind=secondmate" "mode=secondmate"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.tasks[] | select(.id == "alive-setup")
+      | .endpoint.exists == true and .endpoint.agent_alive == "alive"
+        and .current_state.source == "none"
+        and .current_state.stage.ordinal == 1
+        and .current_state.stage.label == "Setup: endpoint present")
+    and (.tasks[] | select(.id == "dead-secondmate")
+      | .endpoint.exists == true and .endpoint.agent_alive == "dead"
+        and .current_state.stage.ordinal == 0
+        and .current_state.stage.label == "Stage unconfirmed")
+  ' >/dev/null || fail "secondmate Setup must require its existing agent-liveness evidence: $out"
+  pass "secondmate Setup uses its existing agent-liveness evidence"
 }
 
 # The model is what the captain reads to know which worker is on a task, and it
@@ -997,6 +1045,7 @@ test_parked_scout_decision_stays_pending
 test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
 test_lifecycle_stage_is_derived_from_live_state
+test_setup_stage_uses_existing_secondmate_liveness
 test_recorded_model_reaches_the_task_row
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status

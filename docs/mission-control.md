@@ -19,7 +19,8 @@ Each project card instead states only what live state can prove: what is under w
 "What is under way" is listed item by item, because a count says something is happening without saying what.
 Each item names itself, names the model its worker is running on, and shows how far it has travelled as a five-rung ladder - Setup, Building, Validating, Checks, Ready - always labelled with the stage it has reached.
 A rung is a lifecycle position the fleet can prove, never a fraction of the work done, and the colour of the filled rungs says whether the item is still moving, so an item stopped at rung four keeps the rungs it earned and still reads as stopped.
-Setup is shown only when task metadata and a live recorded endpoint prove that the worker exists but no activity has been observed yet.
+Setup is labelled `Setup: endpoint present` only when task metadata and recorded endpoint presence are available but no current-state source or activity has been observed yet.
+For ordinary work this is an endpoint-presence claim, not proof that a live worker is running; second mates use their already-available agent-liveness result as an additional requirement.
 Ready keeps the top rung but uses the board's amber needs-you tone because green checks awaiting review or merge are not completed work.
 The stage itself is derived by the snapshot rather than by the board; see `bin/fm-fleet-snapshot.sh` for the `current_state.stage` contract.
 
@@ -67,6 +68,7 @@ A browser that refuses storage - a private context, or a restricted `file://` or
 
 The Deferred shelf is held to the same bar, because a shelf that snapped shut every 25 seconds would be the same jarring reset in a smaller place.
 It is closed for a captain who never opens it, stays open for one who does, and stays closed again once they close it.
+Project overflow shelves do not share or persist the Deferred shelf preference.
 
 ## Replying from the board
 
