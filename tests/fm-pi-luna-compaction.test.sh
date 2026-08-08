@@ -139,6 +139,22 @@ for (const [name, luna] of [
   if (run.error || run.calls.map((call) => call.model.id).join() !== "gpt-5.6-luna,gpt-5.6-sol") throw new Error(`${name} did not fall back to Sol exactly once`);
 }
 
+// Cached prompt tokens count as received input and do not trigger a false partial-result fallback.
+{
+  const cachedUsage = { ...usage, input: 10, cacheRead: 200, cacheWrite: 790 };
+  const run = await invoke({ plan: { [models.luna.id]: result(valid(), cachedUsage) } });
+  if (run.error || run.calls.length !== 1 || run.calls[0].model.id !== models.luna.id) throw new Error("complete cached input was treated as partial");
+}
+
+// UTF-8 byte density bounds high-token-density prepared input before Luna is called.
+{
+  const dense = preparation({ messagesToSummarize: [{ role: "user", content: "😀".repeat(2000) }] });
+  models.luna.contextWindow = 20000;
+  const run = await invoke({ prep: dense, plan: { [models.sol.id]: result() } });
+  models.luna.contextWindow = 272000;
+  if (run.error || run.calls.map((call) => call.model.id).join() !== models.sol.id) throw new Error("dense oversize Luna input passed preflight");
+}
+
 // A rejected Luna followed by rejected Sol cancels and reports the full reason, preventing Pi's default fallback.
 {
   const run = await invoke({ plan: { [models.luna.id]: result(malformed), [models.sol.id]: result(malformed) } });
@@ -168,7 +184,7 @@ for (const [name, luna] of [
   const noFiles = { readFiles: [], modifiedFiles: [] };
   const split = preparation({ isSplitTurn: true, turnPrefixMessages: [{ role: "user", content: "prefix" }], fileOps: { read: new Set(), written: new Set(), edited: new Set() } });
   const splitSummary = `${historySummary()}\n\n---\n\n**Turn Context (split turn):**\n\n## Original Request\nrequest\n## Early Progress\n- progress\n## Context for Suffix\n- suffix`;
-  models.luna.contextWindow = 16000;
+  models.luna.contextWindow = 18000;
   const run = await invoke({ prep: split, plan: { [models.luna.id]: result(splitSummary, usage, noFiles) } });
   models.luna.contextWindow = 272000;
   if (run.error || run.calls.length !== 1 || run.calls[0].model.id !== models.luna.id) throw new Error("independently safe split requests failed preflight");

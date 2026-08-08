@@ -46,7 +46,8 @@ type CompactionAttempt = {
 };
 
 type RequestSegment = {
-  inputTokens: number;
+  inputBoundTokens: number;
+  expectedInputTokens: number;
   outputTokens: number;
 };
 
@@ -55,12 +56,16 @@ type CompactionDetails = {
   modifiedFiles: string[];
 };
 
-function textTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+function encodedBytes(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
 }
 
-function serializedTokens(messages: CompactionPreparation["messagesToSummarize"]): number {
-  return textTokens(serializeConversation(convertToLlm(messages)));
+function estimatedTokens(text: string): number {
+  return Math.ceil(encodedBytes(text) / 4);
+}
+
+function serializedText(messages: CompactionPreparation["messagesToSummarize"]): string {
+  return serializeConversation(convertToLlm(messages));
 }
 
 function maximumOutputTokens(model: Model<any>, preparation: CompactionPreparation, split: boolean): number {
@@ -69,10 +74,23 @@ function maximumOutputTokens(model: Model<any>, preparation: CompactionPreparati
   return Math.min(Math.floor(fraction * preparation.settings.reserveTokens), modelLimit);
 }
 
-function historyInputTokens(preparation: CompactionPreparation, customInstructions?: string): number {
-  const previous = preparation.previousSummary ? textTokens(preparation.previousSummary) : 0;
-  const instructions = customInstructions ? textTokens(customInstructions) : 0;
-  return serializedTokens(preparation.messagesToSummarize) + previous + instructions + COMPACTION_SAFETY_POLICY.requestOverheadTokens;
+function inputMeasurements(parts: readonly string[]): Pick<RequestSegment, "inputBoundTokens" | "expectedInputTokens"> {
+  const bytes = parts.reduce((total, part) => total + encodedBytes(part), 0);
+  return {
+    inputBoundTokens: bytes + COMPACTION_SAFETY_POLICY.requestOverheadTokens,
+    expectedInputTokens: Math.ceil(bytes / 4),
+  };
+}
+
+function historyInputMeasurements(
+  preparation: CompactionPreparation,
+  customInstructions?: string,
+): Pick<RequestSegment, "inputBoundTokens" | "expectedInputTokens"> {
+  return inputMeasurements([
+    serializedText(preparation.messagesToSummarize),
+    preparation.previousSummary ?? "",
+    customInstructions ?? "",
+  ]);
 }
 
 function requestSegments(
@@ -84,18 +102,18 @@ function requestSegments(
     const segments: RequestSegment[] = [];
     if (preparation.messagesToSummarize.length > 0) {
       segments.push({
-        inputTokens: historyInputTokens(preparation, customInstructions),
+        ...historyInputMeasurements(preparation, customInstructions),
         outputTokens: maximumOutputTokens(model, preparation, false),
       });
     }
     segments.push({
-      inputTokens: serializedTokens(preparation.turnPrefixMessages) + COMPACTION_SAFETY_POLICY.requestOverheadTokens,
+      ...inputMeasurements([serializedText(preparation.turnPrefixMessages)]),
       outputTokens: maximumOutputTokens(model, preparation, true),
     });
     return segments;
   }
   return [{
-    inputTokens: historyInputTokens(preparation, customInstructions),
+    ...historyInputMeasurements(preparation, customInstructions),
     outputTokens: maximumOutputTokens(model, preparation, false),
   }];
 }
@@ -106,7 +124,7 @@ function modelCanReceivePreparation(
   customInstructions?: string,
 ): boolean {
   return requestSegments(model, preparation, customInstructions)
-    .every((segment) => segment.inputTokens + segment.outputTokens <= model.contextWindow);
+    .every((segment) => segment.inputBoundTokens + segment.outputTokens <= model.contextWindow);
 }
 
 function headingMatches(text: string, heading: string): RegExpMatchArray[] {
@@ -204,17 +222,16 @@ function usageSuggestsTruncation(
   if (!usage || usage.output <= 0) return false;
   if (usage.output >= envelopes.reduce((total, segment) => total + segment.outputTokens, 0)
     * COMPACTION_SAFETY_POLICY.outputCeilingFraction) return true;
-  return segments.some((segment, index) => textTokens(segment) >= envelopes[index].outputTokens
+  return segments.some((segment, index) => estimatedTokens(segment) >= envelopes[index].outputTokens
     * COMPACTION_SAFETY_POLICY.outputCeilingFraction);
 }
 
 function usageSuggestsLostInput(usage: Usage | undefined, envelopes: readonly RequestSegment[]): boolean {
-  if (!usage || usage.input <= 0) return true;
-  const preparedTokens = envelopes.reduce(
-    (total, segment) => total + segment.inputTokens - COMPACTION_SAFETY_POLICY.requestOverheadTokens,
-    0,
-  );
-  return usage.input < preparedTokens * COMPACTION_SAFETY_POLICY.minimumUsageFraction;
+  if (!usage) return true;
+  const receivedInputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+  if (receivedInputTokens <= 0) return true;
+  const preparedTokens = envelopes.reduce((total, segment) => total + segment.expectedInputTokens, 0);
+  return receivedInputTokens < preparedTokens * COMPACTION_SAFETY_POLICY.minimumUsageFraction;
 }
 
 function safeResult(
