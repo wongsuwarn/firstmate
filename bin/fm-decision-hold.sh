@@ -52,11 +52,15 @@
 # key, which must already be in this origin's inventory and must itself pass the
 # same durability check. That anchor is what keeps the gate intact: the question
 # stays gated, only its duplicate identity goes away, and the union can never be
-# emptied by a retraction. The retracted identity is removed from the backlog when
-# it is still there, so `tasks-axi rm`'s own refusal to delete an id that active
-# work still blocks on continues to apply. A durably resolved decision is never
-# retractable, because it already satisfies the gate. Retraction is idempotent, so
-# an interrupted run is repaired by running the same command again.
+# emptied by a retraction. A key that is no longer in the recorded inventory takes
+# a no-op path that inspects and mutates nothing. Otherwise the retracted identity
+# is removed from the backlog when it is still there, so `tasks-axi rm`'s own
+# refusal to delete an id that active work still blocks on continues to apply. A
+# decision that already carries a recorded captain answer is never retractable,
+# whether it is durably resolved or still queued because `resolve` was interrupted
+# after writing that answer, since deleting it would lose both the answer and the
+# retry identity. Retraction is idempotent, so an interrupted run is repaired by
+# running the same command again.
 #
 # `resolve` requires every --routed-to task to exist and to be blocked by the hold.
 # It writes the captain decision and routed identities into the hold body, clears
