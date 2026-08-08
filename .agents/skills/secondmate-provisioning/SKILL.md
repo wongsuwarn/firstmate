@@ -197,7 +197,7 @@ If the secondmate is already running and only inherited local material changed, 
 To change a launch flag on a secondmate that is still running, use `bin/fm-secondmate-restart.sh <id>` rather than teardown, a hand-run endpoint close, or a bare respawn.
 Teardown is retirement and removes the home; a bare `fm-spawn.sh --secondmate` refuses while the old endpoint is still there.
 The restart retires only the recorded endpoint and relaunches the same id in the same home, so the home, backlog, project clones, inherited local material, lease, registry route, unresolved routed replies, that secondmate's own crewmates, and all unlanded work survive.
-It is local-only, refuses any endpoint state that does not positively read alive, agent-free, or already gone, and restores the previous record when a relaunch fails so the startup liveness sweep can still recover the secondmate.
+It is local-only, refuses any endpoint state that does not positively read alive, agent-free, or already gone, and restores the previous record after a failed relaunch only when any exact replacement is confirmed gone; otherwise it retains replacement ownership for reconciliation.
 Its header and `--help` own the flags, including how `remote_control` is retained or changed.
 
 Do not reconstruct a secondmate's whole tree from the main home.

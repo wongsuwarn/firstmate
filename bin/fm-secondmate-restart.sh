@@ -84,15 +84,13 @@
 #   --no-remote-control is the way through.
 #
 # IF THE RELAUNCH FAILS
-#   The endpoint is already gone and cannot be un-killed, so the previous
-#   state/<id>.meta snapshot is restored instead. That restored record still
-#   carries kind=secondmate and its window=, which is what the next locked
-#   session-start liveness sweep needs: it reads the now-gone endpoint as
-#   missing and relaunches the second mate automatically, replaying
-#   remote_control=1 if the restored record had it. A restart that failed while
-#   turning Remote Control ON therefore comes back without it, which is the
-#   correct conservative outcome. The error names the retry command so the
-#   operator need not wait for the sweep.
+#   A failure before replacement creation restores the previous state/<id>.meta
+#   snapshot. A failure after creation closes that exact replacement and restores
+#   the snapshot only after its backend reports `missing`; an unconfirmed
+#   replacement keeps its current ownership record and the previous snapshot for
+#   reconciliation. A restored record still carries kind=secondmate and window=,
+#   which lets the next locked session-start liveness sweep relaunch it and replay
+#   remote_control=1 when previously enabled. The error names the retry command.
 #
 # On success prints: restarted <id> <spawn success line>
 set -eu
@@ -253,6 +251,12 @@ case "$REMOTE_CONTROL" in
   off) : ;;
   inherit) grep -qx 'remote_control=1' "$META_BACKUP" 2>/dev/null && SPAWN_ARGS+=(--remote-control) || : ;;
 esac
+
+if ! rm -f -- "$META" || [ -e "$META" ] || [ -L "$META" ]; then
+  mv -f "$META_BACKUP" "$META" 2>/dev/null || true
+  echo "error: could not clear the retired record for second mate $ID before relaunch; refusing without an unambiguous replacement boundary" >&2
+  exit 1
+fi
 
 if SPAWN_OUT=$(FM_SPAWN_RESTART_TASK_LOCK_OWNER="$RESTART_LOCK_OWNER" \
   FM_SPAWN_RESTART_REGISTRY_LOCK_OWNER="$REGISTRY_LOCK_OWNER" \

@@ -710,6 +710,7 @@ CONFIG_INHERIT_LOCK_HELD=0
 SPAWN_REGISTRY_LOCK=
 SPAWN_REGISTRY_LOCK_HELD=0
 SPAWN_RESTART_HANDOFF=0
+SPAWN_RESTART_ENDPOINT_CREATED=0
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -729,7 +730,7 @@ parse_orca_worktree_result() {
 }
 
 spawn_abort_cleanup() {
-  local status=$? restart_backup
+  local status=$? restart_backup restart_endpoint_state
   if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] \
      && [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
     if ! spawn_herdr_presentation_order_lock_acquire "${HERDR_PROJECTION_ABORT_SESSION:-}"; then
@@ -796,9 +797,19 @@ spawn_abort_cleanup() {
   fi
   if [ "$status" -ne 0 ] && [ "$SPAWN_RESTART_HANDOFF" = 1 ]; then
     restart_backup="$STATE/.secondmate-restart-$ID.meta.bak"
-    if [ -f "$restart_backup" ] && [ ! -L "$restart_backup" ]; then
-      mv -f "$restart_backup" "$STATE/$ID.meta" 2>/dev/null \
-        || echo "warning: could not restore the previous secondmate record for $ID; it is preserved at $restart_backup" >&2
+    restart_endpoint_state=missing
+    if [ "$SPAWN_RESTART_ENDPOINT_CREATED" = 1 ]; then
+      fm_backend_kill "$BACKEND" "$T" 2>/dev/null || true
+      restart_endpoint_state=$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null) \
+        || restart_endpoint_state=unreadable
+    fi
+    if [ "$restart_endpoint_state" = missing ]; then
+      if [ -f "$restart_backup" ] && [ ! -L "$restart_backup" ]; then
+        mv -f "$restart_backup" "$STATE/$ID.meta" 2>/dev/null \
+          || echo "warning: could not restore the previous secondmate record for $ID; it is preserved at $restart_backup" >&2
+      fi
+    else
+      echo "warning: failed restart replacement for $ID remains $restart_endpoint_state at $BACKEND endpoint $T; retaining its current record and the previous snapshot at $restart_backup" >&2
     fi
   fi
   if [ "$SPAWN_REGISTRY_LOCK_HELD" = 1 ]; then
@@ -1807,6 +1818,7 @@ fi
 # WT_TARGET to $T for them (and for any future backend) - the shared treehouse-get +
 # worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
 : "${WT_TARGET:=$T}"
+[ "$SPAWN_RESTART_HANDOFF" != 1 ] || SPAWN_RESTART_ENDPOINT_CREATED=1
 # From here on a resume owns an endpoint it created, so an abort must remove
 # exactly that endpoint before restoring the previous record.
 [ "$RESUME_WT_SET" -eq 0 ] || RESUME_ENDPOINT_CLEANUP=1
@@ -2245,13 +2257,19 @@ fi
 # carrier, and this host only delivers it. The validated --traceparent value
 # then IS the decision, so the enablement snapshot handed to the new Secondmate
 # agrees with the carrier it receives exactly as on the local path.
+SPAWN_TRACE_META="$STATE/$ID.meta"
+if [ "$SPAWN_RESTART_HANDOFF" = 1 ] \
+  && [ -f "$STATE/.secondmate-restart-$ID.meta.bak" ] \
+  && [ ! -L "$STATE/.secondmate-restart-$ID.meta.bak" ]; then
+  SPAWN_TRACE_META="$STATE/.secondmate-restart-$ID.meta.bak"
+fi
 if [ "$TRACEPARENT_SET" -eq 1 ]; then
   SPAWN_TRACE_EFFECTIVE=on
   SPAWN_TRACEPARENT=$TRACEPARENT_ARG
 else
   SPAWN_TRACE_EFFECTIVE=$(fm_trace_context_session_effective "$STATE/.trace-context-effective")
   if [ "$SPAWN_TRACE_EFFECTIVE" = on ]; then
-    SPAWN_TRACEPARENT=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CONFIG" "$STATE/$ID.meta" || true)
+    SPAWN_TRACEPARENT=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CONFIG" "$SPAWN_TRACE_META" || true)
   else
     SPAWN_TRACEPARENT=
   fi

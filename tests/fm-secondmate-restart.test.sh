@@ -115,7 +115,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse
+  fm_fake_exit0 "$fakebin" treehouse kimi
   printf '%s\n' "$fakebin"
 }
 
@@ -177,6 +177,19 @@ run_restart() {
     FM_FAKE_LAUNCH_LOG="$CASE_LOG" FM_FAKE_SPAWN_WINDOW="fm-$CASE_ID" \
     TMUX="fake,1,0" PATH="$CASE_FAKEBIN:$BASE_PATH" \
     "$RESTART" "$CASE_ID" "$@" 2>&1
+}
+
+run_competing_spawn() {
+  env -u FM_TRACE_CONTEXT \
+    FM_ROOT_OVERRIDE='' FM_HOME="$CASE_HOME" \
+    FM_STATE_OVERRIDE="$CASE_HOME/state" FM_DATA_OVERRIDE="$CASE_HOME/data" \
+    FM_PROJECTS_OVERRIDE="$CASE_HOME/projects" FM_CONFIG_OVERRIDE="$CASE_HOME/config" \
+    FM_SPAWN_NO_GUARD=1 FM_SKIP_SECONDMATE_INHERIT=1 \
+    FM_FAKE_PANE_PATH="$(cd "$CASE_SUB" && pwd -P)" \
+    FM_FAKE_INVENTORY="$CASE_INVENTORY" FM_FAKE_COMMAND="$CASE_COMMAND" \
+    FM_FAKE_LAUNCH_LOG="$CASE_LOG" FM_FAKE_SPAWN_WINDOW="fm-$CASE_ID" \
+    TMUX="fake,1,0" PATH="$CASE_FAKEBIN:$BASE_PATH" \
+    "$ROOT/bin/fm-spawn.sh" "$CASE_ID" --secondmate "$@" 2>&1
 }
 
 # The claude launch arrives as one literal payload; find it by the fixed
@@ -331,6 +344,25 @@ test_failed_relaunch_restores_the_previous_record() {
   pass "restart: a failed relaunch restores the previous record so the liveness sweep can recover it"
 }
 
+test_post_create_failure_confirms_replacement_gone_before_rollback() {
+  local out status before kills
+  make_case restart-kimi-fail kimi
+  before=$(cat "$CASE_META")
+  export FM_KIMI_READY_POLLS=1 FM_KIMI_POLL_INTERVAL=0
+  out=$(run_restart --model kimi-test)
+  status=$?
+  unset FM_KIMI_READY_POLLS FM_KIMI_POLL_INTERVAL
+  expect_code 1 "$status" "a post-create Kimi readiness failure must report failure"$'\n'"$out"
+  assert_contains "$out" "kimi did not show a verified ready signal" "the fixture did not reach the post-create failure"
+  kills=$(grep -cF 'kill-window' "$CASE_LOG")
+  [ "$kills" -eq 2 ] || fail "post-create failure did not retire both the old and failed replacement endpoints"
+  [ "$(cat "$CASE_INVENTORY")" = absent ] || fail "the failed replacement endpoint was not confirmed gone"
+  [ "$(cat "$CASE_META")" = "$before" ] || fail "rollback did not restore the old record after confirming replacement removal"
+  assert_absent "$CASE_HOME/state/.secondmate-restart-$CASE_ID.meta.bak" \
+    "confirmed replacement cleanup left the rollback snapshot behind"
+  pass "restart: post-create failure removes the exact replacement before restoring old metadata"
+}
+
 test_missing_endpoint_relaunches_without_a_close() {
   local out status
   make_case restart-missing claude
@@ -401,10 +433,10 @@ test_restart_lock_spans_the_relaunch() {
   while [ ! -e "$ready" ] && kill -0 "$restart_pid" 2>/dev/null; do sleep 0.01; done
   [ -e "$ready" ] || fail "restart did not reach the blocked relaunch boundary"
 
-  contender=$(run_restart --model sonnet)
+  contender=$(run_competing_spawn --model sonnet)
   status=$?
   expect_code 1 "$status" "a replacement must not enter while relaunch is publishing metadata"$'\n'"$contender"
-  assert_contains "$contender" "already changing second mate" "the relaunch handoff lost task ownership"
+  assert_contains "$contender" "another spawn is already creating task" "the relaunch handoff lost task ownership"
 
   : > "$release"
   wait "$restart_pid"
@@ -454,6 +486,7 @@ test_ambiguous_endpoint_refuses_without_mutating
 test_zellij_secondmate_refuses_for_lack_of_a_recovery_classifier
 test_unconfirmed_close_refuses_before_relaunching
 test_failed_relaunch_restores_the_previous_record
+test_post_create_failure_confirms_replacement_gone_before_rollback
 test_missing_endpoint_relaunches_without_a_close
 test_remote_and_non_secondmate_records_are_refused
 test_concurrent_restart_is_serialized
