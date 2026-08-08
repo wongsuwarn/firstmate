@@ -153,6 +153,37 @@ fi
 printf '%s' "$SNAPSHOT" | jq -e 'type == "object" and has("tasks")' >/dev/null 2>&1 \
   || die "fleet snapshot did not return the expected object"
 
+VALID_WEB_URLS='[]'
+if command -v node >/dev/null 2>&1; then
+  VALID_WEB_URLS=$(printf '%s' "$SNAPSHOT" | node -e '
+    let input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", function (chunk) { input += chunk; });
+    process.stdin.on("end", function () {
+      var found = new Set();
+      function valid(value) {
+        if (typeof value !== "string" || /[\u0000-\u0020\u007f"<>\\]/.test(value)) { return false; }
+        try {
+          var url = new URL(value);
+          if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname || url.username || url.password) { return false; }
+          if (url.hostname.charAt(0) !== "[") {
+            if (url.hostname.length > 253 || !url.hostname.split(".").every(function (label) {
+              return label.length > 0 && label.length <= 63 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label);
+            })) { return false; }
+          }
+          return true;
+        } catch (error) { return false; }
+      }
+      function visit(value) {
+        if (valid(value)) { found.add(value); }
+        else if (Array.isArray(value)) { value.forEach(visit); }
+        else if (value && typeof value === "object") { Object.keys(value).forEach(function (key) { visit(value[key]); }); }
+      }
+      visit(JSON.parse(input));
+      process.stdout.write(JSON.stringify(Array.from(found)));
+    });
+  ') || VALID_WEB_URLS='[]'
+fi
 STATE_DIR=$(printf '%s' "$SNAPSHOT" | jq -r '.roots.state // ""')
 DATA_DIR=$(printf '%s' "$SNAPSHOT" | jq -r '.roots.data // ""')
 PROJECTS_DIR=$(printf '%s' "$SNAPSHOT" | jq -r '.roots.projects // ""')
@@ -448,6 +479,7 @@ HTML=$(
     --argjson projects_present "$PROJECTS_PRESENT" \
     --arg today "$TODAY" \
     --argjson controls "$CONTROLS" \
+    --argjson valid_web_urls "$VALID_WEB_URLS" \
     --argjson refresh "$REFRESH" '
 
 # --------------------------------------------------------------------------
@@ -1010,8 +1042,9 @@ def meta_block($line; $items):
 # else stays escaped presentation context so a mobile tap cannot leave /mission
 # for a route that does not exist.
 def web_url_or_empty:
-  if type == "string" and test("^https?://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?#][^[:space:]\\\"<>]*)?$"; "i")
-  then . else "" end;
+  . as $candidate |
+  if type == "string" and ($valid_web_urls | index($candidate)) != null
+  then $candidate else "" end;
 
 def https_url_or_empty:
   . as $candidate |
@@ -1877,6 +1910,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   window.__fmTabKey = tabKey;
   window.__fmViewKey = \"fm-mission-control-view-v1:\" + scope;
   window.__fmReloadKey = \"fm-mission-control-reload-v1:\" + scope;
+  window.__fmExplicitEntry = !!(m && !(window.history && window.history.state
+    && window.history.state.fmBoardScope === scope && window.history.state.fmBoardTab === m[1]));
   try {
     if (m && keys.indexOf(m[1]) !== -1) {
       window.localStorage.setItem(tabKey, m[1]);
@@ -2088,7 +2123,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     /* #tab=<key> matches no element, so restoring it never scrolls the header
        off the top. The self-reload drops it regardless; the stored tab is what
        carries across. */
-    try { history.replaceState(null, \"\", \"#tab=\" + key); } catch (e) { /* URL left alone */ }
+    try { history.replaceState({fmBoardScope:window.__fmBoardScope,fmBoardTab:key}, \"\", \"#tab=\" + key); }
+    catch (e) { /* URL left alone */ }
     paint();
     window.scrollTo(0, 0);
     if (focus) { tabs[keys.indexOf(key)].focus(); }
@@ -2212,7 +2248,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
 
   function restoreView() {
     try { window.sessionStorage.removeItem(reloadKey); } catch (e) { /* no managed-reload marker */ }
-    if (explicitHash || window.__fmExplicitNavigation) {
+    if ((explicitHash && window.__fmExplicitEntry) || window.__fmExplicitNavigation) {
       if (/^#(?:tab=|panel-)[a-z]+$/.test(explicitHash)) { window.scrollTo(0, 0); }
       restoringView = false;
       saveView();
@@ -2325,19 +2361,30 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       block.getAttribute(\"data-id\") || \"\", block.getAttribute(\"data-key\") || \"\", intent]
       .map(encodeURIComponent).join(\":\");
   }
-  function saveDrafts(skipView) {
+  function storedDrafts() {
     var records = [];
+    try { records = JSON.parse(window.sessionStorage.getItem(draftKey) || \"[]\"); }
+    catch (e) { records = []; }
+    return Array.isArray(records) ? records : [];
+  }
+  function saveDrafts(skipView) {
+    var records = {};
+    storedDrafts().forEach(function (record) {
+      if (record && typeof record.identity === \"string\") { records[record.identity] = record; }
+    });
     Array.prototype.forEach.call(document.querySelectorAll(\".rc\"), function (block) {
       formsIn(block).forEach(function (form) {
         var intent = form.getAttribute(\"data-intent\") || \"\";
         if (!intent) { return; }
+        var identity = draftIdentity(block, intent);
         var area = form.querySelector(\".rc-t\");
         var note = area ? area.value : \"\";
         var open = form.hasAttribute(\"data-toggle\") ? !form.hidden : note !== \"\";
-        if (!open && !note) { return; }
-        records.push({identity:draftIdentity(block, intent),open:open,note:note});
+        if (!open && !note) { delete records[identity]; return; }
+        records[identity] = {identity:identity,open:open,note:note};
       });
     });
+    records = Object.keys(records).map(function (identity) { return records[identity]; });
     try {
       if (records.length) { window.sessionStorage.setItem(draftKey, JSON.stringify(records)); }
       else { window.sessionStorage.removeItem(draftKey); }
@@ -2345,10 +2392,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     if (!skipView && window.__fmSaveView) { window.__fmSaveView(); }
   }
   function restoreDrafts() {
-    var records = [];
-    try { records = JSON.parse(window.sessionStorage.getItem(draftKey) || \"[]\"); }
-    catch (e) { records = []; }
-    if (!Array.isArray(records)) { records = []; }
+    var records = storedDrafts();
     records.forEach(function (record) {
       Array.prototype.some.call(document.querySelectorAll(\".rc\"), function (block) {
         var form = formsIn(block).find(function (candidate) {
@@ -2410,6 +2454,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   }
   restoreAcks();
   restoreDrafts();
+  var requestState = {};
 
   document.addEventListener(\"click\", function (ev) {
     var el = ev.target;
@@ -2476,6 +2521,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
 
     var persistent = request.intent !== \"ask\";
     var identity = persistent ? ackKey(block, request.intent) : \"\";
+    var requestIdentity = draftIdentity(block, request.intent);
     try {
       if (persistent && window.localStorage.getItem(identity) === \"sent\") {
         applyAck(block, request.intent);
@@ -2491,18 +2537,27 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       return;
     }
     var submit = form.querySelector(\".rc-go\");
+    if (requestState[requestIdentity] === \"queuing\" || requestState[requestIdentity] === \"sending\") { return; }
     if (submit) { submit.disabled = true; }
     try {
-      var queued = lav.queuePrompt(\"FM-BOARD-REQUEST \" + JSON.stringify(request), {
-        tag: \"board-request\",
-        text: summary(request.intent, block.getAttribute(\"data-what\") || \"\")
-      });
-      if (queued && typeof queued.then === \"function\") { queued = await queued; }
-      if (queued === false) { throw new Error(\"queue refused\"); }
+      if (requestState[requestIdentity] !== \"queued\") {
+        requestState[requestIdentity] = \"queuing\";
+        var queued = lav.queuePrompt(\"FM-BOARD-REQUEST \" + JSON.stringify(request), {
+          tag: \"board-request\",
+          text: summary(request.intent, block.getAttribute(\"data-what\") || \"\")
+        });
+        if (queued && typeof queued.then === \"function\") { queued = await queued; }
+        if (queued === false) { throw new Error(\"queue refused\"); }
+        requestState[requestIdentity] = \"queued\";
+      }
+      requestState[requestIdentity] = \"sending\";
       var accepted = lav.sendQueuedPrompts();
       if (accepted && typeof accepted.then === \"function\") { accepted = await accepted; }
       if (accepted === false) { throw new Error(\"send refused\"); }
+      delete requestState[requestIdentity];
     } catch (e) {
+      if (requestState[requestIdentity] === \"queuing\") { delete requestState[requestIdentity]; }
+      else if (requestState[requestIdentity] === \"sending\") { requestState[requestIdentity] = \"queued\"; }
       if (submit) { submit.disabled = false; }
       say(block, \"Not sent - the board could not reach firstmate.\", true);
       saveDrafts();

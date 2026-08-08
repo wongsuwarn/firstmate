@@ -1960,6 +1960,12 @@ test_decision_context_links_and_submission_state_in_a_browser() {
     {"state":"queued","id":"d-malformed-link","captain_actionable":true,
      "title":"Choose despite a malformed aid","hold_reason":"The URL has no authority",
      "decision_url":"https://","repo":"sample"},
+    {"state":"queued","id":"d-invalid-ipv6","captain_actionable":true,
+     "title":"Choose despite an invalid IPv6 aid","hold_reason":"The authority is malformed",
+     "decision_url":"https://[::::]/aid","repo":"sample"},
+    {"state":"queued","id":"d-invalid-port","captain_actionable":true,
+     "title":"Choose despite an invalid port","hold_reason":"The port is out of range",
+     "decision_url":"https://example.invalid:99999/aid","repo":"sample"},
     {"state":"queued","id":"d-hostile","captain_actionable":true,
      "title":"Hostile <b>title</b>","hold_reason":"Reason & quote \" stays text",
      "decision_question":"Question \" ><img src=x onerror=alert(1)> stays text?",
@@ -2050,7 +2056,7 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
         localStorage.setItem("test-prompts",JSON.stringify(p)); return true;
       },
       sendQueuedPrompts:function(){
-        if(localStorage.getItem("test-bridge-fail")==="1") throw new Error("send failed"); return true;
+        if(localStorage.getItem("test-send-fail")==="1") throw new Error("send failed"); return true;
       }
     };`}, sid);
   await navigate(sid, boardPath);
@@ -2066,6 +2072,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       aids:[...document.querySelectorAll('.decision-aid')].map(a=>a.href),
       badAid:!!block('main','d-bad-link').closest('.need-wrap').querySelector('.decision-aid'),
       malformedAid:!!block('main','d-malformed-link').closest('.need-wrap').querySelector('.decision-aid'),
+      invalidIpv6Aid:!!block('main','d-invalid-ipv6').closest('.need-wrap').querySelector('.decision-aid'),
+      invalidPortAid:!!block('main','d-invalid-port').closest('.need-wrap').querySelector('.decision-aid'),
       localReport:(()=>{var row=block('main','local-lane-bakeoff-v2-powered-decision-widen-bounded-judgment-rung').closest('.need-wrap');
         var ref=row.querySelector('.local-ref'); return {text:ref&&ref.textContent,anchor:!!row.querySelector('a[href="data/local-lane-bakeoff-v2-powered/report.md"]')};})(),
       cards:document.querySelectorAll('.need-wrap').length
@@ -2077,7 +2085,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(dom.empty === "Your answer", "an empty decision invented context");
   assert(dom.hostile === 'Question " ><img src=x onerror=alert(1)> stays text?' && dom.injectedImages === 0, "hostile question escaped its text context");
   assert(dom.aids.includes("https://sample.tailnet.invalid/decision-aid") && dom.aids.includes("https://ios.tailnet.invalid/decision-aid"), "main or secondmate decision aid was missing");
-  assert(dom.aids.includes("https://safe.invalid/?q=%22%3E%3Cscript%3E") && !dom.badAid && !dom.malformedAid, "valid hostile text or malformed link handling was wrong");
+  assert(dom.aids.includes("https://safe.invalid/?q=%22%3E%3Cscript%3E") && !dom.badAid && !dom.malformedAid
+    && !dom.invalidIpv6Aid && !dom.invalidPortAid, "valid hostile text or malformed link handling was wrong");
   assert(dom.localReport.text === "Local report: data/local-lane-bakeoff-v2-powered/report.md" && !dom.localReport.anchor,
     "the Qwen bounded-judgment report path was not preserved as non-clickable context");
   assert(dom.cards >= 8, "ordinary multi-card decision list did not render");
@@ -2117,6 +2126,12 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
     'an external file rewrite discarded the open draft or composer identity');
   assert(draftOne.tab.includes('t-decisions') && Math.abs(draftOne.top-draftBefore.top)<=3,
     'an external file rewrite lost the active tab or stable reading position: '+JSON.stringify({draftBefore,draftOne}));
+  fs.copyFileSync(missingPath, boardPath);
+  await reload(sid);
+  const absentDraft = await evaluate(sid, `JSON.parse(sessionStorage.getItem('fm-mission-control-drafts-v1:'+window.__fmBoardScope)||'[]')
+    .find(x=>decodeURIComponent(x.identity.split(':')[1])==='d-fallback')`);
+  assert(absentDraft && absentDraft.note === 'Draft survives an external artifact replacement' && absentDraft.open,
+    'a temporarily omitted item erased its unmatched stored draft identity');
   fs.writeFileSync(boardPath, original);
   await reload(sid);
   const draftTwo = await evaluate(sid, `(() => {var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d-fallback');
@@ -2157,18 +2172,21 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(success.prompts === 5, "duplicate answer submission reached the bridge or a distinct identity was dropped");
 
   const failed = await evaluate(sid, `(async()=>{
-    localStorage.setItem('test-bridge-fail','1');
+    localStorage.setItem('test-send-fail','1');
     var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d-fallback');
     b.querySelector('[data-open=answer]').click(); var t=b.querySelector('textarea'); t.value='Keep comparison compact';
     b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
     var failed={open:!b.querySelector('form[data-intent=answer]').hidden,value:t.value,
       retry:!b.querySelector('.rc-go').disabled,message:b.querySelector('.rc-sent').textContent};
-    localStorage.removeItem('test-bridge-fail'); b.querySelector('form[data-intent=answer]').requestSubmit();
+    failed.queued=JSON.parse(localStorage.getItem('test-prompts')||'[]').length;
+    localStorage.removeItem('test-send-fail'); b.querySelector('form[data-intent=answer]').requestSubmit();
     await new Promise(r=>setTimeout(r,20));
-    failed.after=b.querySelector('[data-open=answer]').textContent; return failed;
+    failed.after=b.querySelector('[data-open=answer]').textContent;
+    failed.afterQueued=JSON.parse(localStorage.getItem('test-prompts')||'[]').length; return failed;
   })()`);
   assert(failed.open && failed.value === "Keep comparison compact" && failed.retry && failed.message.startsWith("Not sent"), "bridge failure was not visibly unsent and retryable");
   assert(failed.after === "Answer sent", "retry after bridge failure was not acknowledged");
+  assert(failed.queued === 6 && failed.afterQueued === 6, "retry after a partial bridge failure queued a duplicate request: " + JSON.stringify(failed));
 
   await navigate(sid, boardPath);
   const restored = await evaluate(sid, `(() => {var all=[...document.querySelectorAll('.rc')]; var pr=all.find(x=>x.dataset.id==='pr-ready'); return {
@@ -2194,16 +2212,18 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(await evaluate(sid,"document.documentElement.classList.contains('t-projects')"), "active tab did not survive managed reload");
 
   const beforeAnchor = await evaluate(sid, `(async()=>{
-    document.getElementById('tab-decisions').click(); history.replaceState(null,'',location.pathname+location.search);
+    document.getElementById('tab-decisions').click();
     var target=document.querySelector('[data-scroll-anchor="call:main:d-fallback::decision"]');
     target.scrollIntoView({block:'center'}); window.scrollBy(0,73); await new Promise(r=>requestAnimationFrame(r));
     window.__fmSaveView(); sessionStorage.setItem(window.__fmReloadKey,'reload');
     return target.getBoundingClientRect().top;
   })()`);
   fs.copyFileSync(shiftedPath, boardPath);
-  await navigate(sid, boardPath);
-  const afterAnchor = await evaluate(sid,"document.querySelector('[data-scroll-anchor=\"call:main:d-fallback::decision\"]').getBoundingClientRect().top");
+  await reload(sid);
+  const afterAnchorState = await evaluate(sid,"({top:document.querySelector('[data-scroll-anchor=\\\"call:main:d-fallback::decision\\\"]').getBoundingClientRect().top,hash:location.hash})");
+  const afterAnchor = afterAnchorState.top;
   assert(Math.abs(afterAnchor - beforeAnchor) <= 3, `stable reading anchor shifted from ${beforeAnchor} to ${afterAnchor}`);
+  assert(afterAnchorState.hash === '#tab=decisions', 'an internally generated tab fragment did not survive the external reload regression');
 
   await evaluate(sid, `window.scrollTo(0,700); window.__fmSaveView(); sessionStorage.setItem(window.__fmReloadKey,'reload');`);
   await navigate(sid, readonlyPath);
