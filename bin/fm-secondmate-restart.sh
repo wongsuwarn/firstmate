@@ -57,8 +57,9 @@
 #   fm_backend_kill's exit status is never trusted: the Herdr adapter returns 0
 #   for a successful close, an unready target, AND a refused unlocked close. The
 #   only gate is the post-kill re-read, which must report `missing`. A close that
-#   is refused, skipped, or unconfirmed leaves the second mate running and exits
-#   non-zero having changed nothing, so a contended lock is a plain rerun.
+#   is refused, skipped, or unconfirmed is treated as potentially still running
+#   and exits non-zero without relaunching or rewriting metadata, so a contended
+#   lock is a plain rerun.
 #
 # LAUNCH FLAGS
 #   Flags are passed straight through to bin/fm-spawn.sh, which owns their
