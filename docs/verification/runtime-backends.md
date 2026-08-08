@@ -18,6 +18,7 @@ Verified 2026-08-08 on macOS 26.5.2 arm64 for the stock shell, and in official `
 mkdir -p /tmp/d.meta
 printf 'set -eu\n{ echo hi; } > /tmp/d.meta\necho AFTER-GROUP\n' > /tmp/t.sh
 /bin/bash /tmp/t.sh; echo "final=$?"
+/bin/bash -c 'if ! { echo hi; } > /tmp/d.meta; then echo THEN; fi; echo "negated-final=$?"'
 
 # each other version, one run per tag in 4.4 5.0 5.1 5.2
 docker run --rm bash:5.1 bash -c 'bash --version | head -1
@@ -36,11 +37,12 @@ Observed per version:
 | 5.1.16 | no | 1 | yes |
 | 5.2.37 | no | 1 | yes |
 
-The shell still sets `$?` to 1 after the failed compound redirection, so an explicit `|| { ... }` on the redirection detects it on every version above.
-`if ! { ... } > "$file"; then` does NOT: the negation reported success after a failed compound redirection on 3.2.57 and on 5.2.37 alike, both ends of the supported range, so it is not a substitute for the `||` form.
+The redirection is attempted in `if ! { ... } > "$file"; then`, the failed compound command has status 1, `!` negates that status to 0, and the `then` branch runs.
+The command above printed the redirection error, `THEN`, and `negated-final=0` on both 3.2.57 and 5.2.37.
+An explicit `||` guard detects the same redirection failure, but both conditional spellings disable `errexit` for commands inside the group, so a failed earlier write can be masked by a successful later command and leave partial output accepted as complete.
 
-The consequence for firstmate is that any durable record published through `{ ... } > "$file"` must check the redirection itself rather than lean on `set -e`.
-`bin/fm-spawn.sh` publishes every task's `state/<id>.meta` that way for all five spawn-capable backends, so an unchecked publication reported a successful spawn with no record on stock macOS Bash 3.2.
+The safe repository pattern is to construct every multi-field file completely in memory, write it with one checked simple-command redirection to a same-directory temporary file, and atomically promote that complete temporary file only after the write succeeds.
+`bin/fm-spawn.sh` previously published every task's `state/<id>.meta` directly through a grouped redirection for all five spawn-capable backends, so an unchecked publication reported a successful spawn with no record on stock macOS Bash 3.2.
 `tests/fm-backend.test.sh` and `tests/fm-backend-orca.test.sh`, which cover that publication, are both selected only into the ubuntu-latest lanes (`bin/fm-test-run.sh --list --lane portable-serial`), and any runner carrying bash 5.1 or newer masks the defect.
 `tests/fm-backend.test.sh`'s `test_spawn_refuses_when_task_record_cannot_be_published` is the portable regression, and it asserts the script's own refusal diagnostic so it cannot pass vacuously on a shell whose `set -e` would have aborted anyway.
 
