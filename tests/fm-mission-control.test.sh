@@ -19,6 +19,154 @@ TMP_ROOT=$(fm_test_tmproot fm-mission-control)
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
+find_chrome() {
+  local candidate
+  if [ -n "${FM_CHROME_BIN:-}" ] && [ -x "$FM_CHROME_BIN" ]; then
+    printf '%s\n' "$FM_CHROME_BIN"
+    return 0
+  fi
+  for candidate in \
+    google-chrome \
+    google-chrome-stable \
+    chromium \
+    chromium-browser \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+assert_narrow_board_geometry() {  # <html> <window-label> <provider-label>
+  local html=$1 window_label=$2 provider_label=$3 chrome
+  command -v node >/dev/null 2>&1 || {
+    printf 'skip: node not found for rendered narrow-board geometry assertion\n'
+    return 0
+  }
+  chrome=$(find_chrome) || {
+    printf 'skip: Chrome or Chromium not found for rendered narrow-board geometry assertion\n'
+    return 0
+  }
+
+  node - "$chrome" "$html" "$window_label" "$provider_label" <<'JS'
+const { spawn } = require("node:child_process");
+const { pathToFileURL } = require("node:url");
+
+const [chromePath, htmlPath, windowLabel, providerLabel] = process.argv.slice(2);
+const chrome = spawn(chromePath, [
+  "--headless=new",
+  "--disable-gpu",
+  "--no-sandbox",
+  "--remote-debugging-pipe",
+  `--user-data-dir=${htmlPath}.chrome-profile`,
+], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
+let buffer = "";
+let nextId = 0;
+const pending = new Map();
+
+function finish(code, message) {
+  if (message) process.stderr.write(`${message}\n`);
+  chrome.kill();
+  process.exitCode = code;
+}
+
+chrome.on("error", (error) => finish(1, error.message));
+chrome.stdio[4].on("data", (chunk) => {
+  buffer += chunk;
+  let boundary;
+  while ((boundary = buffer.indexOf("\0")) >= 0) {
+    const raw = buffer.slice(0, boundary);
+    buffer = buffer.slice(boundary + 1);
+    if (!raw) continue;
+    const message = JSON.parse(raw);
+    const resolve = pending.get(message.id);
+    if (resolve) {
+      pending.delete(message.id);
+      resolve(message);
+    }
+  }
+});
+
+function send(method, params = {}, sessionId) {
+  return new Promise((resolve) => {
+    const id = ++nextId;
+    pending.set(id, resolve);
+    chrome.stdio[3].write(`${JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })}\0`);
+  });
+}
+
+async function run() {
+  const created = await send("Target.createTarget", { url: "about:blank" });
+  const attached = await send("Target.attachToTarget", {
+    targetId: created.result.targetId,
+    flatten: true,
+  });
+  const sessionId = attached.result.sessionId;
+  await send("Emulation.setDeviceMetricsOverride", {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true,
+  }, sessionId);
+  await send("Page.navigate", { url: pathToFileURL(htmlPath).href }, sessionId);
+
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const ready = await send("Runtime.evaluate", {
+      expression: "document.readyState",
+      returnByValue: true,
+    }, sessionId);
+    if (ready.result.result.value === "complete") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  const expression = `(() => {
+    const expected = ${JSON.stringify([windowLabel, providerLabel])};
+    const viewportWidth = document.documentElement.clientWidth;
+    const leaves = [...document.body.querySelectorAll("*")].filter((element) => element.children.length === 0);
+    const targets = expected.map((text) => leaves.find((element) => element.textContent.trim() === text));
+    return {
+      viewportWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      targets: targets.map((element) => {
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+        };
+      }),
+    };
+  })()`;
+  const evaluated = await send("Runtime.evaluate", {
+    expression,
+    returnByValue: true,
+  }, sessionId);
+  const geometry = evaluated.result.result.value;
+  const documentFits = geometry.documentWidth <= geometry.viewportWidth;
+  const labelsFit = geometry.targets.every((target) => target &&
+    target.left >= 0 && target.right <= geometry.viewportWidth + 0.5 &&
+    target.scrollWidth <= target.clientWidth + 1);
+  if (!documentFits || !labelsFit) {
+    throw new Error(`390px board overflowed: ${JSON.stringify(geometry)}`);
+  }
+}
+
+const timeout = setTimeout(() => finish(1, "timed out measuring the rendered 390px board"), 10000);
+run().then(() => {
+  clearTimeout(timeout);
+  finish(0);
+}).catch((error) => {
+  clearTimeout(timeout);
+  finish(1, error.message);
+});
+JS
+}
+
 # 2026-01-02T15:00:00Z, with TZ=UTC pinned by every case that renders a time.
 NOW_EPOCH=1767366000
 TODAY_0905=1767344700    # 2026-01-02T09:05:00Z
@@ -1505,12 +1653,8 @@ test_narrow_token_shapes_keep_every_value_wrappable() {
     "$BOARD" --snapshot "$snap" --out "$board" >/dev/null \
     || fail "a narrow-screen-shaped token payload must render"
   assert_grep "$long" "$board" "a long honest label must stay present rather than being clipped from the payload"
-  assert_grep '.projects,.strip,.quota-grid{grid-template-columns:minmax(0,1fr)}' "$board" \
-    "the public page must collapse the allowance grid at its narrow breakpoint"
-  assert_grep '.qw-name{flex:1;font-size:11.5px;font-weight:650;color:var(--ink);overflow-wrap:anywhere;}' "$board" \
-    "a long window name must be allowed to wrap in the rendered interface"
-  assert_grep '.qw-provider{flex:none;max-width:45%;font-size:9px;color:var(--faint);text-align:right;overflow-wrap:anywhere;}' "$board" \
-    "a long provider name must be allowed to wrap in the rendered interface"
+  assert_narrow_board_geometry "$board" "$long" "$long$long" \
+    || fail "long allowance labels must fit the rendered board without horizontal overflow"
   pass "narrow-screen token shapes keep every operator value present and wrappable"
 }
 
