@@ -45,6 +45,16 @@ type CompactionAttempt = {
   model: Model<any>;
 };
 
+type RequestSegment = {
+  inputTokens: number;
+  outputTokens: number;
+};
+
+type CompactionDetails = {
+  readFiles: string[];
+  modifiedFiles: string[];
+};
+
 function textTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -59,46 +69,126 @@ function maximumOutputTokens(model: Model<any>, preparation: CompactionPreparati
   return Math.min(Math.floor(fraction * preparation.settings.reserveTokens), modelLimit);
 }
 
-function preparedInputTokens(preparation: CompactionPreparation, customInstructions?: string): number {
+function historyInputTokens(preparation: CompactionPreparation, customInstructions?: string): number {
   const previous = preparation.previousSummary ? textTokens(preparation.previousSummary) : 0;
   const instructions = customInstructions ? textTokens(customInstructions) : 0;
-  const history = serializedTokens(preparation.messagesToSummarize) + previous + instructions + COMPACTION_SAFETY_POLICY.requestOverheadTokens;
-  if (!preparation.isSplitTurn || preparation.turnPrefixMessages.length === 0) return history;
-  return history + serializedTokens(preparation.turnPrefixMessages);
+  return serializedTokens(preparation.messagesToSummarize) + previous + instructions + COMPACTION_SAFETY_POLICY.requestOverheadTokens;
 }
 
-function outputEnvelopeTokens(model: Model<any>, preparation: CompactionPreparation): number {
-  if (!preparation.isSplitTurn || preparation.turnPrefixMessages.length === 0) {
-    return maximumOutputTokens(model, preparation, false);
+function requestSegments(
+  model: Model<any>,
+  preparation: CompactionPreparation,
+  customInstructions?: string,
+): RequestSegment[] {
+  if (preparation.isSplitTurn && preparation.turnPrefixMessages.length > 0) {
+    const segments: RequestSegment[] = [];
+    if (preparation.messagesToSummarize.length > 0) {
+      segments.push({
+        inputTokens: historyInputTokens(preparation, customInstructions),
+        outputTokens: maximumOutputTokens(model, preparation, false),
+      });
+    }
+    segments.push({
+      inputTokens: serializedTokens(preparation.turnPrefixMessages) + COMPACTION_SAFETY_POLICY.requestOverheadTokens,
+      outputTokens: maximumOutputTokens(model, preparation, true),
+    });
+    return segments;
   }
-  const history = preparation.messagesToSummarize.length > 0
-    ? maximumOutputTokens(model, preparation, false)
-    : 0;
-  return history + maximumOutputTokens(model, preparation, true);
+  return [{
+    inputTokens: historyInputTokens(preparation, customInstructions),
+    outputTokens: maximumOutputTokens(model, preparation, false),
+  }];
 }
 
 function modelCanReceivePreparation(
   model: Model<any>,
   preparation: CompactionPreparation,
-  conversationModel: Model<any> | undefined,
   customInstructions?: string,
 ): boolean {
-  if (conversationModel && model.contextWindow < conversationModel.contextWindow) return false;
-  return preparedInputTokens(preparation, customInstructions) + outputEnvelopeTokens(model, preparation) <= model.contextWindow;
+  return requestSegments(model, preparation, customInstructions)
+    .every((segment) => segment.inputTokens + segment.outputTokens <= model.contextWindow);
 }
 
-function hasAll(text: string, required: readonly string[]): boolean {
-  return required.every((heading) => text.includes(heading));
+function headingMatches(text: string, heading: string): RegExpMatchArray[] {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...text.matchAll(new RegExp(`^${escaped}\\s*$`, "gm"))];
 }
 
-function hasCompleteStructure(summary: string, preparation: CompactionPreparation): boolean {
-  if (!hasAll(summary, ["<read-files>", "</read-files>", "<modified-files>", "</modified-files>"])) return false;
-  if (preparation.isSplitTurn && preparation.turnPrefixMessages.length > 0) {
-    const hasHistory = preparation.messagesToSummarize.length > 0;
-    return (!hasHistory || hasAll(summary, COMPACTION_SAFETY_POLICY.requiredHeadings))
-      && hasAll(summary, COMPACTION_SAFETY_POLICY.requiredSplitHeadings);
+function hasOrderedSubstantiveSections(
+  text: string,
+  headings: readonly string[],
+  containerHeadings: readonly string[] = [],
+): boolean {
+  const matches = headings.map((heading) => headingMatches(text, heading));
+  if (matches.some((headingMatchesForText) => headingMatchesForText.length !== 1)) return false;
+  const positions = matches.map(([match]) => match.index ?? -1);
+  if (positions.some((position, index) => index > 0 && position <= positions[index - 1])) return false;
+  return headings.every((heading, index) => {
+    if (containerHeadings.includes(heading)) return true;
+    const match = matches[index][0];
+    const start = (match.index ?? 0) + match[0].length;
+    const end = index + 1 < positions.length ? positions[index + 1] : text.length;
+    return /[\p{L}\p{N}]/u.test(text.slice(start, end));
+  });
+}
+
+function expectedDetails(preparation: CompactionPreparation): CompactionDetails {
+  const modified = new Set([...preparation.fileOps.edited, ...preparation.fileOps.written]);
+  return {
+    readFiles: [...preparation.fileOps.read].filter((file) => !modified.has(file)).sort(),
+    modifiedFiles: [...modified].sort(),
+  };
+}
+
+function validDetails(details: unknown, expected: CompactionDetails): details is CompactionDetails {
+  if (!details || typeof details !== "object") return false;
+  const candidate = details as Partial<CompactionDetails>;
+  return Array.isArray(candidate.readFiles)
+    && candidate.readFiles.every((file) => typeof file === "string")
+    && Array.isArray(candidate.modifiedFiles)
+    && candidate.modifiedFiles.every((file) => typeof file === "string")
+    && candidate.readFiles.join("\n") === expected.readFiles.join("\n")
+    && candidate.modifiedFiles.join("\n") === expected.modifiedFiles.join("\n");
+}
+
+function fileOperationsSuffix(details: CompactionDetails): string {
+  const sections: string[] = [];
+  if (details.readFiles.length > 0) {
+    sections.push(`<read-files>\n${details.readFiles.join("\n")}\n</read-files>`);
   }
-  return hasAll(summary, COMPACTION_SAFETY_POLICY.requiredHeadings);
+  if (details.modifiedFiles.length > 0) {
+    sections.push(`<modified-files>\n${details.modifiedFiles.join("\n")}\n</modified-files>`);
+  }
+  return sections.length > 0 ? `\n\n${sections.join("\n\n")}` : "";
+}
+
+function summaryContent(result: CompactionResult, preparation: CompactionPreparation): string | undefined {
+  const expected = expectedDetails(preparation);
+  if (!validDetails(result.details, expected)) return undefined;
+  const suffix = fileOperationsSuffix(expected);
+  if (suffix && !result.summary.endsWith(suffix)) return undefined;
+  const content = suffix ? result.summary.slice(0, -suffix.length) : result.summary;
+  if (/<\/?(?:read|modified)-files>/.test(content)) return undefined;
+  return content;
+}
+
+function summarySegments(content: string, preparation: CompactionPreparation): string[] | undefined {
+  if (!preparation.isSplitTurn || preparation.turnPrefixMessages.length === 0) {
+    return hasOrderedSubstantiveSections(content, COMPACTION_SAFETY_POLICY.requiredHeadings, ["## Progress"])
+      ? [content]
+      : undefined;
+  }
+  const marker = "\n\n---\n\n**Turn Context (split turn):**\n\n";
+  const parts = content.split(marker);
+  if (parts.length !== 2) return undefined;
+  const [history, prefix] = parts;
+  if (preparation.messagesToSummarize.length > 0) {
+    if (!hasOrderedSubstantiveSections(history, COMPACTION_SAFETY_POLICY.requiredHeadings, ["## Progress"])) return undefined;
+  } else if (history.trim() !== "No prior history.") {
+    return undefined;
+  }
+  if (!hasOrderedSubstantiveSections(prefix, COMPACTION_SAFETY_POLICY.requiredSplitHeadings)) return undefined;
+  return preparation.messagesToSummarize.length > 0 ? [history, prefix] : [prefix];
 }
 
 function visiblyTruncated(summary: string): boolean {
@@ -106,23 +196,45 @@ function visiblyTruncated(summary: string): boolean {
   return /(?:\.\.\.|…|\[\.\.\.[^\]]*|[:,;])$/.test(ending);
 }
 
-function usageSuggestsTruncation(usage: Usage | undefined, model: Model<any>, preparation: CompactionPreparation): boolean {
+function usageSuggestsTruncation(
+  usage: Usage | undefined,
+  segments: readonly string[],
+  envelopes: readonly RequestSegment[],
+): boolean {
   if (!usage || usage.output <= 0) return false;
-  return usage.output >= outputEnvelopeTokens(model, preparation) * COMPACTION_SAFETY_POLICY.outputCeilingFraction;
+  if (usage.output >= envelopes.reduce((total, segment) => total + segment.outputTokens, 0)
+    * COMPACTION_SAFETY_POLICY.outputCeilingFraction) return true;
+  return segments.some((segment, index) => textTokens(segment) >= envelopes[index].outputTokens
+    * COMPACTION_SAFETY_POLICY.outputCeilingFraction);
 }
 
-function usageSuggestsLostInput(usage: Usage | undefined, preparation: CompactionPreparation): boolean {
+function usageSuggestsLostInput(usage: Usage | undefined, envelopes: readonly RequestSegment[]): boolean {
   if (!usage || usage.input <= 0) return true;
-  return usage.input < (preparedInputTokens(preparation) - COMPACTION_SAFETY_POLICY.requestOverheadTokens)
-    * COMPACTION_SAFETY_POLICY.minimumUsageFraction;
+  const preparedTokens = envelopes.reduce(
+    (total, segment) => total + segment.inputTokens - COMPACTION_SAFETY_POLICY.requestOverheadTokens,
+    0,
+  );
+  return usage.input < preparedTokens * COMPACTION_SAFETY_POLICY.minimumUsageFraction;
 }
 
-function safeResult(result: CompactionResult, model: Model<any>, preparation: CompactionPreparation): string | undefined {
+function safeResult(
+  result: CompactionResult,
+  model: Model<any>,
+  preparation: CompactionPreparation,
+  customInstructions?: string,
+): string | undefined {
   if (!result.summary.trim()) return "the summary was empty";
-  if (!hasCompleteStructure(result.summary, preparation)) return "the summary was malformed or incomplete";
-  if (visiblyTruncated(result.summary)) return "the summary is visibly truncated";
-  if (usageSuggestsTruncation(result.usage, model, preparation)) return "the summary reached its output limit";
-  if (usageSuggestsLostInput(result.usage, preparation)) return "usage indicates the request received too little prepared history";
+  if (result.firstKeptEntryId !== preparation.firstKeptEntryId || result.tokensBefore !== preparation.tokensBefore) {
+    return "the result did not preserve the prepared session boundary";
+  }
+  const content = summaryContent(result, preparation);
+  if (content === undefined) return "the result did not preserve native file tracking";
+  const segments = summarySegments(content, preparation);
+  if (!segments) return "the summary was malformed or incomplete";
+  if (segments.some(visiblyTruncated)) return "a summary segment is visibly truncated";
+  const envelopes = requestSegments(model, preparation, customInstructions);
+  if (usageSuggestsTruncation(result.usage, segments, envelopes)) return "the summary reached its output limit";
+  if (usageSuggestsLostInput(result.usage, envelopes)) return "usage indicates the request received too little prepared history";
   return undefined;
 }
 
@@ -160,6 +272,11 @@ function failureMessage(lunaReason: string, solReason: string): string {
   return `Safe compaction failed: Luna was rejected because ${lunaReason}; Sol was rejected because ${solReason}.`;
 }
 
+function cancelWithError(ctx: { ui: { notify(message: string, type?: "info" | "warning" | "error"): void } }, message: string) {
+  ctx.ui.notify(message, "error");
+  return { cancel: true } as const;
+}
+
 export default function (pi: ExtensionAPI) {
   pi.on("session_before_compact", async (event, ctx) => {
     if (process.env.FM_PI_LUNA_COMPACTION === COMPACTION_SAFETY_POLICY.disabledValue) return;
@@ -167,11 +284,11 @@ export default function (pi: ExtensionAPI) {
     const luna = ctx.modelRegistry.find(COMPACTION_MODELS.provider, COMPACTION_MODELS.primary);
     const sol = ctx.modelRegistry.find(COMPACTION_MODELS.provider, COMPACTION_MODELS.fallback);
     if (!luna || !sol) {
-      throw new Error("Safe compaction requires both openai-codex/gpt-5.6-luna and openai-codex/gpt-5.6-sol.");
+      return cancelWithError(ctx, "Safe compaction requires both openai-codex/gpt-5.6-luna and openai-codex/gpt-5.6-sol.");
     }
 
     let lunaReason = "Luna could not safely compact this session";
-    if (modelCanReceivePreparation(luna, event.preparation, ctx.model, event.customInstructions)) {
+    if (modelCanReceivePreparation(luna, event.preparation, event.customInstructions)) {
       try {
         const lunaAttempt = await runCompaction(
           event.preparation,
@@ -180,7 +297,7 @@ export default function (pi: ExtensionAPI) {
           event.signal,
           ctx.modelRegistry,
         );
-        const rejected = safeResult(lunaAttempt.result, lunaAttempt.model, event.preparation);
+        const rejected = safeResult(lunaAttempt.result, lunaAttempt.model, event.preparation, event.customInstructions);
         if (!rejected) return { compaction: lunaAttempt.result };
         lunaReason = rejected;
       } catch (error) {
@@ -191,7 +308,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     try {
-      if (!modelCanReceivePreparation(sol, event.preparation, ctx.model, event.customInstructions)) {
+      if (!modelCanReceivePreparation(sol, event.preparation, event.customInstructions)) {
         throw new Error("the prepared request exceeds Sol's supported context/output envelope");
       }
       const solAttempt = await runCompaction(
@@ -201,12 +318,12 @@ export default function (pi: ExtensionAPI) {
         event.signal,
         ctx.modelRegistry,
       );
-      const rejected = safeResult(solAttempt.result, solAttempt.model, event.preparation);
+      const rejected = safeResult(solAttempt.result, solAttempt.model, event.preparation, event.customInstructions);
       if (!rejected) return { compaction: solAttempt.result };
       throw new Error(rejected);
     } catch (error) {
       const solReason = error instanceof Error ? error.message : String(error);
-      throw new Error(failureMessage(lunaReason, solReason));
+      return cancelWithError(ctx, failureMessage(lunaReason, solReason));
     }
   });
 }
