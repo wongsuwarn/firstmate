@@ -255,9 +255,9 @@ test_ready_and_done_use_distinct_tones() {
   snap=$TMP_ROOT/ready-done.json
   board=$TMP_ROOT/ready-done.html
   snapshot_json "[$(in_flight_record ready 'Review the green PR' alpha),
-                  $(in_flight_record done 'Merged delivery' alpha)]" '[]' \
+                  $(in_flight_record 'done' 'Merged delivery' alpha)]" '[]' \
     "[$(live_task ready 'Review the green PR' alpha claude-opus-5 5 'Checks green' ready),
-      $(live_task done 'Merged delivery' alpha claude-opus-5 5 Done done)]" \
+      $(live_task 'done' 'Merged delivery' alpha claude-opus-5 5 Done 'done')]" \
     > "$snap"
 
   "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
