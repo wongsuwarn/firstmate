@@ -1965,6 +1965,9 @@ test_decision_context_links_and_submission_state_in_a_browser() {
     {"state":"queued","id":"d-invalid-ipv6","captain_actionable":true,
      "title":"Choose despite an invalid IPv6 aid","hold_reason":"The authority is malformed",
      "decision_url":"https://[::::]/aid","repo":"sample"},
+    {"state":"queued","id":"d-valid-ipv6","captain_actionable":true,
+     "title":"Choose with an IPv6 aid","hold_reason":"The authority is private IPv6",
+     "decision_url":"https://[fd00::1]/aid","repo":"sample"},
     {"state":"queued","id":"d-invalid-port","captain_actionable":true,
      "title":"Choose despite an invalid port","hold_reason":"The port is out of range",
      "decision_url":"https://example.invalid:99999/aid","repo":"sample"},
@@ -2065,7 +2068,9 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       queuePrompt:function(prompt){
         if(localStorage.getItem("test-bridge-fail")==="1") throw new Error("queue failed");
         var p=JSON.parse(localStorage.getItem("test-prompts")||"[]"); p.push(prompt);
-        localStorage.setItem("test-prompts",JSON.stringify(p)); return true;
+        localStorage.setItem("test-prompts",JSON.stringify(p));
+        if(localStorage.getItem("test-queue-delay")==="1") return new Promise(r=>setTimeout(()=>r(true),80));
+        return true;
       },
       sendQueuedPrompts:function(){
         if(localStorage.getItem("test-send-fail")==="1") throw new Error("send failed"); return true;
@@ -2085,6 +2090,7 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       badAid:!!block('main','d-bad-link').closest('.need-wrap').querySelector('.decision-aid'),
       malformedAid:!!block('main','d-malformed-link').closest('.need-wrap').querySelector('.decision-aid'),
       invalidIpv6Aid:!!block('main','d-invalid-ipv6').closest('.need-wrap').querySelector('.decision-aid'),
+      validIpv6Aid:!!block('main','d-valid-ipv6').closest('.need-wrap').querySelector('.decision-aid'),
       invalidPortAid:!!block('main','d-invalid-port').closest('.need-wrap').querySelector('.decision-aid'),
       localReport:(()=>{var row=block('main','local-lane-bakeoff-v2-powered-decision-widen-bounded-judgment-rung').closest('.need-wrap');
         var ref=row.querySelector('.local-ref'); return {text:ref&&ref.textContent,anchor:!!row.querySelector('a[href="data/local-lane-bakeoff-v2-powered/report.md"]')};})(),
@@ -2097,7 +2103,7 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(dom.empty === "Your answer", "an empty decision invented context");
   assert(dom.hostile === 'Question " ><img src=x onerror=alert(1)> stays text?' && dom.injectedImages === 0, "hostile question escaped its text context");
   assert(dom.aids.includes("https://sample.tailnet.invalid/decision-aid") && dom.aids.includes("https://ios.tailnet.invalid/decision-aid"), "main or secondmate decision aid was missing");
-  assert(dom.aids.includes("https://safe.invalid/?q=%22%3E%3Cscript%3E") && !dom.badAid && !dom.malformedAid
+  assert(dom.aids.includes("https://safe.invalid/?q=%22%3E%3Cscript%3E") && dom.validIpv6Aid && !dom.badAid && !dom.malformedAid
     && !dom.invalidIpv6Aid && !dom.invalidPortAid, "valid hostile text or malformed link handling was wrong");
   assert(dom.localReport.text === "Local report: data/local-lane-bakeoff-v2-powered/report.md" && !dom.localReport.anchor,
     "the Qwen bounded-judgment report path was not preserved as non-clickable context");
@@ -2183,6 +2189,22 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(success.routed === "Answer sent" && success.routedB === "Answer sent", "home or decision-key acknowledgement identities collided");
   assert(success.prompts === 5, "duplicate answer submission reached the bridge or a distinct identity was dropped");
 
+  const asynchronous = await evaluate(sid, `(async()=>{
+    localStorage.setItem('test-queue-delay','1');
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d-empty');
+    b.querySelector('[data-open=answer]').click(); var t=b.querySelector('textarea'); t.value='Frozen asynchronous answer';
+    b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
+    var during={value:t.value,textLocked:t.disabled,closeLocked:b.querySelector('.rc-x').disabled,
+      submitLocked:b.querySelector('.rc-go').disabled};
+    t.value='Edited while queuing'; t.dispatchEvent(new Event('input',{bubbles:true})); b.querySelector('.rc-x').click();
+    await new Promise(r=>setTimeout(r,100)); localStorage.removeItem('test-queue-delay');
+    return {during,afterValue:t.value,label:b.querySelector('[data-open=answer]').textContent};
+  })()`);
+  assert(asynchronous.during.value === 'Frozen asynchronous answer' && asynchronous.during.textLocked
+    && asynchronous.during.closeLocked && asynchronous.during.submitLocked
+    && asynchronous.afterValue === '' && asynchronous.label === 'Answer sent',
+    'an asynchronous queue allowed the frozen answer to be edited or cancelled: '+JSON.stringify(asynchronous));
+
   const failed = await evaluate(sid, `(async()=>{
     localStorage.setItem('test-send-fail','1');
     var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d-fallback');
@@ -2192,22 +2214,37 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       retry:!b.querySelector('.rc-go').disabled,message:b.querySelector('.rc-sent').textContent,
       textLocked:t.disabled,closeLocked:b.querySelector('.rc-x').disabled};
     failed.queued=JSON.parse(localStorage.getItem('test-prompts')||'[]').length;
-    localStorage.removeItem('test-send-fail');
-    t.value='Edited answer that was never queued'; b.querySelector('form[data-intent=answer]').requestSubmit();
-    await new Promise(r=>setTimeout(r,20));
-    failed.afterEdit={value:t.value,label:b.querySelector('[data-open=answer]').textContent,
-      queued:JSON.parse(localStorage.getItem('test-prompts')||'[]').length};
-    b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
-    failed.after=b.querySelector('[data-open=answer]').textContent;
-    failed.afterQueued=JSON.parse(localStorage.getItem('test-prompts')||'[]').length; return failed;
+    failed.saved=JSON.parse(sessionStorage.getItem('fm-mission-control-drafts-v1:'+window.__fmBoardScope)||'[]')
+      .find(x=>decodeURIComponent(x.identity.split(':')[1])==='d-fallback');
+    return failed;
   })()`);
   assert(failed.open && failed.value === "Keep comparison compact" && failed.retry
     && failed.message.startsWith("Queued but not sent") && failed.textLocked && failed.closeLocked,
     "a queued-but-unsent answer was not visibly preserved and retryable");
-  assert(failed.afterEdit.value === "Keep comparison compact" && failed.afterEdit.label === "Answer"
-    && failed.afterEdit.queued === 6, "edited text replaced or acknowledged the older queued answer: " + JSON.stringify(failed));
-  assert(failed.after === "Answer sent", "retry of the exact queued answer was not acknowledged");
-  assert(failed.queued === 6 && failed.afterQueued === 6, "retry after a partial bridge failure queued a duplicate request: " + JSON.stringify(failed));
+  assert(failed.saved && failed.saved.queued && failed.saved.queued.note === 'Keep comparison compact',
+    'the queued payload was not persisted under its exact draft identity: '+JSON.stringify(failed));
+
+  await reload(sid);
+  const retried = await evaluate(sid, `(async()=>{
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d-fallback'); var t=b.querySelector('textarea');
+    var restored={open:!b.querySelector('form[data-intent=answer]').hidden,value:t.value,
+      textLocked:t.disabled,closeLocked:b.querySelector('.rc-x').disabled,retry:!b.querySelector('.rc-go').disabled};
+    localStorage.removeItem('test-send-fail');
+    t.value='Edited answer that was never queued'; b.querySelector('form[data-intent=answer]').requestSubmit();
+    await new Promise(r=>setTimeout(r,20));
+    var afterEdit={value:t.value,label:b.querySelector('[data-open=answer]').textContent,
+      queued:JSON.parse(localStorage.getItem('test-prompts')||'[]').length};
+    b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
+    return {restored,afterEdit,after:b.querySelector('[data-open=answer]').textContent,
+      afterQueued:JSON.parse(localStorage.getItem('test-prompts')||'[]').length};
+  })()`);
+  assert(retried.restored.open && retried.restored.value === 'Keep comparison compact' && retried.restored.textLocked
+    && retried.restored.closeLocked && retried.restored.retry, 'reload did not restore the locked queued answer: '+JSON.stringify(retried));
+  assert(retried.afterEdit.value === "Keep comparison compact" && retried.afterEdit.label === "Answer",
+    "edited text replaced or acknowledged the older queued answer: " + JSON.stringify(retried));
+  assert(retried.after === "Answer sent", "retry of the exact queued answer was not acknowledged");
+  assert(failed.queued === retried.afterEdit.queued && failed.queued === retried.afterQueued,
+    "retry after a partial bridge failure queued a duplicate request: " + JSON.stringify({failed,retried}));
 
   await navigate(sid, boardPath);
   const restored = await evaluate(sid, `(() => {var all=[...document.querySelectorAll('.rc')]; var pr=all.find(x=>x.dataset.id==='pr-ready'); return {
@@ -2221,8 +2258,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
 
   fs.copyFileSync(reducedPath, boardPath);
   await navigate(sid, boardPath);
-  const stale = await evaluate(sid, `[...Array(localStorage.length)].map((_,i)=>localStorage.key(i)).filter(k=>k.startsWith('fm-mission-control-ack-v1:')).length`);
-  assert(stale === 0, "acknowledgements survived after their actionable items disappeared");
+  const stale = await evaluate(sid, `[...Array(localStorage.length)].map((_,i)=>localStorage.key(i)).filter(k=>k.startsWith('fm-mission-control-ack-v1:'))`);
+  assert(stale.length === 0, "acknowledgements survived after their actionable items disappeared: "+JSON.stringify(stale));
 
   fs.writeFileSync(boardPath, original);
   await navigate(sid, boardPath);

@@ -119,7 +119,7 @@ The no-script fallback remains read-only and refreshes through its meta tag.
 
 After the Lavish bridge accepts a request, the affected control says exactly what was sent, such as `Answer sent` or `Merge request sent`, and refuses an accidental duplicate while that same action remains on the board.
 A failure before queuing leaves the form open, keeps its text editable, and remains retryable.
-When queuing succeeds but delivery fails, the board binds the retry to that exact saved answer and temporarily locks editing and cancellation, so it can neither enqueue a duplicate nor acknowledge newer text while sending the older payload.
+When queuing succeeds but delivery fails, the board keeps the exact queued payload in that draft's session record and locks editing and cancellation across full-document reloads, so a retry can neither enqueue a duplicate nor acknowledge newer text while sending the older payload.
 Every open composer and its draft are saved eagerly in session storage under the exact board, owning home, item, decision key, and intent identity.
 A full document reload restores only controls whose exact identity still exists, so an external generator rewrite cannot erase an in-progress answer and cannot attach it to a neighbouring decision.
 Submitted presentation state is browser-local, scoped by board home, document, owning home, item, decision key, and intent.

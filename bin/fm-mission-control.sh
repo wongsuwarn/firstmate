@@ -1011,26 +1011,56 @@ def meta_block($line; $items):
 # for a route that does not exist.
 # URL validation stays inside jq, the required Mission Control renderer runtime,
 # so a missing optional browser/test runtime can never erase valid links.
-# This deliberately accepts the ASCII DNS and IPv4 authorities used by PRs and
-# private served aids, and rejects credentials, bracket authorities, malformed
-# escapes, control characters, and ports outside the URL range.
+# This accepts ASCII DNS, IPv4, and bracketed IPv6 authorities and rejects
+# credentials, malformed escapes, control characters, and invalid ports.
+def valid_ipv4:
+  (split(".") | length) == 4
+  and (split(".") | all(.[];
+    test("^[0-9]{1,3}$") and (tonumber >= 0 and tonumber <= 255)));
+
 def valid_web_host:
   . as $host |
   ($host | length) > 0 and ($host | length) <= 253
   and ($host | split(".") | all(.[];
     (length > 0 and length <= 63 and test("^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$"))))
   and (if ($host | test("^[0-9.]+$"))
-       then ($host | split(".") | length) == 4
-         and ($host | split(".") | all(.[]; (tonumber >= 0 and tonumber <= 255)))
+       then ($host | valid_ipv4)
        else true end);
+
+def normalized_ipv6:
+  if contains(".") then
+    ([try capture("^(?<prefix>.*:)(?<ipv4>[^:]+)$") catch null] | .[0] // null) as $mixed |
+    if $mixed != null and ($mixed.ipv4 | valid_ipv4)
+    then $mixed.prefix + "0:0"
+    else null
+    end
+  else .
+  end;
+
+def valid_ipv6:
+  normalized_ipv6 as $address |
+  if $address == null or ($address | test("^[0-9A-Fa-f:]+$") | not) then false
+  else ($address | split("::")) as $pieces |
+    ($pieces | map(if length == 0 then [] else split(":") end)) as $groups |
+    ($groups | all(.[]; all(.[]; test("^[0-9A-Fa-f]{1,4}$"))))
+    and (if ($pieces | length) == 1
+         then ($groups[0] | length) == 8
+         else ($pieces | length) == 2 and (($groups[0] | length) + ($groups[1] | length)) < 8
+         end)
+  end;
 
 def valid_web_url:
   if type != "string" or test("[[:cntrl:][:space:]\\\"<>\\\\]") then false
   else . as $candidate |
     ([try capture("^(?<scheme>https?)://(?<authority>[^/?#]+)(?<tail>[/?#].*)?$"; "i") catch null] | .[0] // null) as $url |
     if $url == null or ($url.authority | contains("@")) then false
-    else ([try ($url.authority | capture("^(?<host>[^:]+)(?::(?<port>[0-9]+))?$")) catch null] | .[0] // null) as $authority |
-      if $authority == null or (($authority.host | valid_web_host) | not) then false
+    else ([try ($url.authority | capture("^(?:\\[(?<ipv6>[^]]+)\\]|(?<host>[^:]+))(?::(?<port>[0-9]+))?$")) catch null] | .[0] // null) as $authority |
+      if $authority == null
+        or (if ($authority.ipv6 // "") != ""
+            then (($authority.ipv6 | valid_ipv6) | not)
+            else (($authority.host | valid_web_host) | not)
+            end)
+      then false
       elif ($authority.port // "") != "" and (($authority.port | length) > 5 or ($authority.port | tonumber) > 65535) then false
       else (($candidate | gsub("%[0-9A-Fa-f]{2}"; "") | contains("%")) | not) end
     end
@@ -2350,6 +2380,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       .map(encodeURIComponent).join(\":\");
   }
   var draftKey = \"fm-mission-control-drafts-v1:\" + window.__fmBoardScope;
+  var requestState = {};
   function draftIdentity(block, intent) {
     return [block.getAttribute(\"data-home\") || \"main\",
       block.getAttribute(\"data-id\") || \"\", block.getAttribute(\"data-key\") || \"\", intent]
@@ -2374,8 +2405,12 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         var area = form.querySelector(\".rc-t\");
         var note = area ? area.value : \"\";
         var open = form.hasAttribute(\"data-toggle\") ? !form.hidden : note !== \"\";
+        var pending = requestState[identity];
         if (!open && !note) { delete records[identity]; return; }
         records[identity] = {identity:identity,open:open,note:note};
+        if (pending && pending.status !== \"queuing\") {
+          records[identity].queued = {payload:pending.payload,note:pending.note};
+        }
       });
     });
     records = Object.keys(records).map(function (identity) { return records[identity]; });
@@ -2399,6 +2434,13 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         var area = form.querySelector(\".rc-t\");
         if (area && typeof record.note === \"string\") { area.value = record.note; }
         if (record.open && form.hasAttribute(\"data-toggle\")) { shut(block); form.hidden = false; }
+        if (record.queued && typeof record.queued.payload === \"string\"
+            && typeof record.queued.note === \"string\") {
+          requestState[record.identity] = {
+            status:\"queued\", payload:record.queued.payload, note:record.queued.note
+          };
+          keepQueuedPayload(block, form, requestState[record.identity]);
+        }
         return true;
       });
     });
@@ -2448,14 +2490,28 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   }
   restoreAcks();
   restoreDrafts();
-  var requestState = {};
 
-  function keepQueuedPayload(block, form, state) {
+  function freezePayload(block, form, state) {
     var area = form.querySelector(\".rc-t\");
     var close = form.querySelector(\".rc-x\");
     var submit = form.querySelector(\".rc-go\");
     if (area) { area.value = state.note || \"\"; area.disabled = true; }
     if (close) { close.disabled = true; }
+    if (submit) { submit.disabled = true; }
+  }
+
+  function releasePayload(form) {
+    var area = form.querySelector(\".rc-t\");
+    var close = form.querySelector(\".rc-x\");
+    var submit = form.querySelector(\".rc-go\");
+    if (area) { area.disabled = false; }
+    if (close) { close.disabled = false; }
+    if (submit) { submit.disabled = false; }
+  }
+
+  function keepQueuedPayload(block, form, state) {
+    freezePayload(block, form, state);
+    var submit = form.querySelector(\".rc-go\");
     if (submit) { submit.disabled = false; }
     say(block, \"Queued but not sent - retry to send this saved answer.\", true);
   }
@@ -2556,11 +2612,11 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       saveDrafts();
       return;
     }
-    if (submit) { submit.disabled = true; }
     try {
       if (!pending || pending.status !== \"queued\") {
         pending = {status:\"queuing\",payload:wire,note:note};
         requestState[requestIdentity] = pending;
+        freezePayload(block, form, pending);
         var queued = lav.queuePrompt(wire, {
           tag: \"board-request\",
           text: summary(request.intent, block.getAttribute(\"data-what\") || \"\")
@@ -2568,16 +2624,20 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         if (queued && typeof queued.then === \"function\") { queued = await queued; }
         if (queued === false) { throw new Error(\"queue refused\"); }
         pending.status = \"queued\";
+        saveDrafts(true);
       }
       pending.status = \"sending\";
+      freezePayload(block, form, pending);
       var accepted = lav.sendQueuedPrompts();
       if (accepted && typeof accepted.then === \"function\") { accepted = await accepted; }
       if (accepted === false) { throw new Error(\"send refused\"); }
       delete requestState[requestIdentity];
     } catch (e) {
-      if (pending && pending.status === \"queuing\") { delete requestState[requestIdentity]; }
+      if (pending && pending.status === \"queuing\") {
+        delete requestState[requestIdentity];
+        releasePayload(form);
+      }
       else if (pending) { pending.status = \"queued\"; keepQueuedPayload(block, form, pending); }
-      if (submit) { submit.disabled = false; }
       if (!pending || pending.status !== \"queued\") {
         say(block, \"Not sent - the board could not reach firstmate.\", true);
       }
@@ -2585,6 +2645,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       return;
     }
     if (area) { area.value = \"\"; }
+    releasePayload(form);
     if (persistent) {
       try { window.localStorage.setItem(identity, \"sent\"); } catch (e) { /* page state still prevents a duplicate */ }
       applyAck(block, request.intent);
@@ -2601,8 +2662,9 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     var form = area.closest(\".rc-f\");
     var block = form && form.closest(\".rc\");
     var pending = block && form && requestState[draftIdentity(block, form.getAttribute(\"data-intent\") || \"\")];
-    if (pending && pending.status === \"queued\") {
-      keepQueuedPayload(block, form, pending);
+    if (pending) {
+      if (pending.status === \"queued\") { keepQueuedPayload(block, form, pending); }
+      else { freezePayload(block, form, pending); }
       saveDrafts();
       return;
     }

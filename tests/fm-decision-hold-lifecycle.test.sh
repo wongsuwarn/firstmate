@@ -923,7 +923,7 @@ EOF
 }
 
 test_decision_question_and_private_link_use_the_supported_hold_interface() {
-  local home origin hold out summary show
+  local home origin hold out question summary show
   home=$(make_home decision-context)
   origin=sample-context-review
   mkdir -p "$home/data/$origin"
@@ -932,24 +932,25 @@ test_decision_question_and_private_link_use_the_supported_hold_interface() {
   printf '# Sample context review\n' > "$home/data/$origin/report.md"
   printf 'done: review complete\n' > "$home/state/$origin.status"
 
+  question='Should the sample preserve literal \n and \t text?'
   hold=$(run_decisions "$home" hold "$origin" emphasis \
     --title "Choose the sample emphasis" \
     --reason "captain emphasis choice pending" \
-    --question "Should the sample lead with guidance or raw detail?" \
+    --question "$question" \
     --decision-url "https://sample.tailnet.invalid/decision-aid" \
     --repo sample) || fail "the supported hold interface could not record decision context"
 
   out=$(PATH="$home/fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-fleet-snapshot.sh" --json)
-  printf '%s' "$out" | jq -e --arg hold "$hold" '
+  printf '%s' "$out" | jq -e --arg hold "$hold" --arg question "$question" '
     .backlog.records[] | select(.id == $hold)
-    | .decision_question == "Should the sample lead with guidance or raw detail?"
+    | .decision_question == $question
       and .decision_url == "https://sample.tailnet.invalid/decision-aid"
   ' >/dev/null || fail "main-home decision context did not reach the canonical snapshot: $out"
 
   summary=$(PATH="$home/fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary)
-  printf '%s' "$summary" | jq -e --arg hold "$hold" '
+  printf '%s' "$summary" | jq -e --arg hold "$hold" --arg question "$question" '
     .decisions_open[] | select(.id == $hold)
-    | .question == "Should the sample lead with guidance or raw detail?"
+    | .question == $question
       and .decision_url == "https://sample.tailnet.invalid/decision-aid"
   ' >/dev/null || fail "decision context did not reach the secondmate-home projection: $summary"
 
@@ -957,8 +958,10 @@ test_decision_question_and_private_link_use_the_supported_hold_interface() {
     --url "https://sample.tailnet.invalid/revised-aid" >/dev/null \
     || fail "the supported link backfill could not update an existing hold"
   show=$(tasks_in "$home" show "$hold" --full)
-  assert_contains "$show" 'Decision question: Should the sample lead with guidance or raw detail?' \
-    "link backfill overwrote the exact question"
+  out=$(PATH="$home/fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$out" | jq -e --arg hold "$hold" --arg question "$question" '
+    .backlog.records[] | select(.id == $hold) | .decision_question == $question
+  ' >/dev/null || fail "link backfill overwrote the exact question"
   assert_contains "$show" 'Decision URL: https://sample.tailnet.invalid/revised-aid' \
     "link backfill did not replace the structured URL"
   if run_decisions "$home" link "$origin" emphasis --url "http://public.invalid/not-private" \

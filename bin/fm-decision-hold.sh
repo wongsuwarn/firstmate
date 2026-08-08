@@ -181,15 +181,15 @@ show_body() {  # <show-output>
 
 set_body_field() {  # <body> <label> <value>
   local body=$1 label=$2 value=$3
-  printf '%s\n' "$body" | awk -v label="$label: " -v value="$value" '
+  printf '%s\n' "$body" | FM_BODY_FIELD_VALUE=$value awk -v label="$label: " '
     BEGIN { found = 0 }
     index($0, label) == 1 {
-      if (!found) print label value
+      if (!found) print label ENVIRON["FM_BODY_FIELD_VALUE"]
       found = 1
       next
     }
     { print }
-    END { if (!found) print label value }
+    END { if (!found) print label ENVIRON["FM_BODY_FIELD_VALUE"] }
   '
 }
 
