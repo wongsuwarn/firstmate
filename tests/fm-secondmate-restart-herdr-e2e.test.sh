@@ -47,9 +47,25 @@ herdr_forget_inherited_pane
 
 SESSION="fm-lab-sm-restart-e2e-$$"
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-sm-restart-e2e.XXXXXX")
+CLEANED=0
+# "The live default session is unaffected" is a guarantee this suite ASSERTS,
+# not a warning it prints. The guarded teardown re-checks refuse-default before
+# each destructive call and requires the recorded default-session fleet state to
+# be byte-identical afterwards; a failure there must fail the run. A bare EXIT
+# trap cannot do that - bash keeps the status that triggered the trap unless the
+# trap itself exits - so this one exits explicitly, and CLEANED keeps fail()'s
+# own call path from tearing down twice.
 cleanup_all() {
-  herdr_safe_stop_and_delete "$SESSION"
+  local rc=$?
+  [ "$CLEANED" = 0 ] || return "$rc"
+  CLEANED=1
+  if ! herdr_safe_stop_and_delete "$SESSION"; then
+    printf 'not ok - guarded lab teardown or its default-session tripwire failed; the live default session may have changed\n' >&2
+    rm -rf "$SCRATCH"
+    exit 1
+  fi
   rm -rf "$SCRATCH"
+  return "$rc"
 }
 trap cleanup_all EXIT
 
@@ -69,7 +85,7 @@ set -u
 [ -z "\${HERDR_PANE_ID:-}" ] || herdr pane report-agent "\$HERDR_PANE_ID" \\
   --source fm-sm-restart-e2e --agent fm-lab-agent --state idle \\
   --session "$SESSION" >/dev/null 2>&1 || true
-exec sleep 900
+exec sleep 120
 SH
 chmod +x "$FAKEBIN/claude"
 # The Herdr server is started below from THIS process, so panes it creates
