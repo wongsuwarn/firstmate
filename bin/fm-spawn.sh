@@ -633,7 +633,17 @@ spawn_remote_secondmate() {
     echo "remote_herdr_session=$remote_herdr_session"
     echo "remote_target=$remote_target"
     [ -z "$remote_recorded_traceparent" ] || echo "traceparent=$remote_recorded_traceparent"
-  } > "$tmp"
+  } > "$tmp" || {
+    # Same errexit-portability boundary as the local publication below: an
+    # unchecked compound redirection fails open before bash 5.1, so a partial
+    # record could be promoted into place by the mv that follows.
+    rm -f -- "$tmp"
+    fm_lock_release "$remote_lock" || true
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    echo "error: could not write the record for remote secondmate $id; preserving the remote route for reconciliation" >&2
+    return 1
+  }
   mv -f -- "$tmp" "$meta"
   fm_lock_release "$remote_lock" || true
   fm_lock_release "$registry_lock" || true
@@ -2321,7 +2331,17 @@ META_WINDOW=$T
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
-} > "$STATE/$ID.meta"
+} > "$STATE/$ID.meta" || {
+  # Checked explicitly rather than left to `set -e`: a redirection failure on a
+  # COMPOUND command only aborts an errexit shell from bash 5.1 onwards
+  # (docs/verification/runtime-backends.md "Shell portability"), so on stock
+  # macOS Bash 3.2 the publication below would fail, this script would keep
+  # going, and it would report a spawn whose durable record does not exist -
+  # an agent and its backend resources firstmate can never supervise or tear
+  # down. Exiting here runs spawn_abort_cleanup exactly like every other abort.
+  echo "error: could not publish the task record for $ID; refusing to report a spawn firstmate cannot supervise" >&2
+  exit 1
+}
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
 sq_brief=$(shell_quote "$BRIEF")

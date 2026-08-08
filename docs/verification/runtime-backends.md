@@ -6,6 +6,44 @@ This record contains reusable version-scoped evidence for active runtime guarant
 The backend guides own current setup, safety boundaries, and limitations.
 Exact task chronology, branch names, temporary homes, local paths, process ids, thread ids, and delivery transcripts remain in private reports or PR evidence.
 
+## Shell portability
+
+This section is backend-independent: it bounds a shell guarantee that every backend's spawn path depends on.
+
+`set -e` aborts on a failed redirection attached to a SIMPLE command in every supported shell, but on a COMPOUND command only from bash 5.1 onwards.
+Verified 2026-08-08 on macOS 26.5.2 arm64 for the stock shell, and in official `bash` images for the rest.
+
+```sh
+# stock macOS shell
+mkdir -p /tmp/d.meta
+printf 'set -eu\n{ echo hi; } > /tmp/d.meta\necho AFTER-GROUP\n' > /tmp/t.sh
+/bin/bash /tmp/t.sh; echo "final=$?"
+
+# each other version, one run per tag in 4.4 5.0 5.1 5.2
+docker run --rm bash:5.1 bash -c 'bash --version | head -1
+mkdir -p /tmp/d.meta
+printf "set -eu\n{ echo hi; } > /tmp/d.meta\necho AFTER-GROUP\n" > /tmp/t.sh
+bash /tmp/t.sh; echo "final=$?"'
+```
+
+Observed per version:
+
+| Bash | `AFTER-GROUP` reached | `final` | Aborts on a compound redirection failure |
+| --- | --- | --- | --- |
+| 3.2.57 (stock macOS) | yes | 0 | no |
+| 4.4.23 | yes | 0 | no |
+| 5.0.18 | yes | 0 | no |
+| 5.1.16 | no | 1 | yes |
+| 5.2.37 | no | 1 | yes |
+
+The shell still sets `$?` to 1 after the failed compound redirection, so an explicit `|| { ... }` on the redirection detects it on every version above.
+`if ! { ... } > "$file"; then` does NOT: the negation reported success after a failed compound redirection on 3.2.57 and on 5.2.37 alike, both ends of the supported range, so it is not a substitute for the `||` form.
+
+The consequence for firstmate is that any durable record published through `{ ... } > "$file"` must check the redirection itself rather than lean on `set -e`.
+`bin/fm-spawn.sh` publishes every task's `state/<id>.meta` that way for all five spawn-capable backends, so an unchecked publication reported a successful spawn with no record on stock macOS Bash 3.2.
+`tests/fm-backend.test.sh` and `tests/fm-backend-orca.test.sh`, which cover that publication, are both selected only into the ubuntu-latest lanes (`bin/fm-test-run.sh --list --lane portable-serial`), and any runner carrying bash 5.1 or newer masks the defect.
+`tests/fm-backend.test.sh`'s `test_spawn_refuses_when_task_record_cannot_be_published` is the portable regression, and it asserts the script's own refusal diagnostic so it cannot pass vacuously on a shell whose `set -e` would have aborted anyway.
+
 ## tmux
 
 Foreground-process behavior was verified on 2026-07-07 with tmux 3.6a on macOS.

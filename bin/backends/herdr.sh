@@ -278,14 +278,11 @@ fm_backend_herdr_projection_journal_create() {  # <state-dir> <task-id>
   }
   tmp=$(mktemp "$state/.${id}.herdr-presentation.XXXXXX") || return 1
   chmod 0600 "$tmp" || { rm -f "$tmp"; return 1; }
-  if ! {
+  {
     printf 'version=1\n'
     printf 'task_id=%s\n' "$id"
     printf 'projection_id=%s\n' "$token"
-  } > "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
+  } > "$tmp" || { rm -f "$tmp"; return 1; }
   if ! ln "$tmp" "$journal" 2>/dev/null; then
     rm -f "$tmp"
     echo "error: herdr presentation journal appeared concurrently for $id; refusing projected create" >&2
@@ -385,7 +382,7 @@ fm_backend_herdr_projection_journal_write_v2() {  # <journal> <task-id> <token> 
   state=$(dirname "$journal")
   tmp=$(mktemp "$state/.${id}.herdr-presentation.bind.XXXXXX") || return 1
   chmod 0600 "$tmp" || { rm -f "$tmp"; return 1; }
-  if ! {
+  {
     printf 'version=2\n'
     printf 'task_id=%s\n' "$id"
     printf 'projection_id=%s\n' "$token"
@@ -398,10 +395,7 @@ fm_backend_herdr_projection_journal_write_v2() {  # <journal> <task-id> <token> 
     printf 'parent_label=%s\n' "$parent_label"
     printf 'workspace_label=%s\n' "$workspace_label"
     printf 'task_label=%s\n' "$task_label"
-  } > "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
+  } > "$tmp" || { rm -f "$tmp"; return 1; }
   [ -f "$journal" ] && [ ! -L "$journal" ] || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$journal"
 }

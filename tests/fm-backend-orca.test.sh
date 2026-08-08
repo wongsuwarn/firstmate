@@ -687,6 +687,11 @@ test_spawn_releases_orca_resources_when_metadata_write_fails() {
   status=$?
   [ "$status" -ne 0 ] || fail "Orca spawn should fail when metadata cannot be written"
   assert_contains "$out" "Is a directory" "spawn should fail at metadata publication"
+  # The exit code alone cannot distinguish a checked refusal from bash's own
+  # errexit, which only fires on this shape from 5.1 onwards; requiring the
+  # diagnostic keeps the case meaningful on every supported shell.
+  assert_contains "$out" "could not publish the task record for $id" \
+    "spawn should refuse the unpublishable record explicitly, not rely on shell errexit"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-meta-fail'$'\x1f''--json' \
     "Orca spawn should close the recorded terminal when a later abort occurs"
   assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-meta-fail'$'\x1f''--force'$'\x1f''--json' \
