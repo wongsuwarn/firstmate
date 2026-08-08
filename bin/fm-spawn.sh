@@ -22,6 +22,21 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
+#   --remote-control (alias --rc) adds Claude Code's --remote-control flag to the
+#   launch command, so the session appears in the Claude mobile app's Code tab and
+#   at claude.ai/code (docs.claude.com Remote Control). It is claude-harness-only
+#   and REFUSED for any other resolved harness, including a raw launch command
+#   that does not resolve to claude. It requires a claude.ai Pro/Max login (API-key
+#   auth is unsupported) and is silently a no-op on an installed CLI too old to
+#   recognize the flag. A spawn with the flag set records remote_control=1 in
+#   state/<id>.meta; the field is omitted entirely when unset, matching the
+#   backend= convention. That record is NOT auto-replayed by this script on a
+#   plain respawn - a caller wanting Remote Control to survive a respawn passes
+#   --remote-control again, exactly like --model/--effort/--harness. The one
+#   automatic exception is bin/fm-bootstrap.sh's secondmate liveness sweep, which
+#   reads a dead/missing secondmate's existing remote_control=1 before respawning
+#   it and passes --remote-control back through so a captain's Remote-Control-
+#   enabled secondmate stays reachable across an unattended recovery relaunch.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -244,6 +259,7 @@ MODE=
 YOLO=
 TRACEPARENT_ARG=
 RESUME_WT_ARG=
+REMOTE_CONTROL=0
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -276,6 +292,7 @@ for a in "$@"; do
   case "$a" in
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
+    --remote-control|--rc) REMOTE_CONTROL=1 ;;
     --harness) want_value=harness ;;
     --harness=*) HARNESS_ARG=${a#--harness=}; HARNESS_SET=1 ;;
     --model) want_value=model ;;
@@ -891,7 +908,7 @@ launch_template() {
     # does NOT suppress the interactive ghost text (verified empirically), so the env
     # var is the correct control. The dim-aware composer reader in fm-tmux-lib.sh is
     # the defense-in-depth backstop for any pane this flag cannot reach.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions __RCFLAG____MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -959,6 +976,11 @@ case "$ARG3" in
     LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2; exit 1; }
     ;;
 esac
+
+if [ "$REMOTE_CONTROL" -eq 1 ] && [ "$HARNESS" != claude ]; then
+  echo "error: --remote-control (--rc) enables Claude Code's Remote Control and launches only on the claude harness; refusing for '$HARNESS'" >&2
+  exit 1
+fi
 
 case "$HARNESS" in
   pi|pi-signed) LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH" ;;
@@ -1035,6 +1057,18 @@ model_flag_for_harness() {
     claude|codex|opencode|pi|pi-signed|grok|kimi)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
+  esac
+}
+
+# Claude Code's Remote Control flag; refused for every other harness before
+# LAUNCH is ever composed (see the guard by the harness-resolution case
+# above), so this defense-in-depth case is never reached with harness!=claude
+# in practice.
+remote_control_flag_for_harness() {
+  local harness=$1 remote_control=$2
+  [ "$remote_control" -eq 1 ] || return 0
+  case "$harness" in
+    claude) printf -- '--remote-control ' ;;
   esac
 }
 
@@ -2171,6 +2205,9 @@ META_WINDOW=$T
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  # Off by default; written only when on, so an ordinary spawn's meta stays
+  # byte-identical (absent remote_control= means off, same convention as backend=).
+  [ "$REMOTE_CONTROL" -eq 0 ] || echo "remote_control=1"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   # Default-off writes no traceparent= line (meta stays byte-identical).
   # backend= is written only for a non-default (non-tmux) backend, so the
@@ -2209,8 +2246,10 @@ sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
+RCFLAG=$(remote_control_flag_for_harness "$HARNESS" "$REMOTE_CONTROL")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
+LAUNCH=${LAUNCH//__RCFLAG__/$RCFLAG}
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
