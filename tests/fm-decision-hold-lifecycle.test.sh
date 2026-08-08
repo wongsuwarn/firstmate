@@ -733,6 +733,130 @@ EOF
   pass "only a genuinely resolved archived captain decision satisfies the gate"
 }
 
+# Two keys were filed for one question, so the duplicate is removed with
+# `tasks-axi rm` - the correct de-duplication action. That left the key in the
+# recorded union and absent from both durability sources, so `verify` and
+# `complete` refused forever and scout teardown could never clean the source up.
+# The retraction that repairs it must not become a way to drop a key out of the
+# gate, so every negative below is asserted while the strand is still live.
+test_duplicate_decision_key_retraction_unstrands_teardown() {
+  local home id survivor duplicate distinct rc open recorded
+  home=$(make_home duplicate-decision-key)
+  id=sample-dedup-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate sample deduplication" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create investigation backlog fixture"
+  write_origin_meta "$home" "$id"
+  cat > "$home/state/$id.status" <<'EOF'
+needs-decision [key=route-choice]: choose route north or route south
+needs-decision [key=routing-direction]: choose route north or route south
+needs-decision [key=access-level]: choose open or restricted sample access
+done: report and visual review complete
+EOF
+  cat > "$home/data/$id/report.md" <<'EOF'
+# Sample deduplication review
+
+Two genuine choices remain: the sample route and the sample access level.
+An early review pass filed the route question twice under two different keys.
+EOF
+
+  survivor=$(run_decisions "$home" hold "$id" route-choice \
+    --title "Choose the sample route" --reason "captain route choice pending" --repo sample) \
+    || fail "could not register the surviving hold"
+  duplicate=$(run_decisions "$home" hold "$id" routing-direction \
+    --title "Choose the sample routing direction" --reason "captain route choice pending" --repo sample) \
+    || fail "could not register the duplicate hold"
+  distinct=$(run_decisions "$home" hold "$id" access-level \
+    --title "Choose the sample access level" --reason "captain access choice pending" --repo sample) \
+    || fail "could not register the second distinct hold"
+  run_decisions "$home" complete "$id" route-choice routing-direction access-level >/dev/null \
+    || fail "completion gate failed while all three keys were held"
+  recorded=$(grep '^decision_keys=' "$home/state/$id.meta" | tail -1)
+  [ "$recorded" = "decision_keys=access-level,route-choice,routing-direction" ] \
+    || fail "completion did not record the full inventory: $recorded"
+
+  # De-duplication, exactly as an operator performs it on a duplicate hold.
+  tasks_in "$home" rm "$duplicate" >/dev/null || fail "could not remove the duplicate hold"
+
+  # The strand, reproduced: both gates refuse and the scout cannot be cleaned up.
+  if run_decisions "$home" verify "$id" > "$home/stranded-verify.out" 2> "$home/stranded-verify.err"; then
+    fail "verification passed while a recorded key was absent from both durability sources"
+  fi
+  assert_grep "$duplicate" "$home/stranded-verify.err" "the refusal must name the stranded identity"
+  if run_decisions "$home" complete "$id" route-choice > "$home/stranded-complete.out" 2> "$home/stranded-complete.err"; then
+    fail "completion retry passed while a recorded key was absent from both durability sources"
+  fi
+  set +e
+  run_teardown "$home" "$id" > "$home/stranded-teardown.out" 2> "$home/stranded-teardown.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "the duplicate-key strand was not reproduced: teardown already succeeded"
+  assert_present "$home/state/$id.meta" "the stranded refusal must preserve investigation metadata"
+
+  # Retraction always needs a surviving key that is in this inventory and durable.
+  if run_decisions "$home" retract "$id" routing-direction \
+    > "$home/no-anchor.out" 2> "$home/no-anchor.err"; then
+    fail "retraction dropped a key without naming a superseding decision"
+  fi
+  if run_decisions "$home" retract "$id" routing-direction --superseded-by routing-direction \
+    > "$home/self-anchor.out" 2> "$home/self-anchor.err"; then
+    fail "a decision key superseded itself"
+  fi
+  if run_decisions "$home" retract "$id" routing-direction --superseded-by sample-unfiled \
+    > "$home/foreign-anchor.out" 2> "$home/foreign-anchor.err"; then
+    fail "retraction accepted a superseding key outside the reviewed inventory"
+  fi
+  # The removed key is still in the inventory but is no longer durable, so it can
+  # never be used to justify dropping a decision that is still genuinely held.
+  if run_decisions "$home" retract "$id" route-choice --superseded-by routing-direction \
+    > "$home/dead-anchor.out" 2> "$home/dead-anchor.err"; then
+    fail "retraction accepted a superseding key that is not itself durable"
+  fi
+  assert_grep "$survivor" "$home/data/backlog.md" "a refused retraction removed the surviving hold"
+
+  run_decisions "$home" retract "$id" routing-direction --superseded-by route-choice >/dev/null \
+    || fail "retracting a duplicate key failed"
+  recorded=$(grep '^decision_keys=' "$home/state/$id.meta" | tail -1)
+  [ "$recorded" = "decision_keys=access-level,route-choice" ] \
+    || fail "retraction did not update the recorded inventory: $recorded"
+  open=$(bash -c '. "$1"; status_open_decisions "$2"' _ \
+    "$ROOT/bin/fm-classify-lib.sh" "$home/state/$id.status")
+  [ -z "$open" ] || fail "retraction left the duplicate key open in the live status fold: $open"
+  run_decisions "$home" retract "$id" routing-direction --superseded-by route-choice \
+    > "$home/retract-retry.out" 2>&1 || fail "an identical retraction retry was not idempotent"
+  assert_grep "already outside the reviewed inventory" "$home/retract-retry.out" \
+    "a retry that removed nothing still reported a completed retraction"
+  run_decisions "$home" verify "$id" >/dev/null \
+    || fail "verification still refused after the duplicate key was retracted"
+  run_decisions "$home" complete "$id" route-choice access-level >/dev/null \
+    || fail "completion still refused after the duplicate key was retracted"
+
+  # A durably resolved decision already satisfies the gate, live or archived, so it
+  # is never retractable and the surviving distinct decision stays gated.
+  tasks_in "$home" add sample-route-work "Apply the selected sample route" \
+    --kind ship --repo sample --blocked-by "$survivor" >/dev/null \
+    || fail "could not create dependent work fixture"
+  printf 'Use route north for the sample system.\n' > "$home/route-decision.txt"
+  run_decisions "$home" resolve "$id" route-choice --decision-file "$home/route-decision.txt" \
+    --routed-to sample-route-work >/dev/null || fail "could not resolve the surviving hold"
+  if run_decisions "$home" retract "$id" route-choice --superseded-by access-level \
+    > "$home/resolved-retract.out" 2> "$home/resolved-retract.err"; then
+    fail "a durably resolved captain decision was retractable"
+  fi
+  tasks_in "$home" prune --keep 0 --state "done" >/dev/null || fail "could not archive the resolved hold"
+  if run_decisions "$home" retract "$id" route-choice --superseded-by access-level \
+    > "$home/archived-retract.out" 2> "$home/archived-retract.err"; then
+    fail "an archived resolved captain decision was retractable"
+  fi
+
+  # The acceptance criterion: an ordinary de-duplication no longer strands teardown.
+  run_teardown "$home" "$id" >/dev/null 2> "$home/repaired-teardown.err" \
+    || fail "de-duplicated investigation teardown still refused: $(cat "$home/repaired-teardown.err")"
+  assert_grep "$distinct" "$home/data/backlog.md" \
+    "teardown after retraction lost the second distinct captain decision"
+  pass "a de-duplicated decision key is retractable and no longer strands teardown"
+}
+
 test_uninventoried_report_decision_refuses_completion
 
 test_scout_teardown_always_requires_inventory_verification
@@ -745,3 +869,4 @@ test_none_inventory_and_resolved_prose_do_not_create_holds
 test_terminal_single_owner_status_decision_does_not_block_empty_inventory
 test_secondmate_hold_stays_in_authoritative_home
 test_resolve_matches_quoted_blocked_by_edges
+test_duplicate_decision_key_retraction_unstrands_teardown
