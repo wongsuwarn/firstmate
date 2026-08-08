@@ -446,12 +446,19 @@ case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
 esac
 case "${1:-}" in
-  display-message) printf 'firstmate\n'; exit 0 ;;
+  display-message)
+    [ "${FM_FAKE_FAIL_CONTAINER:-0}" != 1 ] || exit 1
+    printf 'firstmate\n'
+    exit 0
+    ;;
   list-windows)
     [ -z "${FM_FAKE_ENDPOINT_FILE:-}" ] || [ ! -f "$FM_FAKE_ENDPOINT_FILE" ] || cat "$FM_FAKE_ENDPOINT_FILE"
     exit 0
     ;;
-  has-session|new-session) exit 0 ;;
+  has-session|new-session)
+    [ "${FM_FAKE_FAIL_CONTAINER:-0}" != 1 ] || exit 1
+    exit 0
+    ;;
   new-window)
     name=
     prev=
@@ -566,6 +573,7 @@ run_resume_spawn() {
     CLAUDE_CONFIG_DIR='' GROK_HOME="$home/grok-home" \
     FM_FAKE_SEND_LOG="${FM_FAKE_SEND_LOG:-}" FM_FAKE_LAUNCH_LOG="${FM_FAKE_LAUNCH_LOG:-}" \
     FM_FAKE_KILL_LOG="${FM_FAKE_KILL_LOG:-}" FM_FAKE_FAIL_LITERAL="${FM_FAKE_FAIL_LITERAL:-0}" \
+    FM_FAKE_FAIL_CONTAINER="${FM_FAKE_FAIL_CONTAINER:-0}" \
     FM_FAKE_ENDPOINT_FILE="${FM_FAKE_ENDPOINT_FILE:-$home/.fake-endpoint}" \
     FM_FAKE_KEEP_ENDPOINT="${FM_FAKE_KEEP_ENDPOINT:-0}" \
     FM_FAKE_FAIL_META_PATH="${FM_FAKE_FAIL_META_PATH:-}" \
@@ -723,6 +731,30 @@ test_failed_relaunch_keeps_retry_fence_when_record_publish_fails() {
   pass "failed fallback publication leaves a durable fence that refuses duplicate retries"
 }
 
+test_pre_endpoint_failure_clears_the_retry_fence() {
+  local rec id
+  id=resume-container-failure-f6
+  rec=$(make_resume_case resume-container-failure "$id")
+  read_resume_record "$rec"
+
+  FM_FAKE_FAIL_CONTAINER=1 run_resume_spawn "$HOME_DIR" "$FAKEBIN_DIR" "$WT_DIR" \
+    "$id" "$PROJ_DIR" --mode no-mistakes --yolo off \
+    --harness claude --resume-worktree "$WT_DIR"
+  [ "$SPAWN_STATUS" != 0 ] || fail "a failed backend container setup reported success"
+  assert_grep 'harness=codex' "$HOME_DIR/state/$id.meta" \
+    "pre-endpoint failure did not restore the previous task record"
+  assert_absent "$HOME_DIR/state/.spawn-$id.abort" \
+    "pre-endpoint failure left a retry fence without attempting an endpoint"
+  assert_absent "$HOME_DIR/state/.resume-$id.meta.bak" \
+    "pre-endpoint failure left its consumed rollback snapshot"
+
+  FM_FAKE_FAIL_CONTAINER=0 run_resume_spawn "$HOME_DIR" "$FAKEBIN_DIR" "$WT_DIR" \
+    "$id" "$PROJ_DIR" --mode no-mistakes --yolo off \
+    --harness claude --resume-worktree "$WT_DIR"
+  expect_code 0 "$SPAWN_STATUS" "a pre-endpoint failure must not block a safe retry"
+  pass "pre-endpoint failures restore state without leaving a retry fence"
+}
+
 test_secondmate_launch_failure_uses_the_shared_abort_fence() {
   local case_dir home sm fakebin id
   id=secondmate-abort-f6
@@ -736,6 +768,14 @@ test_secondmate_launch_failure_uses_the_shared_abort_fence() {
   printf '# Firstmate\n' > "$sm/AGENTS.md"
   printf 'secondmate charter\n' > "$sm/data/charter.md"
   touch "$home/state/.last-watcher-beat"
+  fm_write_meta "$home/state/.secondmate-restart-$id.meta.bak" \
+    "window=firstmate:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$sm" \
+    "project=$sm" \
+    'harness=codex' \
+    'kind=secondmate' \
+    "home=$sm"
 
   FM_FAKE_FAIL_LITERAL=1 FM_FAKE_KEEP_ENDPOINT=1 \
     run_resume_spawn "$home" "$fakebin" "$sm" \
@@ -745,6 +785,15 @@ test_secondmate_launch_failure_uses_the_shared_abort_fence() {
     "failed secondmate delivery did not retain its exact new task record"
   assert_present "$home/state/.spawn-$id.abort" \
     "failed secondmate delivery did not retain the shared retry fence"
+  if [ -e "$home/state/.secondmate-restart-$id.meta.bak" ]; then
+    mv -f "$home/state/.secondmate-restart-$id.meta.bak" "$home/state/$id.meta"
+  fi
+  assert_absent "$home/state/.secondmate-restart-$id.meta.bak" \
+    "failed secondmate delivery left the rollback snapshot caller-owned"
+  assert_grep 'harness=codex' "$home/state/.resume-$id.meta.bak" \
+    "failed secondmate delivery did not retain the caller rollback snapshot"
+  assert_grep 'harness=claude' "$home/state/$id.meta" \
+    "restart caller rollback overwrote the unconfirmed replacement record"
 
   FM_FAKE_FAIL_LITERAL=0 FM_FAKE_KEEP_ENDPOINT=0 \
     run_resume_spawn "$home" "$fakebin" "$sm" \
@@ -855,6 +904,7 @@ test_resume_refuses_a_pane_that_settled_on_another_copy
 test_failed_relaunch_leaves_the_original_record_and_work_recoverable
 test_failed_relaunch_retains_new_record_when_cleanup_is_unconfirmed
 test_failed_relaunch_keeps_retry_fence_when_record_publish_fails
+test_pre_endpoint_failure_clears_the_retry_fence
 test_secondmate_launch_failure_uses_the_shared_abort_fence
 test_resume_refuses_shapes_that_would_split_or_misplace_a_task
 test_resume_preserves_backend_and_harness_validation

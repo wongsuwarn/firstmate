@@ -712,6 +712,7 @@ RESUME_META_BACKUP=
 RESUME_META_RESTORE=0
 LAUNCH_ABORT_FENCE=
 LAUNCH_ABORT_FENCE_OWNED=0
+LAUNCH_ENDPOINT_ATTEMPTED=0
 LAUNCH_ENDPOINT_CLEANUP=0
 LAUNCH_NEW_META_PUBLISHED=0
 ORCA_WORKTREE_ID=
@@ -782,7 +783,7 @@ spawn_record_publish() {  # <record> <destination> [recovery-prefix]
 }
 
 spawn_abort_cleanup() {
-  local status=$? endpoint_state=unreadable record_tmp= record_ready=1 restart_backup restart_endpoint_state record
+  local status=$? endpoint_state=missing record_tmp= record_ready=1 restart_backup restart_endpoint_state record
   if [ -n "$META_TMP" ]; then
     rm -f -- "$META_TMP" || true
     META_TMP=
@@ -839,15 +840,18 @@ spawn_abort_cleanup() {
       fi
     fi
   fi
+  [ "$LAUNCH_ENDPOINT_ATTEMPTED" != 1 ] || endpoint_state=unreadable
   if [ "$LAUNCH_ENDPOINT_CLEANUP" = 1 ]; then
     LAUNCH_ENDPOINT_CLEANUP=0
     if [ "$HERDR_PROJECTION_ABORT_CLEANUP" != 1 ] && [ -n "${T:-}" ]; then
       fm_backend_kill "$BACKEND" "$T" 2>/dev/null || true
       endpoint_state=$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null || printf 'unreadable')
     fi
-    if [ "$endpoint_state" != missing ]; then
-      RESUME_META_RESTORE=0
-      if [ "$LAUNCH_NEW_META_PUBLISHED" != 1 ] && [ -n "${T:-}" ]; then
+  fi
+  if [ "$endpoint_state" != missing ]; then
+    RESUME_META_RESTORE=0
+    if [ "$LAUNCH_NEW_META_PUBLISHED" != 1 ]; then
+      if [ -n "${T:-}" ]; then
         RESUME_RECORD_WT=${WT:-${RESUME_WT:-}}
         record_tmp=$(umask 077; mktemp "$STATE/.spawn-abort-meta.XXXXXX") || record_ready=0
         if [ "$record_ready" = 1 ] && {
@@ -892,15 +896,17 @@ spawn_abort_cleanup() {
           record_ready=0
         fi
         [ "$record_ready" = 1 ] || rm -f "$record_tmp" 2>/dev/null || true
-      fi
-      if [ "$record_ready" = 1 ]; then
-        echo "warning: launch cleanup for $ID left endpoint state $endpoint_state; retained its new task record and retry fence" >&2
       else
-        echo "warning: launch cleanup for $ID left endpoint state $endpoint_state; the retry fence remains because its new task record could not be published" >&2
+        record_ready=0
       fi
-    elif [ "$LAUNCH_NEW_META_PUBLISHED" = 1 ] && [ "$RESUME_META_RESTORE" != 1 ]; then
-      rm -f "$STATE/$ID.meta" 2>/dev/null || record_ready=0
     fi
+    if [ "$record_ready" = 1 ]; then
+      echo "warning: launch cleanup for $ID left endpoint state $endpoint_state; retained its new task record and retry fence" >&2
+    else
+      echo "warning: launch cleanup for $ID left endpoint state $endpoint_state; the retry fence remains because its new task record could not be published" >&2
+    fi
+  elif [ "$LAUNCH_NEW_META_PUBLISHED" = 1 ] && [ "$RESUME_META_RESTORE" != 1 ]; then
+    rm -f "$STATE/$ID.meta" 2>/dev/null || record_ready=0
   fi
   if [ "$RESUME_META_RESTORE" = 1 ]; then
     RESUME_META_RESTORE=0
@@ -1700,7 +1706,20 @@ if [ -e "$RESUME_META_BACKUP" ] || [ -L "$RESUME_META_BACKUP" ]; then
   echo "error: task $ID has an unresolved launch record snapshot; reconcile it before retrying" >&2
   exit 1
 fi
-if [ -e "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
+CALLER_META_BACKUP="$STATE/.secondmate-restart-$ID.meta.bak"
+if [ "$KIND" = secondmate ] \
+   && { [ -e "$CALLER_META_BACKUP" ] || [ -L "$CALLER_META_BACKUP" ]; }; then
+  if [ ! -f "$CALLER_META_BACKUP" ] || [ -L "$CALLER_META_BACKUP" ] \
+     || [ -e "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
+    echo "error: task $ID has an ambiguous restart rollback snapshot; reconcile it before relaunching" >&2
+    exit 1
+  fi
+  mv -f "$CALLER_META_BACKUP" "$RESUME_META_BACKUP" || {
+    echo "error: could not take ownership of the restart rollback snapshot for $ID" >&2
+    exit 1
+  }
+  RESUME_META_RESTORE=1
+elif [ -e "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
   if [ ! -f "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
     echo "error: the existing task record for $ID is not a regular file; refusing to relaunch against an unreadable identity" >&2
     exit 1
@@ -1735,6 +1754,7 @@ case "$BACKEND" in
     # treehouse cd's into the worktree. WT_TARGET carries that stable id for the
     # rename-critical worktree-detection steps below; the persisted window= handle
     # stays $T (the name form), which is safe now that rename is disabled.
+    LAUNCH_ENDPOINT_ATTEMPTED=1
     WID=$(fm_backend_tmux_create_task "$SES" "$W" "$PROJ_ABS") || exit 1
     WT_TARGET="$WID"
     ;;
@@ -1784,6 +1804,7 @@ case "$BACKEND" in
           "$HERDR_SES" "$HERDR_PRESENTATION_JOURNAL" "$ID" || exit 1
         if [ "${HERDR_RECOVERY_BACKEND:-}" = herdr ]; then
           set +e
+          LAUNCH_ENDPOINT_ATTEMPTED=1
           FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_reclaim_task \
             "$HERDR_SES" "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_LABEL_HOME" \
             "$HERDR_RECOVERY_WORKSPACE_ID" "$HERDR_RECOVERY_TAB_ID" "$HERDR_RECOVERY_PANE_ID" \
@@ -1837,6 +1858,7 @@ case "$BACKEND" in
           else
             HERDR_PROJECTION_ID=$(fm_backend_herdr_projection_journal_create "$STATE" "$ID") || exit 1
             HERDR_PROJECTION_LABEL=$(fm_backend_herdr_projection_workspace_label "$ID" "$HERDR_PROJECTION_ID")
+            LAUNCH_ENDPOINT_ATTEMPTED=1
             if ! FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_create_task \
               "$PROJ_ABS" "$HERDR_PROJECTION_LABEL" "$W"; then
               if [ "${FM_BACKEND_HERDR_PROJECTION_CLEANUP_SAFE:-0}" = 1 ]; then
@@ -1891,6 +1913,7 @@ case "$BACKEND" in
       HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
       HERDR_SES=${CONTAINER%%:*}
       HERDR_WORKSPACE_ID=${CONTAINER#*:}
+      LAUNCH_ENDPOINT_ATTEMPTED=1
       HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
       read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
@@ -1904,6 +1927,7 @@ EOF
     ;;
   zellij)
     ZELLIJ_SES=$(fm_backend_zellij_container_ensure) || exit 1
+    LAUNCH_ENDPOINT_ATTEMPTED=1
     ZELLIJ_TASK_IDS=$(fm_backend_zellij_create_task "$ZELLIJ_SES" "$W" "$PROJ_ABS") || exit 1
     read -r ZELLIJ_TAB_ID ZELLIJ_PANE_ID <<EOF
 $ZELLIJ_TASK_IDS
@@ -1916,6 +1940,7 @@ EOF
     ;;
   cmux)
     fm_backend_cmux_container_ensure || exit 1
+    LAUNCH_ENDPOINT_ATTEMPTED=1
     CMUX_TASK_IDS=$(fm_backend_cmux_create_task "$W" "$PROJ_ABS") || exit 1
     read -r CMUX_WORKSPACE_ID CMUX_SURFACE_ID <<EOF
 $CMUX_TASK_IDS
@@ -1927,6 +1952,7 @@ EOF
     T="$CMUX_WORKSPACE_ID:$CMUX_SURFACE_ID"
     ;;
   orca)
+    LAUNCH_ENDPOINT_ATTEMPTED=1
     set +e
     ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W")
     ORCA_WT_STATUS=$?
@@ -2614,7 +2640,9 @@ if ! rm -f "$LAUNCH_ABORT_FENCE"; then
   exit 1
 fi
 LAUNCH_ABORT_FENCE_OWNED=0
+LAUNCH_ENDPOINT_ATTEMPTED=0
 LAUNCH_ENDPOINT_CLEANUP=0
+LAUNCH_NEW_META_PUBLISHED=0
 RESUME_META_RESTORE=0
 [ -z "$RESUME_META_BACKUP" ] || rm -f "$RESUME_META_BACKUP" 2>/dev/null || true
 
