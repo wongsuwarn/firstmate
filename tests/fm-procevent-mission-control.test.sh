@@ -144,6 +144,14 @@ refuse "two envelopes in one prompt" \
   "$(envelope '{"v":1,"intent":"merge","home":"main","id":"d1"}') $(envelope '{"v":1,"intent":"defer","home":"main","id":"d2"}')"
 refuse "an envelope that is not one JSON object" \
   "$(envelope '{"v":1,"intent":"merge"')"
+refuse "an envelope followed by trailing text" \
+  "$(envelope '{"v":1,"intent":"merge","home":"main","id":"d1"}') trailing"
+refuse "an envelope followed by newline-delimited content" \
+  "$(envelope '{"v":1,"intent":"merge","home":"main","id":"d1"}')"$'\nignored'
+refuse "an envelope with a duplicate key" \
+  "$(envelope '{"v":1,"intent":"reply","intent":"merge","home":"main","id":"d1"}')"
+refuse "an envelope with an escaped duplicate key" \
+  "$(envelope '{"v":1,"intent":"merge","home":"main","id":"d1","\u0069d":"d2"}')"
 refuse "a note longer than the bound" \
   "$(envelope "$(jq -cn --arg n "$(head -c 2400 < /dev/zero | tr '\0' 'x')" \
     '{v:1,intent:"ask",home:"main",note:$n}')")"

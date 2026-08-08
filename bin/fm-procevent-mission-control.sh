@@ -63,10 +63,11 @@
 # guessing: an unknown or missing intent, a wrong version, a field outside its
 # allowed set for that intent, an over-long field, an id or home outside the
 # safe character set, more than one envelope marker in one prompt, an envelope
-# that is not at the start of the prompt, and a record whose quoted field never
-# terminates - which is what a result truncated at FM_PROCEVENT_MAX_OUTPUT_BYTES
-# looks like. A `defer` carrying note text is refused outright, because the hold
-# reason is the captain's own stored text and a request must never rewrite it.
+# that is not at the start of the prompt, trailing envelope content, duplicate
+# object keys, and a record whose quoted field never terminates - which is what
+# a result truncated at FM_PROCEVENT_MAX_OUTPUT_BYTES looks like. A `defer`
+# carrying note text is refused outright, because the hold reason is the
+# captain's own stored text and a request must never rewrite it.
 #
 # Only lines inside the `prompts[...]` block are read. dom_snapshot and
 # next_step are never treated as input.
@@ -200,6 +201,43 @@ sub fields_of {
 
 sub clip { my ($t, $n) = @_; return length($t) > $n ? substr($t, 0, $n) . "\x{2026}" : $t; }
 
+sub duplicate_object_key {
+  my ($text) = @_;
+  my @stack;
+  my $i = 0;
+  while ($i < length($text)) {
+    my $c = substr($text, $i, 1);
+    if ($c eq "\"") {
+      my $start = $i++;
+      while ($i < length($text)) {
+        my $next = substr($text, $i, 1);
+        if ($next eq "\\") { $i += 2; next; }
+        $i++;
+        last if $next eq "\"";
+      }
+      if (@stack && $stack[-1]->{object} && $stack[-1]->{want_key}) {
+        my $raw = substr($text, $start, $i - $start);
+        my $key = JSON::PP->new->allow_nonref->decode($raw);
+        return $key if exists $stack[-1]->{seen}{$key};
+        $stack[-1]->{seen}{$key} = 1;
+        $stack[-1]->{want_key} = 0;
+      }
+      next;
+    }
+    if ($c eq "{") {
+      push @stack, {object => 1, want_key => 1, seen => {}};
+    } elsif ($c eq "[") {
+      push @stack, {object => 0};
+    } elsif ($c eq "}" || $c eq "]") {
+      pop @stack;
+    } elsif ($c eq "," && @stack && $stack[-1]->{object}) {
+      $stack[-1]->{want_key} = 1;
+    }
+    $i++;
+  }
+  return undef;
+}
+
 my $SAFE_ID = qr/\A[A-Za-z0-9._-]{1,120}\z/;
 
 # Exactly which fields each intent may carry. An intent is refused outright if
@@ -234,10 +272,14 @@ for my $line (@records) {
   if ($markers > 1) { $bad->("the prompt carries more than one request marker"); next; }
   if ($prompt !~ /\A\Q$MARK\E /) { $bad->("the request marker is not at the start of the prompt"); next; }
 
-  my ($first) = split(/\n/, $prompt, 2);
-  my $body = substr($first, length($MARK) + 1);
-  my $obj = eval { JSON::PP->new->decode($body) };
-  if (!defined $obj || ref($obj) ne "HASH") { $bad->("the request envelope is not one JSON object"); next; }
+  my $body = substr($prompt, length($MARK) + 1);
+  my ($obj, $used);
+  my $decoded = eval { ($obj, $used) = JSON::PP->new->decode_prefix($body); 1 };
+  if (!$decoded || ref($obj) ne "HASH" || $used != length($body)) {
+    $bad->("the request envelope is not exactly one JSON object"); next;
+  }
+  my $duplicate = duplicate_object_key($body);
+  if (defined $duplicate) { $bad->("the request envelope carries a duplicate object key"); next; }
 
   my $v = $obj->{v};
   if (!defined $v || ref($v) || $v ne "1") { $bad->("unsupported request version"); next; }
