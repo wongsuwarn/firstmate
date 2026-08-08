@@ -463,7 +463,7 @@ EOF
 }
 
 command_retract() {
-  local origin=${1:-} key=${2:-} surviving='' meta reviewed previous keys id surviving_id show kind archived raw_open open_key
+  local origin=${1:-} key=${2:-} surviving='' meta reviewed previous keys id surviving_id show kind body archived raw_open open_key
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -494,10 +494,20 @@ command_retract() {
   list_has_key "$previous" "$surviving" \
     || fail "superseding decision key $surviving is outside the reviewed inventory for $origin"
   verify_hold_durable "$surviving_id"
+  if ! list_has_key "$previous" "$key"; then
+    printf 'retracted: %s was already outside the reviewed inventory for %s\n' "$id" "$origin"
+    return 0
+  fi
 
   if show=$(task_show "$id"); then
     kind=$(show_field "$show" kind)
     [ "$kind" = captain ] || fail "backlog identity $id is not kind captain"
+    body=$(show_field "$show" body)
+    case "$body" in
+      *"Resolution recorded by fm-decision-hold."*"Routed work:"*)
+        fail "captain decision $id has a recorded captain decision that must not be deleted"
+        ;;
+    esac
     ! verify_hold_resolved "$id" \
       || fail "captain decision $id is durably resolved and does not need retraction"
     tasks_axi rm "$id" >/dev/null || fail "could not remove duplicate captain hold $id"
@@ -522,14 +532,8 @@ EOF
   keys=$(printf '%s\n' "$previous" | tr ',' '\n' | sed '/^$/d' | grep -vxF "$key" \
     | LC_ALL=C sort -u | paste -sd, -)
   [ -n "$keys" ] || fail "retracting $key would empty the inventory for $origin"
-  # Retrying a completed retraction must still succeed, but it must not report a
-  # removal it did not perform, because a mistyped key reaches here identically.
-  if [ "$previous" != "$keys" ]; then
-    printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$keys" >> "$meta"
-    printf 'retracted: %s superseded by %s\n' "$id" "$surviving_id"
-  else
-    printf 'retracted: %s was already outside the reviewed inventory for %s\n' "$id" "$origin"
-  fi
+  printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$keys" >> "$meta"
+  printf 'retracted: %s superseded by %s\n' "$id" "$surviving_id"
 }
 
 command_resolve() {

@@ -22,8 +22,9 @@ For an open keyed status decision, it appends a `captain-held [key=<key>]: ...` 
 
 The `retract` subcommand takes one key back out of the recorded union when a later review pass establishes that it duplicates a question already inventoried under a different key.
 It exists because `complete` unions keys idempotently while the durability lookup reads only tasks-axi: removing a duplicate hold with `tasks-axi rm`, which is the correct de-duplication action, previously left the key recorded and absent from both durability sources, so `verify` and `complete` refused permanently and scout teardown could never clean the source up.
-The required `--superseded-by` key must already be in the same origin's inventory and must itself satisfy the shared durability lookup, so the question stays gated under one surviving identity and a retraction can never empty the union.
-Retraction removes the duplicate identity from the live backlog when it is still there, which keeps `tasks-axi rm`'s own refusal to delete an id that active work still blocks on in force, and it refuses a durably resolved decision in either the backlog or the archive because that already satisfies the gate.
+The required `--superseded-by` key must already be in the same origin's inventory and must itself satisfy the shared durability lookup, and the retracted key must still belong to that inventory, so the question stays gated under one surviving identity and a retraction can never empty the union.
+Retraction removes the duplicate identity from the live backlog when it is still there, which keeps `tasks-axi rm`'s own refusal to delete an id that active work still blocks on in force, and it refuses a recorded captain decision in an interrupted live resolution as well as a durably resolved decision in either the backlog or the archive.
+An already absent inventory key takes a pure idempotent no-op path without inspecting or removing a live task or appending a status transfer.
 An unreadable archive is deliberately asymmetric: it blocks the surviving key, because the gate must not rely on an identity it could not check, but it does not block the retracted one, because an archive that cannot be read is not evidence that the removed duplicate was resolved, and refusing there would leave the strand in place.
 For an open keyed status decision it appends the same `captain-held [key=<key>]: ...` transfer event `complete` uses, so `bin/fm-classify-lib.sh` closes the live status copy without claiming the captain answered.
 The gate itself is unchanged: `verify` and the shared durability lookup are the same code before and after, and only the inventory the agent asserts is editable.
@@ -146,8 +147,10 @@ It first asserts the strand itself: `verify` refuses naming the removed identity
 While the strand is still live the case asserts every retraction refusal, so the repair cannot be mistaken for dropping a key out of the gate: a missing `--superseded-by`, a key superseding itself, a superseding key outside the reviewed inventory, and a superseding key that is in the inventory but is no longer durable.
 That last refusal is what stops a removed identity from being used to justify dropping a decision that is still genuinely held, and the surviving hold is asserted to remain in the backlog after it.
 The case then retracts the duplicate, asserts the reduced union, and asserts the live status fold no longer holds the retracted key open.
-It asserts an identical retry is idempotent and that the retry reports that nothing was removed, because a mistyped key is indistinguishable from a completed retraction at that point and must not read as a second removal.
-It then asserts that a durably resolved decision is not retractable either while it is in the live backlog or after `tasks-axi prune --keep 0 --state done` archives it.
+It asserts an identical retry is idempotent and that the retry reports that the key is already outside the inventory without mutating the backlog or status state.
+It also asserts that a never-inventoried live hold and a mistyped absent key take that same pure no-op path without mutating backlog, status, or metadata state.
+It then interrupts `resolve` after the captain decision is recorded and dependents are unblocked but before the final Done transition, and asserts that retraction refuses while preserving the queued hold and its resolution record.
+Finally, it asserts that a durably resolved decision is not retractable either while it is in the live backlog or after `tasks-axi prune --keep 0 --state done` archives it.
 It closes on the acceptance criterion: teardown now succeeds, and the second distinct captain decision is still in the backlog afterwards.
 
 The case fails against the pre-change script at `not ok - retracting a duplicate key failed`, after every strand assertion above has already held, which is what proves the reproduction is not vacuous.

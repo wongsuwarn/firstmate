@@ -740,7 +740,7 @@ EOF
 # The retraction that repairs it must not become a way to drop a key out of the
 # gate, so every negative below is asserted while the strand is still live.
 test_duplicate_decision_key_retraction_unstrands_teardown() {
-  local home id survivor duplicate distinct rc open recorded
+  local home id survivor duplicate distinct unreviewed rc open recorded show
   home=$(make_home duplicate-decision-key)
   id=sample-dedup-review
   mkdir -p "$home/data/$id"
@@ -814,6 +814,40 @@ EOF
   fi
   assert_grep "$survivor" "$home/data/backlog.md" "a refused retraction removed the surviving hold"
 
+  unreviewed=$(run_decisions "$home" hold "$id" later-question \
+    --title "Choose a later sample option" --reason "later captain choice pending" --repo sample) \
+    || fail "could not register an uninventoried hold"
+  printf 'needs-decision [key=later-question]: choose a later sample option\n' \
+    >> "$home/state/$id.status"
+  cp "$home/state/$id.status" "$home/status-before-uninventoried-retract"
+  run_decisions "$home" retract "$id" later-question --superseded-by route-choice \
+    > "$home/uninventoried-retract.out" 2>&1 \
+    || fail "an uninventoried live hold did not take the no-op path"
+  assert_grep "already outside the reviewed inventory" "$home/uninventoried-retract.out" \
+    "an uninventoried live hold did not report the no-op path"
+  assert_grep "$unreviewed" "$home/data/backlog.md" \
+    "the no-op path removed an uninventoried live hold"
+  cmp -s "$home/status-before-uninventoried-retract" "$home/state/$id.status" \
+    || fail "the no-op path appended a status transfer for an uninventoried hold"
+
+  cp "$home/data/backlog.md" "$home/backlog-before-absent-retract"
+  cp "$home/state/$id.status" "$home/status-before-absent-retract"
+  cp "$home/state/$id.meta" "$home/meta-before-absent-retract"
+  run_decisions "$home" retract "$id" mistyped-question --superseded-by route-choice \
+    > "$home/absent-retract.out" 2>&1 \
+    || fail "an absent decision key did not take the no-op path"
+  assert_grep "already outside the reviewed inventory" "$home/absent-retract.out" \
+    "an absent decision key did not report the no-op path"
+  cmp -s "$home/backlog-before-absent-retract" "$home/data/backlog.md" \
+    || fail "the no-op path mutated the backlog for an absent decision key"
+  cmp -s "$home/status-before-absent-retract" "$home/state/$id.status" \
+    || fail "the no-op path mutated status for an absent decision key"
+  cmp -s "$home/meta-before-absent-retract" "$home/state/$id.meta" \
+    || fail "the no-op path mutated metadata for an absent decision key"
+  tasks_in "$home" rm "$unreviewed" >/dev/null \
+    || fail "could not clean up the preserved uninventoried hold fixture"
+  printf 'captain-held [key=later-question]: fixture cleanup\n' >> "$home/state/$id.status"
+
   run_decisions "$home" retract "$id" routing-direction --superseded-by route-choice >/dev/null \
     || fail "retracting a duplicate key failed"
   recorded=$(grep '^decision_keys=' "$home/state/$id.meta" | tail -1)
@@ -831,12 +865,43 @@ EOF
   run_decisions "$home" complete "$id" route-choice access-level >/dev/null \
     || fail "completion still refused after the duplicate key was retracted"
 
-  # A durably resolved decision already satisfies the gate, live or archived, so it
-  # is never retractable and the surviving distinct decision stays gated.
+  # A recorded captain decision is never retractable, including after `resolve`
+  # writes its body and routes dependents but is interrupted before the final Done.
   tasks_in "$home" add sample-route-work "Apply the selected sample route" \
     --kind ship --repo sample --blocked-by "$survivor" >/dev/null \
     || fail "could not create dependent work fixture"
   printf 'Use route north for the sample system.\n' > "$home/route-decision.txt"
+  cat > "$home/fakebin/tasks-axi" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = done ] && [ "\${2:-}" = "$survivor" ]; then
+  exit 1
+fi
+exec "\$REAL_TASKS_AXI" "\$@"
+EOF
+  chmod +x "$home/fakebin/tasks-axi"
+  if run_decisions "$home" resolve "$id" route-choice --decision-file "$home/route-decision.txt" \
+    --routed-to sample-route-work > "$home/interrupted-resolve.out" 2> "$home/interrupted-resolve.err"; then
+    fail "resolution succeeded when its final Done transition was interrupted"
+  fi
+  if run_decisions "$home" retract "$id" route-choice --superseded-by access-level \
+    > "$home/interrupted-retract.out" 2> "$home/interrupted-retract.err"; then
+    fail "an interrupted recorded captain decision was retractable"
+  fi
+  assert_grep "$survivor" "$home/interrupted-retract.err" \
+    "interrupted-resolution refusal did not name the captain decision"
+  assert_grep "recorded captain decision that must not be deleted" "$home/interrupted-retract.err" \
+    "interrupted-resolution refusal did not explain the deletion boundary"
+  show=$(tasks_in "$home" show "$survivor" --full) \
+    || fail "interrupted-resolution refusal removed the captain hold"
+  assert_contains "$show" "state: queued" "interrupted resolution unexpectedly closed the captain hold"
+  assert_contains "$show" "Resolution recorded by fm-decision-hold" \
+    "interrupted-resolution refusal lost the captain decision record"
+  assert_contains "$show" "Routed work:" \
+    "interrupted-resolution refusal lost the routed-work record"
+  rm "$home/fakebin/tasks-axi"
+
+  # A durably resolved decision already satisfies the gate, live or archived, so it
+  # is never retractable and the surviving distinct decision stays gated.
   run_decisions "$home" resolve "$id" route-choice --decision-file "$home/route-decision.txt" \
     --routed-to sample-route-work >/dev/null || fail "could not resolve the surviving hold"
   if run_decisions "$home" retract "$id" route-choice --superseded-by access-level \
