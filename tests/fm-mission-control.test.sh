@@ -2088,7 +2088,9 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
         return accept();
       },
       sendQueuedPrompts:function(){
-        if(localStorage.getItem("test-send-fail")==="1") throw new Error("send failed"); return true;
+        if(localStorage.getItem("test-send-fail")==="1") throw new Error("send failed");
+        if(localStorage.getItem("test-delivery-unconfirmed")==="1") return undefined;
+        return true;
       }
     };`}, sid);
   await navigate(sid, boardPath);
@@ -2204,6 +2206,25 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(success.merge === "Merge request sent" && success.mergeDisabled && success.reply === "Reply sent", "PR intents did not keep distinct acknowledgement identities");
   assert(success.routed === "Answer sent" && success.routedB === "Answer sent", "home or decision-key acknowledgement identities collided");
   assert(success.prompts === 5, "duplicate answer submission reached the bridge or a distinct identity was dropped");
+
+  const unconfirmed = await evaluate(sid, `(async()=>{
+    localStorage.setItem('test-delivery-unconfirmed','1');
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d-hostile');
+    b.querySelector('[data-open=answer]').click(); b.querySelector('textarea').value='Queue this exact answer';
+    b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
+    var beforeDuplicate=JSON.parse(localStorage.getItem('test-prompts')||'[]').length;
+    b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
+    var stored=[...Array(localStorage.length)].map((_,i)=>localStorage.key(i))
+      .filter(k=>k&&k.startsWith('fm-mission-control-ack-v1:')&&localStorage.getItem(k)==='queued');
+    localStorage.removeItem('test-delivery-unconfirmed');
+    return {label:b.querySelector('[data-open=answer]').textContent,message:b.querySelector('.rc-sent').textContent,
+      disabled:b.querySelector('[data-open=answer]').disabled,stored:stored.length,
+      beforeDuplicate,afterDuplicate:JSON.parse(localStorage.getItem('test-prompts')||'[]').length};
+  })()`);
+  assert(unconfirmed.label === 'Answer queued' && unconfirmed.message === 'Answer queued for firstmate.'
+    && unconfirmed.disabled && unconfirmed.stored === 1
+    && unconfirmed.beforeDuplicate === unconfirmed.afterDuplicate,
+    'an unconfirmed Lavish delivery was reported as sent or allowed to duplicate: '+JSON.stringify(unconfirmed));
 
   const asynchronous = await evaluate(sid, `(async()=>{
     localStorage.setItem('test-queue-delay','1');

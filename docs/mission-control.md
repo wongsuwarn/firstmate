@@ -118,7 +118,8 @@ Browser-native restoration is disabled and the saved anchor is applied synchrono
 With `--controls`, that reload also holds while a control is open or contains unsent text.
 The no-script fallback remains read-only and refreshes through its meta tag.
 
-After the Lavish bridge accepts a request, the affected control says exactly what was sent, such as `Answer sent` or `Merge request sent`, and refuses an accidental duplicate while that same action remains on the board.
+After the Lavish bridge accepts a request, the affected control reports only what the bridge proved and refuses an accidental duplicate while that same action remains on the board.
+A delivery result of `true` produces a confirmed label such as `Answer sent`; the pinned Lavish bridge currently returns before delivery completes, so its truthful labels are `Answer queued`, `Merge request queued`, and their corresponding request forms rather than a false claim that delivery succeeded.
 A failure before queuing leaves the form open, keeps its text editable, and remains retryable.
 When queuing succeeds but delivery fails, the board keeps the exact queued payload in that draft's session record and locks editing and cancellation across full-document reloads, so a retry can neither enqueue a duplicate nor acknowledge newer text while sending the older payload.
 An enqueue attempt receives one durable browser-generated identity that is reused as Lavish's queue key after an asynchronous acceptance is interrupted by a reload, so the bridge replaces that exact attempt instead of appending another request.

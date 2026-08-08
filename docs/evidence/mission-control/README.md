@@ -28,6 +28,7 @@ The fixtures pin the render clock so the comparisons are not affected by the day
 
 The separate privacy-safe live-fleet check is `FM_MISSION_CONTROL_LIVE_HOME=<active-home> FM_MISSION_CONTROL_REQUIRE_LIVE=1 tests/fm-mission-control.test.sh`.
 It generates the board directly from the active fleet, uses real Chrome at 390 by 844, regenerates the file at a nonzero reading position, performs a full reload, and reports only pass/fail geometry rather than fleet identities or records.
+The required acceptance run passed on 2026-08-08 with `ok - a privacy-safe live fleet stays anchored across regeneration and full reload`; no fleet text, identity, screenshot, or record was written into this evidence directory.
 
 That the selected tab survives the board's managed reload was checked in Chrome after selecting the Projects tab and reloading the document without a fragment; the Projects panel remained selected.
 The same browser regression replaced the served HTML with fixtures that inserted rows above the current decision or temporarily omitted that decision, then verified the exact reading offset and identity-bound draft survived when the row returned.

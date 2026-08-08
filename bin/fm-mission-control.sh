@@ -2457,15 +2457,16 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     saveDrafts(true);
   }
 
-  function ackLabel(intent) {
-    if (intent === \"merge\") { return \"Merge request sent\"; }
-    if (intent === \"answer\") { return \"Answer sent\"; }
-    if (intent === \"reply\") { return \"Reply sent\"; }
-    if (intent === \"defer\") { return \"Set-aside request sent\"; }
-    return \"Request sent\";
+  function ackLabel(intent, delivery) {
+    var verb = delivery === \"sent\" ? \"sent\" : \"queued\";
+    if (intent === \"merge\") { return \"Merge request \" + verb; }
+    if (intent === \"answer\") { return \"Answer \" + verb; }
+    if (intent === \"reply\") { return \"Reply \" + verb; }
+    if (intent === \"defer\") { return \"Set-aside request \" + verb; }
+    return \"Request \" + verb;
   }
-  function applyAck(block, intent) {
-    var label = ackLabel(intent);
+  function applyAck(block, intent, delivery) {
+    var label = ackLabel(intent, delivery);
     var opener = block.querySelector(\"[data-open=\\\"\" + intent + \"\\\"]\");
     if (opener) {
       opener.disabled = true;
@@ -2477,7 +2478,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       var submit = form.querySelector(\".rc-go\");
       if (submit) { submit.disabled = true; submit.textContent = label; }
     });
-    say(block, label + \" to firstmate.\", false);
+    say(block, label + \" for firstmate.\", false);
   }
   function restoreAcks() {
     var current = {};
@@ -2487,7 +2488,10 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         if (!intent || intent === \"ask\") { return; }
         var key = ackKey(block, intent);
         current[key] = true;
-        try { if (window.localStorage.getItem(key) === \"sent\") { applyAck(block, intent); } }
+        try {
+          var delivery = window.localStorage.getItem(key);
+          if (delivery === \"sent\" || delivery === \"queued\") { applyAck(block, intent, delivery); }
+        }
         catch (e) { /* acknowledgement memory unavailable */ }
       });
     });
@@ -2616,8 +2620,9 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     var identity = persistent ? ackKey(block, request.intent) : \"\";
     var requestIdentity = draftIdentity(block, request.intent);
     try {
-      if (persistent && window.localStorage.getItem(identity) === \"sent\") {
-        applyAck(block, request.intent);
+      var rememberedDelivery = persistent ? window.localStorage.getItem(identity) : null;
+      if (rememberedDelivery === \"sent\" || rememberedDelivery === \"queued\") {
+        applyAck(block, request.intent, rememberedDelivery);
         shut(block);
         return;
       }
@@ -2662,6 +2667,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       var accepted = lav.sendQueuedPrompts();
       if (accepted && typeof accepted.then === \"function\") { accepted = await accepted; }
       if (accepted === false) { throw new Error(\"send refused\"); }
+      var delivery = accepted === true ? \"sent\" : \"queued\";
       delete requestState[requestIdentity];
       delete requestInFlight[requestIdentity];
     } catch (e) {
@@ -2680,10 +2686,10 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     if (area) { area.value = \"\"; }
     releasePayload(form);
     if (persistent) {
-      try { window.localStorage.setItem(identity, \"sent\"); } catch (e) { /* page state still prevents a duplicate */ }
-      applyAck(block, request.intent);
+      try { window.localStorage.setItem(identity, delivery); } catch (e) { /* page state still prevents a duplicate */ }
+      applyAck(block, request.intent, delivery);
     } else {
-      say(block, ackLabel(request.intent) + \" to firstmate.\", false);
+      say(block, ackLabel(request.intent, delivery) + \" for firstmate.\", false);
     }
     shut(block);
     saveDrafts();
