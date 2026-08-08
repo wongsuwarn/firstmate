@@ -10,7 +10,6 @@ In the after images three of the six calls have been set aside, so they sit in t
 The after images show each row carrying only the controls it can resolve: the two backlog-held decisions offer an answer and setting aside, the task-level decision offers an answer alone because it has no backlog row to set aside, and the PR offers a merge request and a reply.
 
 `controls-served-statically.png` is the safety property that matters most, so it is captured rather than asserted in prose: it is the very same `--controls` file opened directly with no Lavish server, and it renders as the read-only board with no controls and no dead affordances.
-That is what the tailnet copy is.
 
 All of these are rendered from a synthetic fixture home, never from a real fleet, so they carry no private project, decision, or PR data.
 The fixture pins the render clock so the comparison is not affected by the day it was captured.
