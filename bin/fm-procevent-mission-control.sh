@@ -128,13 +128,14 @@ cmd_requests() {
 use strict;
 use warnings;
 use JSON::PP;
+use bytes ();
 
 my $MARK = "FM-BOARD-REQUEST";
 my $MAX_NOTE = 2000;
 my $MAX_ID   = 120;
 my $MAX_TEXT = 4000;
 
-my $json = JSON::PP->new->canonical->allow_nonref;
+my $json = JSON::PP->new->canonical->allow_nonref->utf8;
 sub emit { print $json->encode($_[0]), "\n"; }
 
 emit({kind => "contract", authority => "none",
@@ -185,7 +186,7 @@ sub fields_of {
         if ($c eq "\"") { $closed = 1; last; }
       }
       return undef unless $closed;
-      my $val = eval { JSON::PP->new->allow_nonref->decode($buf) };
+      my $val = eval { JSON::PP->new->allow_nonref->utf8->decode($buf) };
       return undef unless defined $val;
       push @out, $val;
       $line = substr($line, $i);
@@ -275,7 +276,7 @@ for my $line (@records) {
   my $body = substr($prompt, length($MARK) + 1);
   my ($obj, $used);
   my $decoded = eval { ($obj, $used) = JSON::PP->new->decode_prefix($body); 1 };
-  if (!$decoded || ref($obj) ne "HASH" || $used != length($body)) {
+  if (!$decoded || ref($obj) ne "HASH" || $used != bytes::length($body)) {
     $bad->("the request envelope is not exactly one JSON object"); next;
   }
   my $duplicate = duplicate_object_key($body);

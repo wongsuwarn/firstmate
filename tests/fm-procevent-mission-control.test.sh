@@ -96,6 +96,17 @@ pass "a real captured send normalizes to one request through the published poll 
   || fail "note text must never contribute tokens to the parsed intent"
 pass "a note containing intent=merge cannot change the parsed intent"
 
+U="$TMP_ROOT/unicode.txt"
+unicode_note='Captain’s café 🚀'
+unicode_body=$(jq -cn --arg n "$unicode_note" \
+  '{v:1,intent:"ask",home:"main",note:$n}')
+result_file "$U" "$(record 1 "$(envelope "$unicode_body")")"
+out=$(requests "$U")
+unicode_req=$(only "$out" request)
+[ "$(printf '%s\n' "$unicode_req" | jq -r '.note')" = "$unicode_note" ] \
+  || fail "a valid Unicode note must survive unchanged, got: $out"
+pass "a valid request preserves a curly apostrophe, accented word, and emoji"
+
 # ------------------------------------------------------------ captain prose --
 # The Lavish panel sits beside the board at all times, so an ordinary typed
 # message is the common case and must never be dropped or refused.
