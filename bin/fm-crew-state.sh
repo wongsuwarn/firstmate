@@ -39,7 +39,7 @@
 #      AFTER its run reached that state holds the new work uncommitted, where
 #      nothing above can see it, because attribution compares commit identity
 #      only. So a ready verdict is demoted whenever the worktree still holds
-#      unlanded tracked edits: to working when the crew is busy, to unknown when
+#      unlanded uncommitted work: to working when the crew is busy, to unknown when
 #      it is not. See demote_ready_when_unlanded for why those must not collapse.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
@@ -441,8 +441,9 @@ fi
 # advances HEAD past the run head and correctly drops the attribution; leaving it
 # uncommitted is exactly the case nothing else here can see.
 #
-# Tracked files only. An untracked stray (an evidence image, .DS_Store) is not
-# unlanded work, and counting it would pin a finished crew at not-done forever.
+# Any uncommitted change counts, including newly created files, because a resumed
+# crew often adds new source or test files and those leave HEAD unchanged too.
+# Gitignored paths are the deliberate exemption for expected scratch files.
 #
 # Answered once per invocation: this process is short-lived, and a single
 # observation keeps every branch below judging the same worktree rather than
@@ -450,7 +451,7 @@ fi
 _UNLANDED_EDITS=""
 wt_has_unlanded_edits() {
   if [ -z "$_UNLANDED_EDITS" ]; then
-    if [ -n "$(git -C "$WT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    if [ -n "$(git -C "$WT" status --porcelain 2>/dev/null)" ]; then
       _UNLANDED_EDITS=yes
     else
       _UNLANDED_EDITS=no

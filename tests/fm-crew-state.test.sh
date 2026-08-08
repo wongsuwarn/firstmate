@@ -25,9 +25,10 @@
 #       This is the direct regression pair for the 2026-07-02 herdr incident,
 #       proving the watcher's own absorb-only-when-provably-working predicate
 #       benefits from the fix in both directions.
-#   (l) a ready run-step does not outlive the crew's resumption: unlanded tracked
-#       edits demote it, a busy crew to working and a wedged one to a state that
-#       stays absorb-INELIGIBLE, while an untracked stray demotes nothing
+#   (l) a ready run-step does not outlive the crew's resumption: unlanded
+#       uncommitted work, including new files, demotes it, a busy crew to working
+#       and a wedged one to a state that stays absorb-INELIGIBLE; gitignored
+#       scratch files are exempt
 #   (m) the crew's own checks-green report is trusted by default, but not on a ci
 #       log whose markers are no longer recognized
 set -u
@@ -187,9 +188,21 @@ dirty_tracked_worktree() {  # <worktree>
   done
 }
 
-# An untracked stray - an evidence image, a .DS_Store - is NOT unlanded work.
-untracked_stray_worktree() {  # <worktree>
-  printf 'png bytes\n' > "$1/evidence-after.png"
+# A newly created source or test file is unlanded work even though it does not
+# move HEAD.
+untracked_new_worktree() {  # <worktree>
+  printf '# new regression test\n' > "$1/followup-new.test.sh"
+}
+
+gitignored_scratch_worktree() {  # <worktree>
+  local wt=$1
+  printf 'scratch/\n' > "$wt/.gitignore"
+  git -C "$wt" add .gitignore
+  git -C "$wt" commit -q -m "ignore expected scratch files"
+  FM_FAKE_RUN_HEAD=$(git -C "$wt" rev-parse HEAD)
+  export FM_FAKE_RUN_HEAD
+  mkdir -p "$wt/scratch"
+  printf 'png bytes\n' > "$wt/scratch/evidence-after.png"
 }
 
 # Clear the fake-driver vars and (re-)mark them exported, so the per-test plain
@@ -1281,24 +1294,39 @@ test_unlanded_edits_with_dead_endpoint_is_not_absorb_eligible() {
   pass "unlanded work plus a dead endpoint stays absorb-ineligible"
 }
 
-# The other side of the guard: an untracked stray is not unlanded work. Counting
-# it would pin a genuinely finished crew at not-done forever and block teardown.
-# (Its clean-worktree sibling, closed endpoint included, is pinned by
-# test_dead_window_still_reports_terminal_run_step above.)
-test_untracked_stray_does_not_demote_ready_verdict() {
+# A newly created source or test file is unlanded work just like an edit to a
+# tracked file: it leaves HEAD unchanged while proving the crew moved on.
+test_untracked_new_file_demotes_ready_verdict() {
   reset_fakes
-  local d; d=$(new_case untracked-stray)
-  make_repo_on_branch "$d/wt" fm/feat-stray
-  untracked_stray_worktree "$d/wt"
+  local d; d=$(new_case untracked-new)
+  make_repo_on_branch "$d/wt" fm/feat-new
+  untracked_new_worktree "$d/wt"
   make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-stray.meta" "window=fm:fm-feat-stray" \
+  fm_write_meta "$d/state/feat-new.meta" "window=fm:fm-feat-new" \
     "worktree=$d/wt" "kind=ship" "harness=claude"
-  arm_idle_record "$d/state" feat-stray >/dev/null
-  FM_FAKE_AXI_STATUS="$(run_checks_passed fm/feat-stray)"
-  local out; out=$(run_crew_state "$d" feat-stray)
-  assert_contains "$out" "state: done" "an untracked stray must not demote a ready verdict"
+  arm_idle_record "$d/state" feat-new >/dev/null
+  FM_FAKE_AXI_STATUS="$(run_checks_passed fm/feat-new)"
+  local out; out=$(run_crew_state "$d" feat-new)
+  assert_not_contains "$out" "state: done" "an untracked new file must demote a ready verdict"
+  assert_contains "$out" "state: unknown" "an idle crew with untracked new work stays visible"
+  pass "an untracked new file counts as unlanded work"
+}
+
+# Gitignored paths are the deliberate escape hatch for expected scratch files.
+test_gitignored_scratch_does_not_demote_ready_verdict() {
+  reset_fakes
+  local d; d=$(new_case gitignored-scratch)
+  make_repo_on_branch "$d/wt" fm/feat-ignored
+  gitignored_scratch_worktree "$d/wt"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-ignored.meta" "window=fm:fm-feat-ignored" \
+    "worktree=$d/wt" "kind=ship" "harness=claude"
+  arm_idle_record "$d/state" feat-ignored >/dev/null
+  FM_FAKE_AXI_STATUS="$(run_checks_passed fm/feat-ignored)"
+  local out; out=$(run_crew_state "$d" feat-ignored)
+  assert_contains "$out" "state: done" "gitignored scratch must not demote a ready verdict"
   assert_contains "$out" "source: run-step" "ready verdict still comes from the run-step"
-  pass "an untracked stray file does not count as unlanded work"
+  pass "gitignored scratch does not count as unlanded work"
 }
 
 # (m) The crew's own "done: ... checks green" report is trusted by default, but
@@ -1522,7 +1550,8 @@ test_missing_run_head_falls_back_to_current_state
 test_ci_green_ready_with_unlanded_edits_is_not_done
 test_terminal_checks_passed_with_unlanded_edits_is_not_done
 test_unlanded_edits_with_dead_endpoint_is_not_absorb_eligible
-test_untracked_stray_does_not_demote_ready_verdict
+test_untracked_new_file_demotes_ready_verdict
+test_gitignored_scratch_does_not_demote_ready_verdict
 test_unrecognized_ci_log_does_not_confirm_stale_ready_report
 
 echo "all fm-crew-state tests passed"
