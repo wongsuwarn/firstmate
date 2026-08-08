@@ -11,7 +11,9 @@ It never reads report bodies, review artifacts, terminal output, or chat.
 
 The `hold` subcommand maps an originating work id and stable decision key to `<origin-id>-decision-<decision-key>`.
 It creates a kind `captain` backlog item when absent and invokes `tasks-axi hold <id> --reason <reason> --kind captain` on every retry.
-It rejects an identity collision, a changed title, and attempts to reopen an already resolved identity.
+It can record an exact question and an HTTPS decision-aid URL as structured body fields without probing or rewriting the destination.
+The `link` subcommand is the supported HTTPS-only backfill for an existing active hold and preserves every other body field.
+It rejects an identity collision, a changed title, attempts to reopen an already resolved identity, malformed links, and non-HTTPS links.
 
 The `complete` subcommand unions the reviewed keys into `decision_keys=` and appends `decisions_reviewed=1` while originating task metadata is live.
 A post-teardown visual review can complete against the surviving report and durable holds without recreating volatile task metadata.
@@ -47,6 +49,7 @@ A failed intermediate step leaves the hold open.
 ## Structured read surfaces
 
 `bin/fm-fleet-snapshot.sh` parses canonical tasks-axi `(hold: ...)` and `(hold-kind: captain)` metadata alongside existing backlog fields.
+It also parses the decision question and decision URL written by `bin/fm-decision-hold.sh`, then carries them through the main-home record and secondmate-home decision projection.
 It resolves every repeated `blocked-by:` edge against structured Done records, keeps missing blockers unresolved, and classifies only an unblocked captain hold as actionable.
 Its secondmate-home summary classifies an actionable captain hold as `captain_decision` and preserves blocked captain holds as queued work in the owning home.
 
