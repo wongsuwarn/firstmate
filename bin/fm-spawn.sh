@@ -136,9 +136,11 @@
 #   refused on backend=orca (Orca owns the worktree itself and addresses it by
 #   orca_worktree_id=, so path reuse needs Orca-side resume semantics that do not
 #   exist yet). The relaunch is transactional: the previous state/<id>.meta is
-#   snapshotted first, and any failure removes only the endpoint this invocation
-#   created and restores that record, leaving the copy's dirty files, commits,
-#   and branch untouched. Nothing here decides WHEN to hand a task over;
+#   snapshotted first, and any failure restores that record only after the exact
+#   endpoint this invocation created is confirmed gone. An unconfirmed cleanup
+#   retains a new endpoint record for reconciliation, leaving the copy's dirty
+#   files, commits, and branch untouched. Nothing here decides WHEN to hand a
+#   task over;
 #   bin/fm-provider-continuity.sh owns the handoff license and
 #   .agents/skills/provider-outage-continuity/SKILL.md owns the procedure.
 #   A successful resume adds resumed=1 to the success line.
@@ -709,6 +711,7 @@ RESUME_WT=
 RESUME_META_BACKUP=
 RESUME_META_RESTORE=0
 RESUME_ENDPOINT_CLEANUP=0
+RESUME_NEW_META_PUBLISHED=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
 HERDR_PROJECTION_ABORT_CLEANUP=0
@@ -834,15 +837,58 @@ spawn_abort_cleanup() {
       fi
     fi
   fi
-  # Resume transaction: a failed relaunch must leave the task exactly as
-  # recoverable as it was before, so remove only the endpoint this invocation
-  # created and put the previous authoritative record back byte for byte. The
-  # isolated copy, its dirty files, its commits, and its branch are never
-  # touched by either step.
+  # Resume transaction: the previous record may return only after the exact
+  # endpoint this invocation created is positively confirmed gone. A successful
+  # kill request is not proof - a delivery failure can occur after the agent has
+  # started, and a best-effort backend cleanup can leave that agent running.
+  # Keep a current endpoint record whenever its fate is anything but `missing`,
+  # so a retry cannot create an unrecorded duplicate on this task's worktree.
   if [ "$RESUME_ENDPOINT_CLEANUP" = 1 ]; then
     RESUME_ENDPOINT_CLEANUP=0
+    RESUME_ABORT_ENDPOINT_STATE=unreadable
     if [ "$HERDR_PROJECTION_ABORT_CLEANUP" != 1 ] && [ -n "${T:-}" ]; then
       fm_backend_kill "$BACKEND" "$T" 2>/dev/null || true
+      RESUME_ABORT_ENDPOINT_STATE=$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null || printf 'unreadable')
+    fi
+    if [ "$RESUME_ABORT_ENDPOINT_STATE" != missing ]; then
+      RESUME_META_RESTORE=0
+      # Later launch-delivery failures already have a complete current record.
+      # Earlier failures need this minimal exact-endpoint record instead of the
+      # previous one, which may name another backend entirely.
+      if [ "$RESUME_NEW_META_PUBLISHED" != 1 ] && [ -n "${T:-}" ]; then
+        RESUME_RECORD_WT=${WT:-${RESUME_WT:-}}
+        {
+          echo "window=$T"
+          echo "endpoint_task_id=$ID"
+          echo "worktree=$RESUME_RECORD_WT"
+          echo "project=$PROJ_ABS"
+          echo "harness=$HARNESS"
+          echo "kind=$KIND"
+          [ -z "${MODE:-}" ] || echo "mode=$MODE"
+          [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
+          echo "tasktmp=${TASK_TMP:-/tmp/fm-$ID}"
+          echo "model=${MODEL:-default}"
+          echo "effort=${EFFORT:-default}"
+          [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
+          if [ "$BACKEND" = herdr ]; then
+            echo "herdr_session=${HERDR_SES:-}"
+            echo "herdr_workspace_id=${HERDR_WORKSPACE_ID:-}"
+            echo "herdr_tab_id=${HERDR_TAB_ID:-}"
+            echo "herdr_pane_id=${HERDR_PANE_ID:-}"
+          fi
+          if [ "$BACKEND" = zellij ]; then
+            echo "zellij_session=${ZELLIJ_SES:-}"
+            echo "zellij_tab_id=${ZELLIJ_TAB_ID:-}"
+            echo "zellij_pane_id=${ZELLIJ_PANE_ID:-}"
+          fi
+          if [ "$BACKEND" = cmux ]; then
+            echo "cmux_workspace_id=${CMUX_WORKSPACE_ID:-}"
+            echo "cmux_surface_id=${CMUX_SURFACE_ID:-}"
+          fi
+        } > "$STATE/$ID.meta" 2>/dev/null \
+          || echo "warning: could not retain the new endpoint record for $ID after unconfirmed cleanup" >&2
+      fi
+      echo "warning: resume cleanup for $ID left endpoint state $RESUME_ABORT_ENDPOINT_STATE; retained its new task record and previous record at $RESUME_META_BACKUP" >&2
     fi
   fi
   if [ "$RESUME_META_RESTORE" = 1 ]; then
@@ -2382,6 +2428,7 @@ if ! spawn_record_publish "$META_RECORD" "$STATE/$ID.meta"; then
   echo "error: could not publish the task record for $ID; refusing to report a spawn firstmate cannot supervise" >&2
   exit 1
 fi
+RESUME_NEW_META_PUBLISHED=1
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
 sq_brief=$(shell_quote "$BRIEF")

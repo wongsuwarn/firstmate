@@ -446,11 +446,27 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows)
+    [ -z "${FM_FAKE_ENDPOINT_FILE:-}" ] || [ ! -f "$FM_FAKE_ENDPOINT_FILE" ] || cat "$FM_FAKE_ENDPOINT_FILE"
+    exit 0
+    ;;
   has-session|new-session) exit 0 ;;
-  new-window) printf '@1\n'; exit 0 ;;
+  new-window)
+    name=
+    prev=
+    for a in "$@"; do
+      [ "$prev" != -n ] || name=$a
+      prev=$a
+    done
+    [ -z "${FM_FAKE_ENDPOINT_FILE:-}" ] || printf '%s\n' "$name" > "$FM_FAKE_ENDPOINT_FILE"
+    printf '@1\n'
+    exit 0
+    ;;
   kill-window)
     [ -z "${FM_FAKE_KILL_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_KILL_LOG"
+    if [ "${FM_FAKE_KEEP_ENDPOINT:-0}" != 1 ] && [ -n "${FM_FAKE_ENDPOINT_FILE:-}" ]; then
+      rm -f "$FM_FAKE_ENDPOINT_FILE"
+    fi
     exit 0
     ;;
   send-keys)
@@ -537,6 +553,8 @@ run_resume_spawn() {
     CLAUDE_CONFIG_DIR='' GROK_HOME="$home/grok-home" \
     FM_FAKE_SEND_LOG="${FM_FAKE_SEND_LOG:-}" FM_FAKE_LAUNCH_LOG="${FM_FAKE_LAUNCH_LOG:-}" \
     FM_FAKE_KILL_LOG="${FM_FAKE_KILL_LOG:-}" FM_FAKE_FAIL_LITERAL="${FM_FAKE_FAIL_LITERAL:-0}" \
+    FM_FAKE_ENDPOINT_FILE="${FM_FAKE_ENDPOINT_FILE:-$home/.fake-endpoint}" \
+    FM_FAKE_KEEP_ENDPOINT="${FM_FAKE_KEEP_ENDPOINT:-0}" \
     PATH="$fakebin:$PATH" "$SPAWN" "$@" 2>&1)
   SPAWN_STATUS=$?
   set -e
@@ -631,6 +649,38 @@ test_failed_relaunch_leaves_the_original_record_and_work_recoverable() {
     || fail "a failed alternate launch moved the task branch's head"
   assert_present "$WT_DIR/scratch.txt" "a failed alternate launch discarded uncommitted work"
   pass "a failed alternate launch leaves the original record, branch, and work recoverable"
+}
+
+test_failed_relaunch_retains_new_record_when_cleanup_is_unconfirmed() {
+  local rec id
+  id=resume-unconfirmed-cleanup-d4
+  rec=$(make_resume_case resume-unconfirmed-cleanup "$id")
+  read_resume_record "$rec"
+
+  FM_FAKE_FAIL_LITERAL=1 FM_FAKE_KEEP_ENDPOINT=1 FM_FAKE_KILL_LOG="$CASE_DIR/kill.log" \
+    run_resume_spawn "$HOME_DIR" "$FAKEBIN_DIR" "$WT_DIR" \
+      "$id" "$PROJ_DIR" --mode no-mistakes --yolo off \
+      --harness claude --resume-worktree "$WT_DIR"
+  [ "$SPAWN_STATUS" != 0 ] || fail "an unconfirmed cleanup reported success"
+
+  # The launch command may already have started the new agent. A successful
+  # kill request without a subsequent missing-endpoint proof must therefore
+  # retain the new identity instead of restoring the old one and orphaning it.
+  assert_grep 'harness=claude' "$HOME_DIR/state/$id.meta" \
+    "unconfirmed cleanup restored the old harness record"
+  assert_no_grep 'harness=codex' "$HOME_DIR/state/$id.meta" \
+    "unconfirmed cleanup left the old endpoint record authoritative"
+  assert_grep "window=firstmate:fm-$id" "$HOME_DIR/state/$id.meta" \
+    "unconfirmed cleanup did not retain the exact new endpoint"
+  assert_present "$HOME_DIR/state/.resume-$id.meta.bak" \
+    "unconfirmed cleanup discarded the previous record needed for reconciliation"
+  assert_grep 'harness=codex' "$HOME_DIR/state/.resume-$id.meta.bak" \
+    "the retained previous record was not preserved byte-for-byte"
+  assert_grep "=firstmate:=fm-$id" "$CASE_DIR/kill.log" \
+    "unconfirmed cleanup did not target the exact new endpoint"
+  assert_contains "$SPAWN_OUT" "retained its new task record" \
+    "unconfirmed cleanup did not report the retained endpoint record"
+  pass "a failed relaunch never restores an old record while its new endpoint remains unconfirmed"
 }
 
 test_resume_refuses_shapes_that_would_split_or_misplace_a_task() {
@@ -731,6 +781,7 @@ test_repeated_handoff_attempts_stop_and_report_the_blocker
 test_resume_reuses_the_recorded_isolated_copy_and_preserves_work
 test_resume_refuses_a_pane_that_settled_on_another_copy
 test_failed_relaunch_leaves_the_original_record_and_work_recoverable
+test_failed_relaunch_retains_new_record_when_cleanup_is_unconfirmed
 test_resume_refuses_shapes_that_would_split_or_misplace_a_task
 test_resume_preserves_backend_and_harness_validation
 test_ordinary_spawn_is_unchanged_without_the_resume_flag
