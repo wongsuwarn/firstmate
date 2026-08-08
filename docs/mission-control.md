@@ -33,6 +33,7 @@ The stage itself is derived by the snapshot rather than by the board; see `bin/f
   Each row names the home it came from when that home is not the main one.
   A structured HTTPS decision aid appears as its own readable link and remains on its recorded private host.
   Only valid HTTP or HTTPS references are clickable; a local report path such as `data/example/report.md` remains non-clickable context when no explicit served HTTPS aid exists, because the board does not serve fleet-local files.
+  URL validation runs in the required jq rendering path, so valid links do not disappear when optional browser tooling such as Node is unavailable.
   The board never probes, publishes, mounts, or rewrites that destination.
   Bounded or unavailable secondmate registries, omitted homes, and registered homes whose decisions could not be read all mark the waiting status incomplete.
   Credential and login needs are not detected and are not faked.
@@ -117,7 +118,8 @@ With `--controls`, that reload also holds while a control is open or contains un
 The no-script fallback remains read-only and refreshes through its meta tag.
 
 After the Lavish bridge accepts a request, the affected control says exactly what was sent, such as `Answer sent` or `Merge request sent`, and refuses an accidental duplicate while that same action remains on the board.
-A bridge failure leaves the form open, keeps its text, and remains retryable.
+A failure before queuing leaves the form open, keeps its text editable, and remains retryable.
+When queuing succeeds but delivery fails, the board binds the retry to that exact saved answer and temporarily locks editing and cancellation, so it can neither enqueue a duplicate nor acknowledge newer text while sending the older payload.
 Every open composer and its draft are saved eagerly in session storage under the exact board, owning home, item, decision key, and intent identity.
 A full document reload restores only controls whose exact identity still exists, so an external generator rewrite cannot erase an in-progress answer and cannot attach it to a neighbouring decision.
 Submitted presentation state is browser-local, scoped by board home, document, owning home, item, decision key, and intent.

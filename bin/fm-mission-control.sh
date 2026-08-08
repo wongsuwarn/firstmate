@@ -153,37 +153,6 @@ fi
 printf '%s' "$SNAPSHOT" | jq -e 'type == "object" and has("tasks")' >/dev/null 2>&1 \
   || die "fleet snapshot did not return the expected object"
 
-VALID_WEB_URLS='[]'
-if command -v node >/dev/null 2>&1; then
-  VALID_WEB_URLS=$(printf '%s' "$SNAPSHOT" | node -e '
-    let input = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", function (chunk) { input += chunk; });
-    process.stdin.on("end", function () {
-      var found = new Set();
-      function valid(value) {
-        if (typeof value !== "string" || /[\u0000-\u0020\u007f"<>\\]/.test(value)) { return false; }
-        try {
-          var url = new URL(value);
-          if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname || url.username || url.password) { return false; }
-          if (url.hostname.charAt(0) !== "[") {
-            if (url.hostname.length > 253 || !url.hostname.split(".").every(function (label) {
-              return label.length > 0 && label.length <= 63 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label);
-            })) { return false; }
-          }
-          return true;
-        } catch (error) { return false; }
-      }
-      function visit(value) {
-        if (valid(value)) { found.add(value); }
-        else if (Array.isArray(value)) { value.forEach(visit); }
-        else if (value && typeof value === "object") { Object.keys(value).forEach(function (key) { visit(value[key]); }); }
-      }
-      visit(JSON.parse(input));
-      process.stdout.write(JSON.stringify(Array.from(found)));
-    });
-  ') || VALID_WEB_URLS='[]'
-fi
 STATE_DIR=$(printf '%s' "$SNAPSHOT" | jq -r '.roots.state // ""')
 DATA_DIR=$(printf '%s' "$SNAPSHOT" | jq -r '.roots.data // ""')
 PROJECTS_DIR=$(printf '%s' "$SNAPSHOT" | jq -r '.roots.projects // ""')
@@ -479,7 +448,6 @@ HTML=$(
     --argjson projects_present "$PROJECTS_PRESENT" \
     --arg today "$TODAY" \
     --argjson controls "$CONTROLS" \
-    --argjson valid_web_urls "$VALID_WEB_URLS" \
     --argjson refresh "$REFRESH" '
 
 # --------------------------------------------------------------------------
@@ -1041,10 +1009,36 @@ def meta_block($line; $items):
 # board is not a file server. Only an explicit web URL can navigate; everything
 # else stays escaped presentation context so a mobile tap cannot leave /mission
 # for a route that does not exist.
+# URL validation stays inside jq, the required Mission Control renderer runtime,
+# so a missing optional browser/test runtime can never erase valid links.
+# This deliberately accepts the ASCII DNS and IPv4 authorities used by PRs and
+# private served aids, and rejects credentials, bracket authorities, malformed
+# escapes, control characters, and ports outside the URL range.
+def valid_web_host:
+  . as $host |
+  ($host | length) > 0 and ($host | length) <= 253
+  and ($host | split(".") | all(.[];
+    (length > 0 and length <= 63 and test("^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$"))))
+  and (if ($host | test("^[0-9.]+$"))
+       then ($host | split(".") | length) == 4
+         and ($host | split(".") | all(.[]; (tonumber >= 0 and tonumber <= 255)))
+       else true end);
+
+def valid_web_url:
+  if type != "string" or test("[[:cntrl:][:space:]\\\"<>\\\\]") then false
+  else . as $candidate |
+    ([try capture("^(?<scheme>https?)://(?<authority>[^/?#]+)(?<tail>[/?#].*)?$"; "i") catch null] | .[0] // null) as $url |
+    if $url == null or ($url.authority | contains("@")) then false
+    else ([try ($url.authority | capture("^(?<host>[^:]+)(?::(?<port>[0-9]+))?$")) catch null] | .[0] // null) as $authority |
+      if $authority == null or (($authority.host | valid_web_host) | not) then false
+      elif ($authority.port // "") != "" and (($authority.port | length) > 5 or ($authority.port | tonumber) > 65535) then false
+      else (($candidate | gsub("%[0-9A-Fa-f]{2}"; "") | contains("%")) | not) end
+    end
+  end;
+
 def web_url_or_empty:
   . as $candidate |
-  if type == "string" and ($valid_web_urls | index($candidate)) != null
-  then $candidate else "" end;
+  if valid_web_url then $candidate else "" end;
 
 def https_url_or_empty:
   . as $candidate |
@@ -2456,6 +2450,16 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   restoreDrafts();
   var requestState = {};
 
+  function keepQueuedPayload(block, form, state) {
+    var area = form.querySelector(\".rc-t\");
+    var close = form.querySelector(\".rc-x\");
+    var submit = form.querySelector(\".rc-go\");
+    if (area) { area.value = state.note || \"\"; area.disabled = true; }
+    if (close) { close.disabled = true; }
+    if (submit) { submit.disabled = false; }
+    say(block, \"Queued but not sent - retry to send this saved answer.\", true);
+  }
+
   document.addEventListener(\"click\", function (ev) {
     var el = ev.target;
     if (el && el.nodeType !== 1) { el = el.parentElement; }
@@ -2489,6 +2493,13 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       var owner = cancel.closest(\".rc\");
       if (owner) {
         var form = cancel.closest(\".rc-f\");
+        var intent = form && (form.getAttribute(\"data-intent\") || \"\");
+        var pending = form && requestState[draftIdentity(owner, intent)];
+        if (pending) {
+          if (pending.status === \"queued\") { keepQueuedPayload(owner, form, pending); }
+          else { say(owner, \"Sending - this answer cannot be changed yet.\", false); }
+          return;
+        }
         var area = form && form.querySelector(\".rc-t\");
         if (area) { area.value = \"\"; }
         shut(owner);
@@ -2537,29 +2548,39 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       return;
     }
     var submit = form.querySelector(\".rc-go\");
-    if (requestState[requestIdentity] === \"queuing\" || requestState[requestIdentity] === \"sending\") { return; }
+    var wire = \"FM-BOARD-REQUEST \" + JSON.stringify(request);
+    var pending = requestState[requestIdentity];
+    if (pending && (pending.status === \"queuing\" || pending.status === \"sending\")) { return; }
+    if (pending && pending.status === \"queued\" && pending.payload !== wire) {
+      keepQueuedPayload(block, form, pending);
+      saveDrafts();
+      return;
+    }
     if (submit) { submit.disabled = true; }
     try {
-      if (requestState[requestIdentity] !== \"queued\") {
-        requestState[requestIdentity] = \"queuing\";
-        var queued = lav.queuePrompt(\"FM-BOARD-REQUEST \" + JSON.stringify(request), {
+      if (!pending || pending.status !== \"queued\") {
+        pending = {status:\"queuing\",payload:wire,note:note};
+        requestState[requestIdentity] = pending;
+        var queued = lav.queuePrompt(wire, {
           tag: \"board-request\",
           text: summary(request.intent, block.getAttribute(\"data-what\") || \"\")
         });
         if (queued && typeof queued.then === \"function\") { queued = await queued; }
         if (queued === false) { throw new Error(\"queue refused\"); }
-        requestState[requestIdentity] = \"queued\";
+        pending.status = \"queued\";
       }
-      requestState[requestIdentity] = \"sending\";
+      pending.status = \"sending\";
       var accepted = lav.sendQueuedPrompts();
       if (accepted && typeof accepted.then === \"function\") { accepted = await accepted; }
       if (accepted === false) { throw new Error(\"send refused\"); }
       delete requestState[requestIdentity];
     } catch (e) {
-      if (requestState[requestIdentity] === \"queuing\") { delete requestState[requestIdentity]; }
-      else if (requestState[requestIdentity] === \"sending\") { requestState[requestIdentity] = \"queued\"; }
+      if (pending && pending.status === \"queuing\") { delete requestState[requestIdentity]; }
+      else if (pending) { pending.status = \"queued\"; keepQueuedPayload(block, form, pending); }
       if (submit) { submit.disabled = false; }
-      say(block, \"Not sent - the board could not reach firstmate.\", true);
+      if (!pending || pending.status !== \"queued\") {
+        say(block, \"Not sent - the board could not reach firstmate.\", true);
+      }
       saveDrafts();
       return;
     }
@@ -2577,6 +2598,14 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   document.addEventListener(\"input\", function (ev) {
     var area = ev.target;
     if (!area || !area.closest) { return; }
+    var form = area.closest(\".rc-f\");
+    var block = form && form.closest(\".rc\");
+    var pending = block && form && requestState[draftIdentity(block, form.getAttribute(\"data-intent\") || \"\")];
+    if (pending && pending.status === \"queued\") {
+      keepQueuedPayload(block, form, pending);
+      saveDrafts();
+      return;
+    }
     var ask = area.closest(\".rc-ask\");
     if (ask) {
       var submit = ask.querySelector(\".rc-go\");

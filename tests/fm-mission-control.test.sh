@@ -1934,13 +1934,15 @@ test_controls_can_only_queue_a_request() {
 }
 
 test_decision_context_links_and_submission_state_in_a_browser() {
-  local snap board read_only reduced shifted missing chrome
+  local snap board read_only reduced shifted missing node_free node_free_bin chrome
   snap=$TMP_ROOT/decision-controls-runtime.json
   board=$TMP_ROOT/decision-controls-runtime.html
   read_only=$TMP_ROOT/decision-controls-readonly.html
   reduced=$TMP_ROOT/decision-controls-reduced.html
   shifted=$TMP_ROOT/decision-controls-shifted.html
   missing=$TMP_ROOT/decision-controls-missing.html
+  node_free=$TMP_ROOT/decision-controls-node-free.html
+  node_free_bin=$TMP_ROOT/decision-controls-node-free-bin
   snapshot_json '[
     {"state":"queued","id":"d-exact","captain_actionable":true,
      "title":"Choose the prototype emphasis","hold_reason":"Guidance and detail compete for the first screen",
@@ -1987,6 +1989,16 @@ test_decision_context_links_and_submission_state_in_a_browser() {
     current_state:{state:"done",stage:{ordinal:5,of:5,label:"Checks green",motion:"ready"}}}]' > "$snap"
   "$BOARD" --snapshot "$snap" --no-quota --controls --refresh 300 --out "$board" >/dev/null \
     || fail "the decision control runtime fixture must render"
+  mkdir -p "$node_free_bin"
+  ln -sf "$(command -v jq)" "$node_free_bin/jq"
+  PATH="$node_free_bin:/usr/bin:/bin" "$BOARD" --snapshot "$snap" --no-quota --controls --refresh 300 --out "$node_free" >/dev/null \
+    || fail "valid decision links must render without optional Node"
+  assert_grep 'href="https://sample.tailnet.invalid/decision-aid"' "$node_free" \
+    "a missing optional Node runtime must not erase a valid private decision aid"
+  assert_no_grep 'href="https://\[::::\]/aid"' "$node_free" \
+    "jq-owned URL validation must reject malformed IPv6 authorities without Node"
+  assert_no_grep 'href="https://example.invalid:99999/aid"' "$node_free" \
+    "jq-owned URL validation must reject out-of-range ports without Node"
   "$BOARD" --snapshot "$snap" --no-quota --refresh 300 --out "$read_only" >/dev/null \
     || fail "the read-only decision fixture must render"
   jq '.backlog.records = ([range(0;8) | {state:"queued",id:("inserted-" + tostring),captain_actionable:true,
@@ -2177,15 +2189,24 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
     b.querySelector('[data-open=answer]').click(); var t=b.querySelector('textarea'); t.value='Keep comparison compact';
     b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
     var failed={open:!b.querySelector('form[data-intent=answer]').hidden,value:t.value,
-      retry:!b.querySelector('.rc-go').disabled,message:b.querySelector('.rc-sent').textContent};
+      retry:!b.querySelector('.rc-go').disabled,message:b.querySelector('.rc-sent').textContent,
+      textLocked:t.disabled,closeLocked:b.querySelector('.rc-x').disabled};
     failed.queued=JSON.parse(localStorage.getItem('test-prompts')||'[]').length;
-    localStorage.removeItem('test-send-fail'); b.querySelector('form[data-intent=answer]').requestSubmit();
+    localStorage.removeItem('test-send-fail');
+    t.value='Edited answer that was never queued'; b.querySelector('form[data-intent=answer]').requestSubmit();
     await new Promise(r=>setTimeout(r,20));
+    failed.afterEdit={value:t.value,label:b.querySelector('[data-open=answer]').textContent,
+      queued:JSON.parse(localStorage.getItem('test-prompts')||'[]').length};
+    b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
     failed.after=b.querySelector('[data-open=answer]').textContent;
     failed.afterQueued=JSON.parse(localStorage.getItem('test-prompts')||'[]').length; return failed;
   })()`);
-  assert(failed.open && failed.value === "Keep comparison compact" && failed.retry && failed.message.startsWith("Not sent"), "bridge failure was not visibly unsent and retryable");
-  assert(failed.after === "Answer sent", "retry after bridge failure was not acknowledged");
+  assert(failed.open && failed.value === "Keep comparison compact" && failed.retry
+    && failed.message.startsWith("Queued but not sent") && failed.textLocked && failed.closeLocked,
+    "a queued-but-unsent answer was not visibly preserved and retryable");
+  assert(failed.afterEdit.value === "Keep comparison compact" && failed.afterEdit.label === "Answer"
+    && failed.afterEdit.queued === 6, "edited text replaced or acknowledged the older queued answer: " + JSON.stringify(failed));
+  assert(failed.after === "Answer sent", "retry of the exact queued answer was not acknowledged");
   assert(failed.queued === 6 && failed.afterQueued === 6, "retry after a partial bridge failure queued a duplicate request: " + JSON.stringify(failed));
 
   await navigate(sid, boardPath);
