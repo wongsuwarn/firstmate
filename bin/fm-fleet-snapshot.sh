@@ -462,16 +462,18 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
                elif .state == "queued" then "queued"
                else "done" end)
           | .requires_child_metadata = (.current_role == "worker")
+          # A captain hold can gate any backlog item, not only a standalone
+          # kind "captain" decision record.
           | .captain_actionable =
-              (.state == "queued" and .kind == "captain" and .hold_kind == "captain"
+              (.state == "queued" and .hold_kind == "captain"
                and .hold_reason != null and (.unresolved_blocker_ids | length) == 0)
-          # A captain decision the captain has consciously set aside: the same
+          # A captain-held row the captain has consciously set aside: the same
           # row as an actionable decision in every respect except that its hold
-          # kind is "parked". It stays a captain decision rather than becoming
-          # generic future work, so it can be brought back by restoring the
-          # captain hold kind alone.
+          # kind is "parked". It stays deferred rather than becoming generic
+          # future work, so it can be brought back by restoring the captain
+          # hold kind alone.
           | .captain_deferred =
-              (.state == "queued" and .kind == "captain" and .hold_kind == "parked"
+              (.state == "queued" and .hold_kind == "parked"
                and .hold_reason != null and (.unresolved_blocker_ids | length) == 0)
         else . end)
     | del(.section,.order)
