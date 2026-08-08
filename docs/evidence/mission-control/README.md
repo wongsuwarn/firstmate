@@ -22,9 +22,12 @@ The after image identifies `data/local-lane-bakeoff-v2-powered/report.md` as loc
 `before-token-integration-mobile.png` and `after-token-integration-mobile.png` show the same comparison at the captain's 390px viewport.
 The after view keeps fleet health distinct, presents each primary allowance window once, and leaves automatic balancing collapsed.
 
-All of these are rendered from synthetic fixture homes rather than a live fleet.
+All image evidence here is rendered from synthetic fixture homes rather than a live fleet.
 The local-report pair reproduces only the reported card label and local path, never the report contents; the other fixtures carry no private project, decision, or PR data.
 The fixtures pin the render clock so the comparisons are not affected by the day they were captured.
+
+The separate privacy-safe live-fleet check is `FM_MISSION_CONTROL_LIVE_HOME=<active-home> FM_MISSION_CONTROL_REQUIRE_LIVE=1 tests/fm-mission-control.test.sh`.
+It generates the board directly from the active fleet, uses real Chrome at 390 by 844, regenerates the file at a nonzero reading position, performs a full reload, and reports only pass/fail geometry rather than fleet identities or records.
 
 That the selected tab survives the board's managed reload was checked in Chrome after selecting the Projects tab and reloading the document without a fragment; the Projects panel remained selected.
 The same browser regression replaced the served HTML with fixtures that inserted rows above the current decision or temporarily omitted that decision, then verified the exact reading offset and identity-bound draft survived when the row returned.

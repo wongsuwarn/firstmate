@@ -2074,12 +2074,17 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       if(--left>0)requestAnimationFrame(sample);
     } requestAnimationFrame(sample);});
     window.lavish={
-      queuePrompt:function(prompt){
+      queuePrompt:function(prompt,options){
         if(localStorage.getItem("test-bridge-fail")==="1") throw new Error("queue failed");
-        var p=JSON.parse(localStorage.getItem("test-prompts")||"[]"); p.push(prompt);
-        localStorage.setItem("test-prompts",JSON.stringify(p));
-        if(localStorage.getItem("test-queue-delay")==="1") return new Promise(r=>setTimeout(()=>r(true),80));
-        return true;
+        function accept(){
+          var p=JSON.parse(localStorage.getItem("test-prompts")||"[]");
+          var item={prompt:prompt,key:options&&options.queueKey||""};
+          var at=item.key?p.findIndex(x=>x.key===item.key):-1;
+          if(at===-1)p.push(item);else p[at]=item;
+          localStorage.setItem("test-prompts",JSON.stringify(p)); return true;
+        }
+        if(localStorage.getItem("test-queue-delay")==="1") return new Promise(r=>setTimeout(()=>r(accept()),80));
+        return accept();
       },
       sendQueuedPrompts:function(){
         if(localStorage.getItem("test-send-fail")==="1") throw new Error("send failed"); return true;
@@ -2211,7 +2216,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   })()`);
   assert(asynchronous.value === 'Frozen asynchronous answer' && asynchronous.textLocked
     && asynchronous.closeLocked && asynchronous.submitLocked && asynchronous.saved
-    && asynchronous.saved.queued && asynchronous.saved.queued.status === 'queuing',
+    && asynchronous.saved.queued && asynchronous.saved.queued.status === 'queuing'
+    && typeof asynchronous.saved.queued.attempt === 'string' && asynchronous.saved.queued.attempt,
     'an asynchronous enqueue attempt was not frozen and durably bound before acceptance: '+JSON.stringify(asynchronous));
   await reload(sid);
   const asynchronousRetry = await evaluate(sid, `(async()=>{
@@ -2220,12 +2226,14 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
     var restored={value:t.value,textLocked:t.disabled,closeLocked:b.querySelector('.rc-x').disabled,
       retry:!b.querySelector('.rc-go').disabled};
     b.querySelector('form[data-intent=answer]').requestSubmit(); await new Promise(r=>setTimeout(r,20));
+    var prompts=JSON.parse(localStorage.getItem('test-prompts')||'[]');
     return {restored,label:b.querySelector('[data-open=answer]').textContent,
-      prompts:JSON.parse(localStorage.getItem('test-prompts')||'[]').length};
+      prompts:prompts.length,key:prompts.length&&prompts[prompts.length-1].key};
   })()`);
   assert(asynchronousRetry.restored.value === 'Frozen asynchronous answer' && asynchronousRetry.restored.textLocked
     && asynchronousRetry.restored.closeLocked && asynchronousRetry.restored.retry
-    && asynchronousRetry.label === 'Answer sent' && asynchronousRetry.prompts === asynchronous.prompts,
+    && asynchronousRetry.label === 'Answer sent' && asynchronousRetry.prompts === asynchronous.prompts + 1
+    && asynchronousRetry.key === asynchronous.saved.queued.attempt,
     'reload during asynchronous queue acceptance re-queued or changed the frozen answer: '+JSON.stringify({asynchronous,asynchronousRetry}));
 
   const failed = await evaluate(sid, `(async()=>{
@@ -2336,6 +2344,110 @@ JS
   pass "decision prompts, private links, and reply acknowledgements behave coherently in a browser"
 }
 
+test_live_fleet_mobile_refresh_keeps_reading_position() {
+  local live_home=${FM_MISSION_CONTROL_LIVE_HOME:-} board chrome
+  if [ -z "$live_home" ]; then
+    [ "${FM_MISSION_CONTROL_REQUIRE_LIVE:-0}" = 1 ] \
+      && fail "FM_MISSION_CONTROL_LIVE_HOME is required for the live-fleet browser regression"
+    printf 'skip: FM_MISSION_CONTROL_LIVE_HOME not set for live-fleet browser regression\n'
+    return 0
+  fi
+  [ -f "$live_home/data/backlog.md" ] \
+    || fail "FM_MISSION_CONTROL_LIVE_HOME has no live backlog"
+  command -v node >/dev/null 2>&1 \
+    || fail "node is required for the live-fleet browser regression"
+  chrome=$(find_chrome) \
+    || fail "Chrome or Chromium is required for the live-fleet browser regression"
+  board=$TMP_ROOT/live-fleet-mobile-refresh.html
+  FM_HOME="$live_home" "$BOARD" --no-quota --controls --refresh 300 --out "$board" >/dev/null \
+    || fail "the live fleet board did not render"
+
+  node - "$chrome" "$board" "$BOARD" "$live_home" <<'JS' \
+    || fail "the privacy-safe live-fleet mobile refresh regression failed"
+const { spawn, spawnSync } = require("node:child_process");
+const { pathToFileURL } = require("node:url");
+const [chromePath, boardPath, boardBin, liveHome] = process.argv.slice(2);
+const chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--no-sandbox",
+  "--remote-debugging-pipe", `--user-data-dir=${boardPath}.live-profile`],
+  {stdio:["ignore","ignore","ignore","pipe","pipe"]});
+let buffer = ""; let nextId = 0; const pending = new Map();
+function send(method, params = {}, sessionId) { return new Promise((resolve) => {
+  const id = ++nextId; pending.set(id, resolve);
+  chrome.stdio[3].write(`${JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})})}\0`);
+}); }
+chrome.stdio[4].on("data", (chunk) => { buffer += chunk; let at;
+  while ((at = buffer.indexOf("\0")) >= 0) { const raw = buffer.slice(0, at); buffer = buffer.slice(at + 1);
+    if (!raw) continue; const message = JSON.parse(raw); const resolve = pending.get(message.id);
+    if (resolve) { pending.delete(message.id); resolve(message); } }
+});
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function evaluate(sessionId, expression) {
+  const result = await send("Runtime.evaluate", {expression,awaitPromise:true,returnByValue:true}, sessionId);
+  if (result.result.exceptionDetails) throw new Error("browser evaluation failed");
+  return result.result.result.value;
+}
+async function loaded(sessionId) {
+  for (let i=0;i<100;i++) { if (await evaluate(sessionId,"document.readyState") === "complete") return; await delay(20); }
+  throw new Error("live board load timed out");
+}
+function assert(ok, message) { if (!ok) throw new Error(message); }
+(async () => {
+  const created = await send("Target.createTarget", {url:"about:blank"});
+  const attached = await send("Target.attachToTarget", {targetId:created.result.targetId,flatten:true});
+  const sid = attached.result.sessionId;
+  await send("Page.enable", {}, sid);
+  await send("Runtime.enable", {}, sid);
+  await send("Emulation.setDeviceMetricsOverride", {width:390,height:844,deviceScaleFactor:1,mobile:true}, sid);
+  await send("Page.addScriptToEvaluateOnNewDocument", {source:`
+    window.__fmLiveFrameTops=[];
+    window.lavish={queuePrompt:function(){return true},sendQueuedPrompts:function(){return true}};
+    window.addEventListener('DOMContentLoaded',function(){var left=8;function sample(){
+      var state=null;try{state=JSON.parse(sessionStorage.getItem(window.__fmViewKey)||'null')}catch(e){}
+      var target=state&&typeof state.anchor==='string'?[...document.querySelectorAll('[data-scroll-anchor]')]
+        .find(x=>x.getAttribute('data-scroll-anchor')===state.anchor):null;
+      window.__fmLiveFrameTops.push(target?target.getBoundingClientRect().top:null);
+      if(--left>0)requestAnimationFrame(sample);
+    }requestAnimationFrame(sample)});`}, sid);
+  await send("Page.navigate", {url:pathToFileURL(boardPath).href}, sid);
+  await loaded(sid); await delay(200);
+  const before = await evaluate(sid, `(async()=>{
+    var tabs=[...document.querySelectorAll('[role=tab]')]; var best=null;
+    for(var tab of tabs){tab.click();await new Promise(r=>requestAnimationFrame(r));
+      var height=document.documentElement.scrollHeight;if(!best||height>best.height)best={id:tab.id,height:height};}
+    document.getElementById(best.id).click();await new Promise(r=>requestAnimationFrame(r));
+    var max=Math.max(0,document.documentElement.scrollHeight-innerHeight);
+    if(max<160)return {meaningful:false,max:max};
+    scrollTo(0,Math.max(120,Math.round(max*.55)));await new Promise(r=>requestAnimationFrame(r));
+    window.__fmSaveView();var state=JSON.parse(sessionStorage.getItem(window.__fmViewKey)||'null');
+    var target=state&&[...document.querySelectorAll('[data-scroll-anchor]')]
+      .find(x=>x.getAttribute('data-scroll-anchor')===state.anchor);
+    return {meaningful:!!target,y:scrollY,top:target&&target.getBoundingClientRect().top,tab:best.id};
+  })()`);
+  assert(before.meaningful && before.y >= 120, "live board lacks a meaningful mobile reading position");
+  const regenerated = spawnSync(boardBin, ["--no-quota","--controls","--refresh","300","--out",boardPath],
+    {env:{...process.env,FM_HOME:liveHome},stdio:"ignore"});
+  assert(regenerated.status === 0, "live board regeneration failed");
+  await send("Page.reload", {ignoreCache:true}, sid);
+  await loaded(sid); await delay(200);
+  const after = await evaluate(sid, `(()=>{
+    var state=JSON.parse(sessionStorage.getItem(window.__fmViewKey)||'null');
+    var target=state&&[...document.querySelectorAll('[data-scroll-anchor]')]
+      .find(x=>x.getAttribute('data-scroll-anchor')===state.anchor);
+    return {found:!!target,y:scrollY,top:target&&target.getBoundingClientRect().top,
+      classes:document.documentElement.className,
+      frames:window.__fmLiveFrameTops};
+  })()`);
+  assert(after.found && after.y >= 120, "live board lost its meaningful mobile reading position");
+  assert(documentTab(before.tab, after.classes), "live board lost its active tab");
+  assert(Math.abs(after.top-before.top)<=3, `live board anchor shifted by ${Math.abs(after.top-before.top)}px`);
+  const frames=after.frames.filter(x=>typeof x==="number");
+  assert(frames.length>0 && frames.every(x=>Math.abs(x-before.top)<=3), "live board jumped during early refresh frames");
+  function documentTab(tabId, classes){return classes.split(/\s+/).includes("t-"+tabId.replace(/^tab-/,""));}
+})().finally(() => chrome.kill()).catch((error) => { console.error(error.message); process.exitCode=1; });
+JS
+  pass "a privacy-safe live fleet stays anchored across regeneration and full reload"
+}
+
 test_control_targets_are_escaped() {
   local snap board
   snap=$TMP_ROOT/hostile-controls.json
@@ -2401,3 +2513,4 @@ test_controls_match_what_each_row_can_actually_resolve
 test_controls_can_only_queue_a_request
 test_control_targets_are_escaped
 test_decision_context_links_and_submission_state_in_a_browser
+test_live_fleet_mobile_refresh_keeps_reading_position

@@ -2386,6 +2386,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   }
   var draftKey = \"fm-mission-control-drafts-v1:\" + window.__fmBoardScope;
   var requestState = {};
+  var requestInFlight = {};
   function draftIdentity(block, intent) {
     return [block.getAttribute(\"data-home\") || \"main\",
       block.getAttribute(\"data-id\") || \"\", block.getAttribute(\"data-key\") || \"\", intent]
@@ -2414,7 +2415,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         if (!open && !note) { delete records[identity]; return; }
         records[identity] = {identity:identity,open:open,note:note};
         if (pending) {
-          records[identity].queued = {status:pending.status,payload:pending.payload,note:pending.note};
+          records[identity].queued = {status:pending.status,payload:pending.payload,
+            note:pending.note,attempt:pending.attempt};
         }
       });
     });
@@ -2440,12 +2442,12 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         if (area && typeof record.note === \"string\") { area.value = record.note; }
         if (record.open && form.hasAttribute(\"data-toggle\")) { shut(block); form.hidden = false; }
         if (record.queued && typeof record.queued.payload === \"string\"
-            && typeof record.queued.note === \"string\") {
-          /* A persisted enqueue attempt is an identity receipt: after a reload
-             this page may flush that exact payload, but it must never enqueue
-             another one. The bridge reports an empty flush as failure. */
+            && typeof record.queued.note === \"string\"
+            && typeof record.queued.attempt === \"string\" && record.queued.attempt) {
+          var status = record.queued.status === \"queuing\" ? \"queuing\" : \"queued\";
           requestState[record.identity] = {
-            status:\"queued\", payload:record.queued.payload, note:record.queued.note
+            status:status, payload:record.queued.payload, note:record.queued.note,
+            attempt:record.queued.attempt
           };
           keepQueuedPayload(block, form, requestState[record.identity]);
         }
@@ -2524,7 +2526,20 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     freezePayload(block, form, state);
     var submit = form.querySelector(\".rc-go\");
     if (submit) { submit.disabled = false; }
-    say(block, \"Queued but not sent - retry to send this saved answer.\", true);
+    say(block, state.status === \"queuing\"
+      ? \"Queue interrupted - retry this saved answer.\"
+      : \"Queued but not sent - retry to send this saved answer.\", true);
+  }
+
+  function newAttempt() {
+    var values = null;
+    try {
+      values = new Uint32Array(4);
+      window.crypto.getRandomValues(values);
+    } catch (e) { values = [Date.now(), Math.floor(Math.random() * 4294967296)]; }
+    return \"fm-board:\" + Array.prototype.map.call(values, function (value) {
+      return Number(value).toString(16);
+    }).join(\"-\");
   }
 
   document.addEventListener(\"click\", function (ev) {
@@ -2617,21 +2632,25 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     var submit = form.querySelector(\".rc-go\");
     var wire = \"FM-BOARD-REQUEST \" + JSON.stringify(request);
     var pending = requestState[requestIdentity];
-    if (pending && (pending.status === \"queuing\" || pending.status === \"sending\")) { return; }
-    if (pending && pending.status === \"queued\" && pending.payload !== wire) {
+    if (requestInFlight[requestIdentity]) { return; }
+    if (pending && pending.payload !== wire) {
       keepQueuedPayload(block, form, pending);
       saveDrafts();
       return;
     }
+    requestInFlight[requestIdentity] = true;
     try {
       if (!pending || pending.status !== \"queued\") {
-        pending = {status:\"queuing\",payload:wire,note:note};
-        requestState[requestIdentity] = pending;
+        if (!pending) {
+          pending = {status:\"queuing\",payload:wire,note:note,attempt:newAttempt()};
+          requestState[requestIdentity] = pending;
+        } else { pending.status = \"queuing\"; }
         freezePayload(block, form, pending);
         saveDrafts(true);
         var queued = lav.queuePrompt(wire, {
           tag: \"board-request\",
-          text: summary(request.intent, block.getAttribute(\"data-what\") || \"\")
+          text: summary(request.intent, block.getAttribute(\"data-what\") || \"\"),
+          queueKey: pending.attempt
         });
         if (queued && typeof queued.then === \"function\") { queued = await queued; }
         if (queued === false) { throw new Error(\"queue refused\"); }
@@ -2644,7 +2663,9 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       if (accepted && typeof accepted.then === \"function\") { accepted = await accepted; }
       if (accepted === false) { throw new Error(\"send refused\"); }
       delete requestState[requestIdentity];
+      delete requestInFlight[requestIdentity];
     } catch (e) {
+      delete requestInFlight[requestIdentity];
       if (pending && pending.status === \"queuing\") {
         delete requestState[requestIdentity];
         releasePayload(form);
