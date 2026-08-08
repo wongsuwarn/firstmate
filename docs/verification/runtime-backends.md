@@ -41,7 +41,7 @@ The redirection is attempted in `if ! { ... } > "$file"; then`, the failed compo
 The command above printed the redirection error, `THEN`, and `negated-final=0` on both 3.2.57 and 5.2.37.
 An explicit `||` guard detects the same redirection failure, but both conditional spellings disable `errexit` for commands inside the group, so a failed earlier write can be masked by a successful later command and leave partial output accepted as complete.
 
-The safe repository pattern is to construct every multi-field file completely in memory, write it with one checked simple-command redirection to a same-directory temporary file, and atomically promote that complete temporary file only after the write succeeds.
+The repository rule derived from this evidence is owned by [`firstmate-coding-guidelines`](../../.agents/skills/firstmate-coding-guidelines/SKILL.md#repo-style-rules).
 `bin/fm-spawn.sh` previously published every task's `state/<id>.meta` directly through a grouped redirection for all five spawn-capable backends, so an unchecked publication reported a successful spawn with no record on stock macOS Bash 3.2.
 `tests/fm-backend.test.sh` and `tests/fm-backend-orca.test.sh`, which cover that publication, are both selected only into the ubuntu-latest lanes (`bin/fm-test-run.sh --list --lane portable-serial`), and any runner carrying bash 5.1 or newer masks the defect.
 `tests/fm-backend.test.sh`'s `test_spawn_refuses_when_task_record_cannot_be_published` is the portable regression, and it asserts the script's own refusal diagnostic so it cannot pass vacuously on a shell whose `set -e` would have aborted anyway.
