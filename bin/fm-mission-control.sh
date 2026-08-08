@@ -1005,11 +1005,25 @@ def meta_block($line; $items):
     + "</div>"
   end;
 
+# Fleet records may name local evidence paths for an operator, but the generated
+# board is not a file server. Only an explicit web URL can navigate; everything
+# else stays escaped presentation context so a mobile tap cannot leave /mission
+# for a route that does not exist.
+def web_url_or_empty:
+  if type == "string" and test("^https?://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?#][^[:space:]\\\"<>]*)?$"; "i")
+  then . else "" end;
+
+def https_url_or_empty:
+  . as $candidate |
+  ($candidate | web_url_or_empty) as $url |
+  if ($url | ascii_downcase | startswith("https://")) then $url else "" end;
+
 def need_row:
   . as $w |
-  (($w.link // "") | if type == "string" then . else "" end) as $link |
-  (($w.decision_url // "") |
-    if type == "string" and test("^https://[^[:space:]\\\"<>]+$") then . else "" end) as $aid |
+  (($w.link // "") | if type == "string" then . else "" end) as $raw_link |
+  ($raw_link | web_url_or_empty) as $link |
+  (($w.decision_url // "") | https_url_or_empty) as $aid |
+  (if $raw_link != "" and $link == "" and $aid == "" then $raw_link else "" end) as $local_ref |
   (if $w.kind == "incomplete" then "Incomplete"
    elif ($w.repo // "") != "" then $w.repo
    elif ($w.home // "main") != "main" then $w.home
@@ -1025,7 +1039,9 @@ def need_row:
   + (@html "<span class=\"ask\">\($w.title)")
   + (if ($w.detail // "") == "" then "" else (@html "<span class=\"hint\">\($w.detail)</span>") end)
   + (if $ask_note == "" then "" else (@html "<span class=\"hint\">Awaiting \($ask_note).</span>") end)
-  + (if $link == "" then "" else (@html "<span class=\"url\">\($link)</span>") end)
+  + (if $link != "" then (@html "<span class=\"url\">\($link)</span>")
+     elif $local_ref != "" then (@html "<span class=\"url local-ref\">Local report: \($local_ref)</span>")
+     else "" end)
   + "</span>"
   + (if $link == "" then "<span class=\"go\"></span></span>"
      else "<span class=\"go\">&rsaquo;</span></a>" end)
@@ -1994,7 +2010,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
    elif ($shipped | length) == 0
    then "<p class=\"quiet\">Nothing landed yet today.</p>"
    else "<div class=\"shipped\">" + (($shipped | map(. as $d |
-     (($d.pr_url // $d.report_path // ($d.links // [])[0]) // "") as $link |
+     ((($d.pr_url // $d.report_path // ($d.links // [])[0]) // "") | web_url_or_empty) as $link |
      (if $link == "" then "<div class=\"ship\">" else (@html "<a class=\"ship\" href=\"\($link)\">") end)
      + icon_check
      + (@html "<span class=\"what\">\(dash($d.title // $d.raw))</span><span class=\"who\">\(dash(($d.repo // "") | short_repo))</span>")

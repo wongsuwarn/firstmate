@@ -1948,6 +1948,11 @@ test_decision_context_links_and_submission_state_in_a_browser() {
      "decision_url":"https://sample.tailnet.invalid/decision-aid","repo":"sample"},
     {"state":"queued","id":"d-fallback","captain_actionable":true,
      "title":"Choose the comparison layout","hold_reason":"Scanning speed trades off against explanation","repo":"sample"},
+    {"state":"queued","id":"local-lane-bakeoff-v2-powered-decision-widen-bounded-judgment-rung",
+     "captain_actionable":true,
+     "title":"Widen bounded-judgment dispatch rung to include ollama/qwen3.6:35b-fm? data/local-lane-bakeoff-v2-powered/report.md",
+     "hold_reason":"The powered benchmark missed the pre-agreed reliability bar.",
+     "report_path":"data/local-lane-bakeoff-v2-powered/report.md","repo":"firstmate"},
     {"state":"queued","id":"d-empty","captain_actionable":true,"title":"","hold_reason":"","repo":"sample"},
     {"state":"queued","id":"d-bad-link","captain_actionable":true,
      "title":"Choose without an aid","hold_reason":"The recorded link is unsupported",
@@ -2061,6 +2066,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       aids:[...document.querySelectorAll('.decision-aid')].map(a=>a.href),
       badAid:!!block('main','d-bad-link').closest('.need-wrap').querySelector('.decision-aid'),
       malformedAid:!!block('main','d-malformed-link').closest('.need-wrap').querySelector('.decision-aid'),
+      localReport:(()=>{var row=block('main','local-lane-bakeoff-v2-powered-decision-widen-bounded-judgment-rung').closest('.need-wrap');
+        var ref=row.querySelector('.local-ref'); return {text:ref&&ref.textContent,anchor:!!row.querySelector('a[href="data/local-lane-bakeoff-v2-powered/report.md"]')};})(),
       cards:document.querySelectorAll('.need-wrap').length
     };
   })()`);
@@ -2071,7 +2078,22 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(dom.hostile === 'Question " ><img src=x onerror=alert(1)> stays text?' && dom.injectedImages === 0, "hostile question escaped its text context");
   assert(dom.aids.includes("https://sample.tailnet.invalid/decision-aid") && dom.aids.includes("https://ios.tailnet.invalid/decision-aid"), "main or secondmate decision aid was missing");
   assert(dom.aids.includes("https://safe.invalid/?q=%22%3E%3Cscript%3E") && !dom.badAid && !dom.malformedAid, "valid hostile text or malformed link handling was wrong");
-  assert(dom.cards >= 7, "ordinary multi-card decision list did not render");
+  assert(dom.localReport.text === "Local report: data/local-lane-bakeoff-v2-powered/report.md" && !dom.localReport.anchor,
+    "the Qwen bounded-judgment report path was not preserved as non-clickable context");
+  assert(dom.cards >= 8, "ordinary multi-card decision list did not render");
+
+  await send("Emulation.setDeviceMetricsOverride", {width:390,height:844,deviceScaleFactor:1,mobile:true}, sid);
+  await send("Emulation.setTouchEmulationEnabled", {enabled:true,maxTouchPoints:1}, sid);
+  const mobileTap = await evaluate(sid, `(() => {var ref=document.querySelector('.local-ref'); ref.scrollIntoView({block:'center'});
+    var r=ref.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,before:location.href,anchor:!!ref.closest('a')};})()`);
+  assert(!mobileTap.anchor && mobileTap.x >= 0 && mobileTap.x <= 390 && mobileTap.y >= 0 && mobileTap.y <= 844,
+    "the Qwen local report context was not a visible non-link mobile target");
+  await send("Input.dispatchTouchEvent", {type:"touchStart",touchPoints:[{x:mobileTap.x,y:mobileTap.y}]}, sid);
+  await send("Input.dispatchTouchEvent", {type:"touchEnd",touchPoints:[]}, sid);
+  await delay(100);
+  assert(await evaluate(sid,"location.href") === mobileTap.before, "a real mobile tap on the local Qwen report path navigated away from /mission");
+  await send("Emulation.setTouchEmulationEnabled", {enabled:false}, sid);
+  await send("Emulation.clearDeviceMetricsOverride", {}, sid);
 
   await navigate(sid, readonlyPath);
   assert(await evaluate(sid,"document.querySelectorAll('.rc').length") === 0, "controls appeared when disabled");

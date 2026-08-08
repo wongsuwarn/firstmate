@@ -32,6 +32,7 @@ The stage itself is derived by the snapshot rather than by the board; see `bin/f
   That third source matters because a secondmate's decisions live in its backlog and never appear in this home's, so a board built from the local backlog alone would silently drop them.
   Each row names the home it came from when that home is not the main one.
   A structured HTTPS decision aid appears as its own readable link and remains on its recorded private host.
+  Only valid HTTP or HTTPS references are clickable; a local report path such as `data/example/report.md` remains non-clickable context when no explicit served HTTPS aid exists, because the board does not serve fleet-local files.
   The board never probes, publishes, mounts, or rewrites that destination.
   Bounded or unavailable secondmate registries, omitted homes, and registered homes whose decisions could not be read all mark the waiting status incomplete.
   Credential and login needs are not detected and are not faked.
