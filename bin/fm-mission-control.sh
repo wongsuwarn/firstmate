@@ -820,7 +820,10 @@ def work_row:
 # a remainder smaller than the truth on exactly the busiest card.
 def work_list($items; $total):
   ($items // []) as $all |
-  ([($total // 0), ($all | length)] | max) as $count |
+  # The total reaching this list belongs to another producer, so it is proven to
+  # be a number before anything is counted against it.
+  (($total // 0) | if type == "number" then floor else 0 end) as $claimed |
+  ([$claimed, ($all | length)] | max) as $count |
   if ($all | length) == 0 then ""
   else
     "<div class=\"wi-list\">"
