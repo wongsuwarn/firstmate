@@ -117,7 +117,7 @@ validate_one_line() {  # <label> <value>
 }
 
 validate_decision_url() {  # <url>
-  local url=$1 authority
+  local url=$1
   validate_one_line decision-url "$url"
   [ "$(printf '%s' "$url" | LC_ALL=C wc -c | tr -d ' ')" -le 2000 ] \
     || fail "decision-url exceeds 2000 bytes"
@@ -125,10 +125,10 @@ validate_decision_url() {  # <url>
     https://*) ;;
     *) fail "decision-url must use https://" ;;
   esac
-  authority=${url#https://}
-  case "$authority" in
-    ''|/*|*[[:space:]\"\<\>]*) fail "decision-url is malformed" ;;
-  esac
+  command -v jq >/dev/null 2>&1 || fail "jq is required"
+  jq -n -L "$SCRIPT_DIR" -e --arg url "$url" \
+    'include "fm-web-url"; $url | valid_web_url' >/dev/null 2>&1 \
+    || fail "decision-url is malformed"
 }
 
 sha256_text() {  # <text>

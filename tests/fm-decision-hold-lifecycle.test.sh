@@ -923,7 +923,7 @@ EOF
 }
 
 test_decision_question_and_private_link_use_the_supported_hold_interface() {
-  local home origin hold out question summary show
+  local home origin hold out question summary show bad_url good_url
   home=$(make_home decision-context)
   origin=sample-context-review
   mkdir -p "$home/data/$origin"
@@ -968,9 +968,30 @@ test_decision_question_and_private_link_use_the_supported_hold_interface() {
     > "$home/http-link.out" 2> "$home/http-link.err"; then
     fail "the decision link interface accepted a non-HTTPS URL"
   fi
+  for bad_url in \
+    'https://[::::]/aid' \
+    'https://captain:secret@sample.invalid/aid' \
+    'https://sample.invalid:99999/aid'
+  do
+    if run_decisions "$home" link "$origin" emphasis --url "$bad_url" \
+      > "$home/malformed-link.out" 2> "$home/malformed-link.err"; then
+      fail "the decision link interface accepted malformed URL $bad_url"
+    fi
+  done
   show=$(tasks_in "$home" show "$hold" --full)
   assert_contains "$show" 'Decision URL: https://sample.tailnet.invalid/revised-aid' \
     "a refused link changed the existing private URL"
+  for good_url in \
+    'https://decision.example.com./aid' \
+    'https://192.0.2.1/aid' \
+    'https://[fd00::1]/aid'
+  do
+    run_decisions "$home" link "$origin" emphasis --url "$good_url" >/dev/null \
+      || fail "the decision link interface rejected valid URL $good_url"
+  done
+  show=$(tasks_in "$home" show "$hold" --full)
+  assert_contains "$show" 'Decision URL: https://[fd00::1]/aid' \
+    "valid decision URLs were not preserved exactly"
   pass "exact questions and private HTTPS links use one supported hold interface across homes"
 }
 
