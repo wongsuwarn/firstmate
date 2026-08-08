@@ -32,10 +32,13 @@
 #     state, source, detail, and raw line separately.
 #     current_state.stage is the derived lifecycle position: {ordinal,of,label,
 #     motion} on a fixed five-rung Setup/Building/Validating/Checks/Ready scale,
-#     with motion one of live, waiting, stopped, done, or unknown. A rung is a
-#     position live state can prove and carries NO completion estimate; ordinal 0
-#     means the stage is unconfirmed. Renderers show this rather than deriving a
-#     stage from current_state.detail prose themselves.
+#     with motion one of live, ready, waiting, stopped, done, or unknown. Setup
+#     requires present metadata and a live recorded endpoint with no observed
+#     activity. Ready is checks-green work awaiting the captain and is distinct
+#     from terminal Done. A rung is a position live state can prove and carries
+#     NO completion estimate; ordinal 0 means the stage is unconfirmed. Renderers
+#     show this rather than deriving a stage from current_state.detail prose
+#     themselves.
 #     paths.status_log.last_event is historical wake-event data only, never
 #     current state.
 #     hints.open_decisions is the keyed open-decision set returned by
@@ -213,8 +216,8 @@ last_nonempty_line() {  # <file>
   grep -v '^[[:space:]]*$' "$1" 2>/dev/null | tail -1
 }
 
-crew_state_json() {  # <id>
-  local id=$1 raw rest state source detail sep
+crew_state_json() {  # <id> <setup-proven-json>
+  local id=$1 setup_proven=$2 raw rest state source detail sep parsed=0
   raw=$(
     FM_ROOT_OVERRIDE="$FM_ROOT" \
       FM_HOME="$FM_HOME" \
@@ -231,6 +234,7 @@ crew_state_json() {  # <id>
   detail=
   case "$raw" in
     state:\ *"$sep"source:\ *)
+      parsed=1
       rest=${raw#state: }
       state=${rest%%"$sep"source: *}
       rest=${rest#*"$sep"source: }
@@ -240,7 +244,8 @@ crew_state_json() {  # <id>
       esac
       ;;
   esac
-  jq -n --arg raw "$raw" --arg state "$state" --arg source "$source" --arg detail "$detail" '
+  jq -n --arg raw "$raw" --arg state "$state" --arg source "$source" --arg detail "$detail" \
+    --argjson parsed "$(bool_json "$parsed")" --argjson setup_proven "$setup_proven" '
     # How far this task has travelled along the delivery ladder, as an ordinal on
     # a fixed five-rung scale plus how it is currently moving. It is derived here,
     # beside the state/source/detail parse it already shares an owner with, so a
@@ -248,14 +253,17 @@ crew_state_json() {  # <id>
     #
     # The scale is deliberately coarse and carries NO completion estimate: a rung
     # is a lifecycle position that live state can prove, never a fraction of the
-    # work done. Setup is a task with no activity source yet, Building is a worker
-    # active before validation, Validating is an attributed run, Checks is that
-    # run in CI, and Ready is checks green or better.
+    # work done. Setup is a task with a verified live endpoint but no observed
+    # activity source yet, Building is a worker active before validation,
+    # Validating is an attributed run, Checks is that run in CI, and Ready is
+    # checks green while awaiting review or merge.
     #
-    # `state` alone fixes the rung a task is entitled to and how it is moving.
-    # `detail` only ever REFINES within that, and every refinement falls back to a
-    # LOWER rung when fm-crew-state.sh rewords itself, so wording drift can lose
-    # precision but can never overstate progress.
+    # Reconciled state fixes every rung after Setup and how the task is moving.
+    # Metadata iteration, endpoint liveness, and the absence of both semantic
+    # activity and status-event records admit Setup only while reconciled state
+    # remains unknown. `detail` only ever REFINES within those bounds, and every
+    # refinement falls back to a LOWER rung when fm-crew-state.sh rewords itself,
+    # so wording drift can lose precision but can never overstate progress.
     (if $source == "run-step" then 3
      elif $source == "pane" or $source == "status-log" then 2
      else 1 end) as $reached |
@@ -265,14 +273,16 @@ crew_state_json() {  # <id>
           else {ordinal: 3, label: "Validating"} end) + {motion: "live"}
        elif $source == "pane" or $source == "status-log" then
          {ordinal: 2, label: "Building", motion: "live"}
-       else {ordinal: 1, label: "Starting up", motion: "live"} end
+       else {ordinal: 0, label: "Stage unconfirmed", motion: "unknown"} end
      elif $state == "done" then
-       (if ($detail | test("checks green")) then {label: "Checks green"}
-        else {label: "Done"} end) + {ordinal: 5, motion: "done"}
+       (if ($detail | test("checks green")) then {ordinal: 5, label: "Checks green", motion: "ready"}
+        else {ordinal: 5, label: "Done", motion: "done"} end)
      elif $state == "parked" then {ordinal: $reached, label: "Waiting on a decision", motion: "waiting"}
      elif $state == "paused" then {ordinal: $reached, label: "Paused", motion: "waiting"}
      elif $state == "blocked" then {ordinal: $reached, label: "Blocked", motion: "stopped"}
      elif $state == "failed" then {ordinal: $reached, label: "Failed", motion: "stopped"}
+     elif $parsed and $state == "unknown" and $setup_proven then
+       {ordinal: 1, label: "Setup", motion: "live"}
      else {ordinal: 0, label: "Stage unconfirmed", motion: "unknown"} end) as $stage |
     {state: $state, source: $source, detail: $detail, raw: $raw,
      stage: ($stage + {of: 5})}'
@@ -461,7 +471,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
 task_json_lines() {
   local meta id kind harness model mode yolo project worktree home projects backend target status_log report_path
   local remote_host remote_root remote_state remote_rc remote_home_present
-  local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
+  local pr pr_source event_json current_json endpoint_exists agent_alive setup_proven activity_observed meta_json status_json report_json worktree_json home_json
   local last_event_raw current_state current_source pending_decision blocked_event report_present=0 pr_from_status
   local open_decisions_tsv open_decisions_json
 
@@ -502,7 +512,50 @@ task_json_lines() {
       pr_source=absent
     fi
 
-    current_json=$(crew_state_json "$id")
+    endpoint_exists=null
+    agent_alive=not_checked
+    if [ -n "$remote_host" ]; then
+      if remote_state=$(run_timed "$FM_SNAPSHOT_SECONDMATE_TIMEOUT" \
+        "$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh state "$id" < /dev/null 2>/dev/null); then
+        remote_rc=0
+      else
+        remote_rc=$?
+      fi
+      if [ "$remote_rc" -eq 0 ]; then
+        remote_home_present=true
+        remote_state=$(printf '%s\n' "$remote_state" | tail -1)
+        case "$remote_state" in
+          alive) endpoint_exists=true; agent_alive=alive ;;
+          dead) endpoint_exists=true; agent_alive=dead ;;
+          missing) endpoint_exists=false; agent_alive=dead ;;
+          *) endpoint_exists=null; agent_alive=unknown ;;
+        esac
+      else
+        endpoint_exists=null
+        agent_alive=unknown
+      fi
+    else
+      if [ -n "$target" ]; then
+        if fm_backend_target_exists "$backend" "$target" "fm-$id" >/dev/null 2>&1; then
+          endpoint_exists=true
+        else
+          endpoint_exists=false
+        fi
+      fi
+      if [ "$kind" = secondmate ] && [ -n "$target" ]; then
+        agent_alive=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || printf unknown)
+      fi
+    fi
+
+    activity_observed=false
+    if [ -s "$STATE/$id.busy-state" ] || last_nonempty_line "$status_log" >/dev/null 2>&1; then
+      activity_observed=true
+    fi
+    setup_proven=false
+    if [ "$endpoint_exists" = true ] && { [ "$kind" != secondmate ] || [ "$agent_alive" = alive ]; }; then
+      [ "$activity_observed" = true ] || setup_proven=true
+    fi
+    current_json=$(crew_state_json "$id" "$setup_proven")
     event_json=$(status_event_json "$status_log")
     last_event_raw=$(printf '%s' "$event_json" | jq -r '.last_event.raw // ""')
     current_state=$(printf '%s' "$current_json" | jq -r '.state // ""')
@@ -538,41 +591,6 @@ task_json_lines() {
         | select(. != null) ]')
     pending_decision=$(printf '%s' "$open_decisions_json" | jq 'if any(.[]; .verb == "needs-decision") then 1 else 0 end')
     blocked_event=$(printf '%s' "$open_decisions_json" | jq 'if any(.[]; .verb == "blocked") then 1 else 0 end')
-
-    endpoint_exists=null
-    agent_alive=not_checked
-    if [ -n "$remote_host" ]; then
-      if remote_state=$(run_timed "$FM_SNAPSHOT_SECONDMATE_TIMEOUT" \
-        "$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh state "$id" < /dev/null 2>/dev/null); then
-        remote_rc=0
-      else
-        remote_rc=$?
-      fi
-      if [ "$remote_rc" -eq 0 ]; then
-        remote_home_present=true
-        remote_state=$(printf '%s\n' "$remote_state" | tail -1)
-        case "$remote_state" in
-          alive) endpoint_exists=true; agent_alive=alive ;;
-          dead) endpoint_exists=true; agent_alive=dead ;;
-          missing) endpoint_exists=false; agent_alive=dead ;;
-          *) endpoint_exists=null; agent_alive=unknown ;;
-        esac
-      else
-        endpoint_exists=null
-        agent_alive=unknown
-      fi
-    else
-      if [ -n "$target" ]; then
-        if fm_backend_target_exists "$backend" "$target" "fm-$id" >/dev/null 2>&1; then
-          endpoint_exists=true
-        else
-          endpoint_exists=false
-        fi
-      fi
-      if [ "$kind" = secondmate ] && [ -n "$target" ]; then
-        agent_alive=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || printf unknown)
-      fi
-    fi
 
     [ -f "$report_path" ] && report_present=1 || report_present=0
     meta_json=$(path_present_json "$meta")

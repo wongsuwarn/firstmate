@@ -227,6 +227,29 @@ test_stalled_items_do_not_read_as_progress() {
   pass "a stalled item keeps its rung but never reads as progress"
 }
 
+# Ready has reached the top rung but still awaits the captain, while Done is
+# terminal. Position alone cannot distinguish them, so their tones must.
+test_ready_and_done_use_distinct_tones() {
+  local snap board
+  snap=$TMP_ROOT/ready-done.json
+  board=$TMP_ROOT/ready-done.html
+  snapshot_json "[$(in_flight_record ready 'Review the green PR' alpha),
+                  $(in_flight_record done 'Merged delivery' alpha)]" '[]' \
+    "[$(live_task ready 'Review the green PR' alpha claude-opus-5 5 'Checks green' ready),
+      $(live_task done 'Merged delivery' alpha claude-opus-5 5 Done done)]" \
+    > "$snap"
+
+  "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
+    || fail "ready and done stages must render"
+  assert_grep 'class="wi-bar m-ready" role="img" aria-label="Stage 5 of 5: Checks green"' "$board" \
+    "green checks awaiting the captain must use the ready tone"
+  assert_grep 'class="wi-stage m-ready">Checks green</span>' "$board" \
+    "the ready label must use the same bounded tone as its ladder"
+  assert_grep 'class="wi-bar m-done" role="img" aria-label="Stage 5 of 5: Done"' "$board" \
+    "terminal work must retain the done tone"
+  pass "ready work is toned apart from completed work"
+}
+
 # A model id is a dispatch identifier. The captain reads a name.
 test_model_ids_are_shown_as_readable_names() {
   local snap board
@@ -338,10 +361,10 @@ test_out_of_range_stage_values_are_bounded_before_they_are_drawn() {
   pass "stage values from another home are bounded before the ladder is drawn"
 }
 
-# A card long enough to stop being readable is shortened in view. The count above
-# it is never capped, so the shortening has to say so or the list reads complete.
-test_long_item_list_is_shortened_without_hiding_the_count() {
-  local snap board records tasks i
+# A card keeps its common case open at a glance but must retain every received
+# row. Overflow therefore belongs in the board's expandable shelf idiom.
+test_long_item_list_keeps_every_item_in_an_expandable_shelf() {
+  local snap board records tasks i bar_count model_count
   snap=$TMP_ROOT/many.json
   board=$TMP_ROOT/many.html
   records=""
@@ -356,17 +379,24 @@ test_long_item_list_is_shortened_without_hiding_the_count() {
   "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
     || fail "a card with many in-progress items must render"
   assert_grep '8 tasks under way' "$board" "the full count must never be capped"
-  assert_grep 'Task number 6' "$board" "the listed items must reach the cap"
-  assert_no_grep 'Task number 7' "$board" "a shortened list must actually be shortened"
-  assert_grep '2 more under way, not listed here.' "$board" \
-    "a shortened list must state what it left out"
-  pass "a long item list is shortened in view but never silently"
+  assert_grep 'Task number 6' "$board" "the open item list must reach the shelf boundary"
+  assert_grep '<details class="shelf"><summary>' "$board" \
+    "overflow must reuse the board's expandable shelf"
+  assert_grep '<span class="stitle">More in progress</span><span class="scount">2 more</span>' "$board" \
+    "the shelf summary must state how many received rows it contains"
+  assert_grep 'Task number 7' "$board" "the first shelved item must remain in the page"
+  assert_grep 'Task number 8' "$board" "every received item must remain in the page"
+  bar_count=$(grep -o 'aria-label="Stage 2 of 5: Building"' "$board" | wc -l | tr -d ' ')
+  [ "$bar_count" = 8 ] || fail "every received item must retain its stage ladder, got $bar_count"
+  model_count=$(grep -o '<span class="wi-model">Opus 5</span>' "$board" | wc -l | tr -d ' ')
+  [ "$model_count" = 8 ] || fail "every received item must retain its model label, got $model_count"
+  assert_no_grep 'not listed here' "$board" "received rows must never be described as unlisted"
+  pass "a long item list keeps every received row in an expandable shelf"
 }
 
-# A second mate home bounds its own reported children before this board sees
-# them, so two different shortenings stack on one card. Counting the remainder
-# against the rows that arrived would understate it on exactly the busiest card.
-test_shortened_list_counts_against_the_authoritative_total() {
+# A second mate home can bound its children before the board sees them. Those
+# unavailable rows are distinct from received rows placed in the local shelf.
+test_upstream_omissions_stay_distinct_from_shelved_items() {
   local snap board children i
   snap=$TMP_ROOT/stacked.json
   board=$TMP_ROOT/stacked.html
@@ -389,15 +419,15 @@ test_shortened_list_counts_against_the_authoritative_total() {
 
   "$BOARD" --snapshot "$snap" --no-quota --out "$board" >/dev/null \
     || fail "a card whose home already bounded its children must render"
-  # 6 listed of 20 really under way: the remainder is 14, not the 2 that would
-  # come from counting only the 8 rows that reached this board.
-  assert_grep '14 more under way, not listed here.' "$board" \
-    "the remainder must be counted against the real total, not against the rows that arrived"
-  assert_no_grep '2 more under way, not listed here.' "$board" \
-    "counting only the delivered rows would understate what the captain cannot see"
+  assert_grep '<span class="stitle">More in progress</span><span class="scount">2 more</span>' "$board" \
+    "the shelf must count only the received rows it contains"
+  assert_grep 'Routed task 8' "$board" \
+    "every child row received from the second mate must remain available"
+  assert_grep '12 more active tasks were not included in this snapshot.' "$board" \
+    "the upstream omission must be disclosed without mixing it into the shelf count"
   assert_grep '20 active tasks (8 shown)' "$board" \
     "the home bound must stay separately disclosed on the card"
-  pass "a shortened list counts its remainder against the authoritative total"
+  pass "upstream omissions stay distinct from received rows in the shelf"
 }
 
 test_renders_live_fixture_home() {
@@ -1448,11 +1478,12 @@ test_control_targets_are_escaped() {
 
 test_in_progress_items_are_listed_with_stage_and_model
 test_stalled_items_do_not_read_as_progress
+test_ready_and_done_use_distinct_tones
 test_model_ids_are_shown_as_readable_names
 test_unrecorded_item_facts_are_disclosed_rather_than_blanked
 test_out_of_range_stage_values_are_bounded_before_they_are_drawn
-test_long_item_list_is_shortened_without_hiding_the_count
-test_shortened_list_counts_against_the_authoritative_total
+test_long_item_list_keeps_every_item_in_an_expandable_shelf
+test_upstream_omissions_stay_distinct_from_shelved_items
 test_renders_live_fixture_home
 test_project_last_change_comes_from_the_clone
 test_yesterday_uses_local_calendar_arithmetic

@@ -626,7 +626,7 @@ exit 0
 SH
   cat > "$fb/tmux" <<'SH'
 #!/usr/bin/env bash
-exit 0
+exit "${FM_FAKE_TMUX_RC:-0}"
 SH
   chmod +x "$fb/no-mistakes" "$fb/tmux"
   printf '%s\n' "$fb"
@@ -662,7 +662,8 @@ test_lifecycle_stage_is_derived_from_live_state() {
     "mode=no-mistakes"
 
   # A run attributed and validating sits mid-ladder.
-  export FM_FAKE_AXI_STATUS FM_FAKE_CI_LOGS
+  export FM_FAKE_AXI_STATUS FM_FAKE_CI_LOGS FM_FAKE_TMUX_RC
+  FM_FAKE_TMUX_RC=0
   FM_FAKE_AXI_STATUS="run:
   id: \"01RUN\"
   branch: fm/stage
@@ -686,6 +687,12 @@ test_lifecycle_stage_is_derived_from_live_state() {
   stage=$(stage_of "$home" stage-task)
   printf '%s' "$stage" | jq -e '.ordinal == 4 and .motion == "live"' >/dev/null \
     || fail "a run in CI must sit at rung 4 of 5: $stage"
+
+  # Green checks awaiting review or merge have reached Ready but are not Done.
+  FM_FAKE_CI_LOGS="all CI checks passed - still monitoring until merged or closed"
+  stage=$(stage_of "$home" stage-task)
+  printf '%s' "$stage" | jq -e '.ordinal == 5 and .label == "Checks green" and .motion == "ready"' >/dev/null \
+    || fail "green checks awaiting the captain must be ready rather than done: $stage"
 
   # Parked at a gate keeps the rung it reached but stops reading as moving, so a
   # card cannot show a decision that is waiting on the captain as progress.
@@ -712,16 +719,24 @@ gate: review"
   head: \"$head\"
   pr: \"https://github.com/example/alpha/pull/3\"
   findings: none"
+  FM_FAKE_CI_LOGS=""
   stage=$(stage_of "$home" stage-task)
   printf '%s' "$stage" | jq -e '.ordinal == 5 and .motion == "done"' >/dev/null \
     || fail "a passed run must top the ladder: $stage"
 
-  # No attributable run and no readable activity proves nothing, so the ladder
-  # claims nothing rather than showing an honest-looking empty bar.
+  # Present metadata plus a verified live endpoint, with no observed activity,
+  # proves only Setup and no later rung.
   FM_FAKE_AXI_STATUS=""
   stage=$(stage_of "$home" stage-task)
+  printf '%s' "$stage" | jq -e '.ordinal == 1 and .label == "Setup" and .motion == "live"' >/dev/null \
+    || fail "a live worker with no observed activity must sit at Setup: $stage"
+
+  # An absent or unreadable endpoint cannot prove Setup from metadata alone.
+  FM_FAKE_TMUX_RC=1
+  stage=$(stage_of "$home" stage-task)
   printf '%s' "$stage" | jq -e '.ordinal == 0 and .motion == "unknown"' >/dev/null \
-    || fail "an unreadable task must claim no rung at all: $stage"
+    || fail "a task without a verifiably live endpoint must claim no rung at all: $stage"
+  unset FM_FAKE_TMUX_RC
   pass "the lifecycle stage is derived from live state, one rung per proven step"
 }
 

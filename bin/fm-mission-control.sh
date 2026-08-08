@@ -26,6 +26,9 @@
 # the stage name, so it reads as "this has reached Validating" and never as a
 # fraction of the work done. The stage itself is never re-derived here; the
 # snapshot owns it, as it owns every other piece of fleet state on this page.
+# The first six items stay open at a glance and every additional received item
+# remains available in the same expandable shelf idiom as Deferred. Rows omitted
+# upstream remain disclosed separately and are never presented as shelf contents.
 #
 # A captain decision the captain has consciously set aside leaves "Awaiting your
 # decision" and its count, and appears in the quiet, closed-by-default Deferred
@@ -401,9 +404,8 @@ def readable_model($raw):
     end
   end;
 
-# The most in-progress items one card lists before it stops being readable at a
-# glance. The count above the list is never capped, and the overflow is stated
-# outright, so a longer list is shortened in view but never silently.
+# The most in-progress items one card keeps open before moving additional
+# received rows into an expandable shelf. No row the board receives is hidden.
 6 as $items_per_card |
 
 # One in-progress item as the card renders it: what it is, how far along the
@@ -796,7 +798,7 @@ def work_row:
   (if $st == null then "Stage unavailable"
    else (($st.label // "Stage unconfirmed") | if type == "string" and . != "" then . else "Stage unconfirmed" end) end) as $label |
   ((if $st == null then "unknown" else ($st.motion // "unknown") end)
-   | if IN("live", "waiting", "stopped", "done", "unknown") then . else "unknown" end) as $motion |
+   | if IN("live", "ready", "waiting", "stopped", "done", "unknown") then . else "unknown" end) as $motion |
   (if $ord > 0 then "Stage \($ord) of \($of): \($label)" else $label end) as $bar_label |
   "<div class=\"wi\">"
   + "<div class=\"wi-head\">"
@@ -811,25 +813,34 @@ def work_row:
   + (@html "<span class=\"wi-stage m-\($motion)\">\($label)</span>")
   + "</div></div>";
 
-# The list a card shows beneath its count. The count above it is never capped, so
-# a shortened list states what it left out rather than reading as complete.
-#
-# The remainder is counted against the AUTHORITATIVE total on the card, not against
-# the rows that happened to arrive. A second mate home can bound its own reported
-# children before this board ever sees them, so counting the arrivals would state
-# a remainder smaller than the truth on exactly the busiest card.
+# The list a card shows beneath its count. The first rows stay visible and every
+# additional row received by the board remains available in an expandable shelf.
+# A second mate home can bound its own reported children before this board sees
+# them, so any difference from the authoritative total is disclosed as upstream
+# omission rather than being mixed into the received-row shelf count.
 def work_list($items; $total):
   ($items // []) as $all |
   # The total reaching this list belongs to another producer, so it is proven to
   # be a number before anything is counted against it.
   (($total // 0) | if type == "number" then floor else 0 end) as $claimed |
   ([$claimed, ($all | length)] | max) as $count |
+  ($all[0:$items_per_card]) as $visible |
+  ($all[$items_per_card:]) as $shelved |
   if ($all | length) == 0 then ""
   else
     "<div class=\"wi-list\">"
-    + (($all[0:$items_per_card] | map(work_row) | add) // "")
-    + (if $count > ($all[0:$items_per_card] | length)
-       then (@html "<p class=\"wi-more\">\($count - ($all[0:$items_per_card] | length)) more under way, not listed here.</p>")
+    + (($visible | map(work_row) | add) // "")
+    + (if ($shelved | length) > 0 then
+         "<details class=\"shelf\"><summary>"
+         + "<svg class=\"chev\" viewBox=\"0 0 24 24\"><polyline points=\"9 6 15 12 9 18\"/></svg>"
+         + "<span class=\"stitle\">More in progress</span>"
+         + (@html "<span class=\"scount\">\($shelved | length) more</span>")
+         + "</summary><div class=\"shelf-body\"><div class=\"shelf-note\"><div class=\"wi-list\">"
+         + (($shelved | map(work_row) | add) // "")
+         + "</div></div></div></details>"
+       else "" end)
+    + (if $count > ($all | length)
+       then (@html "<p class=\"wi-more\">\($count - ($all | length)) more active tasks were not included in this snapshot.</p>")
        else "" end)
     + "</div>"
   end;
@@ -1319,13 +1330,13 @@ a.need:hover{background:#fbfcfe;}
 .wi-bar{display:flex;gap:3px;flex:0 0 92px;}
 .wi-bar i{flex:1 1 0;height:5px;border-radius:2px;background:#e3e7ee;}
 .wi-bar.m-live i.on,.wi-bar.m-done i.on{background:var(--green);}
-.wi-bar.m-waiting i.on{background:var(--amber);}
+.wi-bar.m-ready i.on,.wi-bar.m-waiting i.on{background:var(--amber);}
 .wi-bar.m-stopped i.on{background:var(--red);}
 /* Nothing is proven about an unconfirmed stage, so no rung is filled and the
    empty ladder is hatched rather than left looking like honest zero progress. */
 .wi-bar.m-unknown i{background:repeating-linear-gradient(90deg,#c9d0da 0 2px,transparent 2px 5px);}
 .wi-stage{flex:1 1 auto;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere;}
-.wi-stage.m-waiting{color:var(--amber);}
+.wi-stage.m-ready,.wi-stage.m-waiting{color:var(--amber);}
 .wi-stage.m-stopped{color:var(--red);}
 .wi-more{margin:0;font-size:11.5px;color:var(--faint);}
 
