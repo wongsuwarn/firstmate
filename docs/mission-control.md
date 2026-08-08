@@ -164,9 +164,8 @@ Reading a project clone's history is the only thing the board does to a project,
 A backlog row may record its project as a bare name or as a full clone path.
 Both name the same project, so both fold onto the same rollup row and display as the project name.
 
-`bin/fm-decision-hold.sh hold --question ... --decision-url https://...` records exact decision context when the hold is created.
-`bin/fm-decision-hold.sh link <origin-id> <decision-key> --url https://...` is the supported backfill for an existing hold in its owning `FM_HOME`.
-The canonical backlog parser and secondmate-home summary carry those fields to renderers, so Mission Control does not parse private body conventions itself.
+[`docs/decision-hold-lifecycle.md`](decision-hold-lifecycle.md) owns how exact decision context is recorded and backfilled through the supported hold interface.
+The canonical backlog parser and secondmate-home summary carry that context to renderers, so Mission Control does not parse private body conventions itself.
 
 Every value that comes from fleet state, the registry, or either allowance source is HTML-escaped before it reaches the page.
 

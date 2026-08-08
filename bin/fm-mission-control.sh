@@ -2482,10 +2482,12 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       });
     });
     try {
-      for (var i = window.localStorage.length - 1; i >= 0; i--) {
+      var stale = [];
+      for (var i = 0; i < window.localStorage.length; i++) {
         var key = window.localStorage.key(i);
-        if (key && key.indexOf(ackPrefix) === 0 && !current[key]) { window.localStorage.removeItem(key); }
+        if (key && key.indexOf(ackPrefix) === 0 && !current[key]) { stale.push(key); }
       }
+      stale.forEach(function (key) { window.localStorage.removeItem(key); });
     } catch (e) { /* stale presentation memory retires on a later load */ }
   }
   restoreAcks();
