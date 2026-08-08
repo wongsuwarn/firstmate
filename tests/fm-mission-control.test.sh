@@ -1334,9 +1334,9 @@ test_secondmate_child_count_shapes_render_safely() {
     "a valid numeric count must retain its omission semantics"
   assert_grep 'Idle and healthy, awaiting routed work.' "$board" \
     "a valid zero must retain the ready secondmate state"
-  assert_grep '1 task routed and under way' "$board" \
+  assert_grep '<div class="proj-state">1 task routed and under way</div>' "$board" \
     "a missing count must fall back to the complete rows an older producer supplied"
-  assert_grep 'At least 1 task routed and under way' "$board" \
+  assert_grep '<div class="proj-state">At least 1 task routed and under way</div>' "$board" \
     "a malformed count with one row must make the card state a lower bound"
   assert_grep 'Active task count unavailable (1 shown)' "$board" \
     "a malformed count must disclose that its visible row is not an authoritative total"
