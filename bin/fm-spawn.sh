@@ -392,6 +392,10 @@ spawn_remote_secondmate() {
   local -a launch_args
   id=${POS[0]:-}
   fm_task_id_creation_valid "$id" || { echo "error: invalid task id" >&2; return 2; }
+  if [ -n "${FM_SPAWN_RESTART_TASK_LOCK_OWNER:-}" ] \
+    || [ -n "${FM_SPAWN_RESTART_REGISTRY_LOCK_OWNER:-}" ]; then
+    return 3
+  fi
   if [ "$REMOTE_CONTROL" -eq 1 ]; then
     remote=$(secondmate_registry_field "$DATA/secondmates.md" "$id" remote 2>/dev/null || true)
     if [ "$remote" = 1 ]; then
@@ -703,6 +707,9 @@ SPAWN_TASK_LOCK=
 SPAWN_TASK_LOCK_HELD=0
 CONFIG_INHERIT_LOCK=
 CONFIG_INHERIT_LOCK_HELD=0
+SPAWN_REGISTRY_LOCK=
+SPAWN_REGISTRY_LOCK_HELD=0
+SPAWN_RESTART_HANDOFF=0
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -722,7 +729,7 @@ parse_orca_worktree_result() {
 }
 
 spawn_abort_cleanup() {
-  local status=$?
+  local status=$? restart_backup
   if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] \
      && [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
     if ! spawn_herdr_presentation_order_lock_acquire "${HERDR_PROJECTION_ABORT_SESSION:-}"; then
@@ -786,6 +793,17 @@ spawn_abort_cleanup() {
       mv -f "$RESUME_META_BACKUP" "$STATE/$ID.meta" 2>/dev/null \
         || echo "warning: could not restore the previous task record for $ID; it is preserved at $RESUME_META_BACKUP" >&2
     fi
+  fi
+  if [ "$status" -ne 0 ] && [ "$SPAWN_RESTART_HANDOFF" = 1 ]; then
+    restart_backup="$STATE/.secondmate-restart-$ID.meta.bak"
+    if [ -f "$restart_backup" ] && [ ! -L "$restart_backup" ]; then
+      mv -f "$restart_backup" "$STATE/$ID.meta" 2>/dev/null \
+        || echo "warning: could not restore the previous secondmate record for $ID; it is preserved at $restart_backup" >&2
+    fi
+  fi
+  if [ "$SPAWN_REGISTRY_LOCK_HELD" = 1 ]; then
+    SPAWN_REGISTRY_LOCK_HELD=0
+    fm_lock_release "$SPAWN_REGISTRY_LOCK" || true
   fi
   if [ "$SPAWN_TASK_LOCK_HELD" = 1 ]; then
     SPAWN_TASK_LOCK_HELD=0
@@ -873,11 +891,42 @@ fi
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
-if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
-  echo "error: another spawn is already creating task $ID" >&2
-  exit 1
+if [ -n "${FM_SPAWN_RESTART_TASK_LOCK_OWNER:-}" ] \
+  || [ -n "${FM_SPAWN_RESTART_REGISTRY_LOCK_OWNER:-}" ]; then
+  [ "$KIND" = secondmate ] \
+    && [ -n "${FM_SPAWN_RESTART_TASK_LOCK_OWNER:-}" ] \
+    && [ -n "${FM_SPAWN_RESTART_REGISTRY_LOCK_OWNER:-}" ] || {
+      echo "error: incomplete restart lock handoff" >&2
+      exit 1
+    }
+  if ! fm_lock_claim "$SPAWN_TASK_LOCK" "$FM_SPAWN_RESTART_TASK_LOCK_OWNER"; then
+    echo "error: restart task lock handoff could not be verified for $ID" >&2
+    exit 1
+  fi
+  SPAWN_TASK_LOCK_HELD=1
+  SPAWN_RESTART_HANDOFF=1
+  SPAWN_REGISTRY_LOCK=$(secondmate_registry_lock_path "$STATE")
+  if ! fm_lock_claim "$SPAWN_REGISTRY_LOCK" "$FM_SPAWN_RESTART_REGISTRY_LOCK_OWNER"; then
+    echo "error: restart registry lock handoff could not be verified for $ID" >&2
+    exit 1
+  fi
+  SPAWN_REGISTRY_LOCK_HELD=1
+  if ! secondmate_registry_validate_bindings \
+    "$DATA/secondmates.md" secondmate_registry_path_key "$ID"; then
+    echo "error: cannot reconcile second mate $ID with its authoritative registry route: $SECONDMATE_REGISTRY_ERROR" >&2
+    exit 1
+  fi
+  if [ "$SECONDMATE_REGISTRY_MATCH_REMOTE" = 1 ]; then
+    echo "error: second mate $ID became a remote route during local restart; refusing local relaunch" >&2
+    exit 1
+  fi
+else
+  if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
+    echo "error: another spawn is already creating task $ID" >&2
+    exit 1
+  fi
+  SPAWN_TASK_LOCK_HELD=1
 fi
-SPAWN_TASK_LOCK_HELD=1
 PROJ=
 ARG3=
 FIRSTMATE_HOME=

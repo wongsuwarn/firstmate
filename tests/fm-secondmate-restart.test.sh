@@ -28,9 +28,10 @@
 #   - a failed relaunch restores the previous meta record, so the endpoint stays
 #     recoverable by the session-start liveness sweep.
 #   - a remote route, a non-secondmate task, and an absent record are all
-#     refused before any mutation.
+#     refused before any mutation, with the locked registry route authoritative
+#     over stale local metadata.
 #   - a concurrent spawn/restart of the same id is serialized by the shared
-#     state/.spawn-<id>.lock.
+#     state/.spawn-<id>.lock through relaunch and rollback.
 set -u
 
 # shellcheck source=tests/secondmate-helpers.sh
@@ -86,6 +87,10 @@ case "${1:-}" in
     ;;
   new-window)
     printf '%s' "${FM_FAKE_NEW_WINDOW_NAME:-}" > /dev/null
+    if [ -n "${FM_FAKE_NEW_WINDOW_READY:-}" ]; then
+      : > "$FM_FAKE_NEW_WINDOW_READY"
+      while [ ! -e "$FM_FAKE_NEW_WINDOW_RELEASE" ]; do sleep 0.01; done
+    fi
     [ -z "${FM_FAKE_NEW_WINDOW_FAIL:-}" ] || { printf 'create refused\n' >&2; exit 1; }
     printf '@9\n'
     printf "${FM_FAKE_SPAWN_WINDOW:-fm-unknown}" > "$FM_FAKE_INVENTORY"
@@ -134,6 +139,7 @@ make_case() {
   mkdir -p "$CASE_HOME/data" "$CASE_HOME/state" "$CASE_HOME/config" "$CASE_HOME/projects"
   printf '%s\n' "$$" > "$CASE_HOME/state/.lock"
   touch "$CASE_HOME/state/.last-watcher-beat"
+  printf '%s\n' "$harness" > "$CASE_HOME/config/secondmate-harness"
 
   # The persistent second mate home, with material that must survive verbatim.
   mkdir -p "$CASE_SUB/data" "$CASE_SUB/state" "$CASE_SUB/config" "$CASE_SUB/projects/alpha"
@@ -352,6 +358,17 @@ test_remote_and_non_secondmate_records_are_refused() {
   [ "$(cat "$CASE_META")" = "$before" ] || fail "a remote refusal changed state/<id>.meta"
   assert_no_grep 'kill-window' "$CASE_LOG" "a remote refusal closed a local endpoint"
 
+  make_case restart-registry-remote claude
+  printf -- '- %s - remote charter (host: remote-mac; root: /srv/firstmate; home: /srv/secondmate; scope: testing; projects: alpha; added 2026-08-08)\n' \
+    "$CASE_ID" > "$CASE_HOME/data/secondmates.md"
+  before=$(cat "$CASE_META")
+  out=$(run_restart --model opus)
+  status=$?
+  expect_code 1 "$status" "an authoritative remote route must override stale local metadata"$'\n'"$out"
+  assert_contains "$out" "remote route" "the authoritative registry refusal should name the remote route"
+  [ "$(cat "$CASE_META")" = "$before" ] || fail "an authoritative remote-route refusal changed stale local metadata"
+  assert_no_grep 'kill-window' "$CASE_LOG" "an authoritative remote route closed the stale local endpoint"
+
   make_case restart-ship claude
   fm_write_meta "$CASE_META" \
     "window=firstmate:fm-$CASE_ID" "endpoint_task_id=$CASE_ID" \
@@ -370,6 +387,34 @@ test_remote_and_non_secondmate_records_are_refused() {
   assert_contains "$out" "nothing to restart" "the refusal should say there is nothing to restart"
 
   pass "restart: remote routes, non-second-mate tasks, and absent records refuse before any mutation"
+}
+
+test_restart_lock_spans_the_relaunch() {
+  local out status ready release restart_pid contender
+  make_case restart-handoff claude
+  ready="$CASE_DIR/new-window-ready"
+  release="$CASE_DIR/new-window-release"
+  export FM_FAKE_NEW_WINDOW_READY="$ready"
+  export FM_FAKE_NEW_WINDOW_RELEASE="$release"
+  run_restart --model opus > "$CASE_DIR/restart.out" &
+  restart_pid=$!
+  while [ ! -e "$ready" ] && kill -0 "$restart_pid" 2>/dev/null; do sleep 0.01; done
+  [ -e "$ready" ] || fail "restart did not reach the blocked relaunch boundary"
+
+  contender=$(run_restart --model sonnet)
+  status=$?
+  expect_code 1 "$status" "a replacement must not enter while relaunch is publishing metadata"$'\n'"$contender"
+  assert_contains "$contender" "already changing second mate" "the relaunch handoff lost task ownership"
+
+  : > "$release"
+  wait "$restart_pid"
+  status=$?
+  out=$(cat "$CASE_DIR/restart.out")
+  unset FM_FAKE_NEW_WINDOW_READY FM_FAKE_NEW_WINDOW_RELEASE
+  expect_code 0 "$status" "the serialized restart should finish after release"$'\n'"$out"
+  assert_grep 'model=opus' "$CASE_META" "the contending replacement overwrote relaunched metadata"
+  assert_no_grep 'model=sonnet' "$CASE_META" "the contending replacement published metadata"
+  pass "restart: task ownership spans endpoint retirement through relaunch metadata publication"
 }
 
 test_concurrent_restart_is_serialized() {
@@ -412,3 +457,4 @@ test_failed_relaunch_restores_the_previous_record
 test_missing_endpoint_relaunches_without_a_close
 test_remote_and_non_secondmate_records_are_refused
 test_concurrent_restart_is_serialized
+test_restart_lock_spans_the_relaunch

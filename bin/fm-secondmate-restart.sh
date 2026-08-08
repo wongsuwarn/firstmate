@@ -38,6 +38,11 @@
 #   is the only backstop. This preflight is therefore strict, and it runs under
 #   the same state/.spawn-<id>.lock that fm-spawn and the Herdr session cleanup
 #   use, so a concurrent spawn or restart of this id cannot interleave with it.
+#   The authoritative data/secondmates.md route is validated under its shared
+#   registry lock before the endpoint is touched. Both locks are handed directly
+#   to fm-spawn and remain held through metadata publication or rollback, so
+#   there is no unlocked relaunch gap in which another backend can publish a
+#   replacement.
 #   The recorded endpoint is validated by fm_backend_validate_task_endpoint and
 #   then classified by fm_backend_agent_state:
 #     alive    - retire it, then relaunch.
@@ -106,6 +111,7 @@ esac
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
@@ -113,6 +119,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+# shellcheck source=bin/fm-secondmate-registry-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never
 # retire or relaunch a direct report.
@@ -159,26 +167,54 @@ grep -qx 'kind=secondmate' "$META" 2>/dev/null || {
   echo "error: task $ID is not a second mate; this path restarts persistent second mates only" >&2
   exit 1
 }
-if grep -q '^remote_host=' "$META" 2>/dev/null; then
-  echo "error: second mate $ID is a remote route; its endpoint lives on its configured host and must be reconciled there, not restarted locally" >&2
-  exit 1
-fi
-
-# One task-scoped lock across preflight and retirement, released before
-# fm-spawn takes the same lock for the relaunch.
+# One task-scoped lock and the authoritative route lock span the full restart.
 RESTART_LOCK="$STATE/.spawn-$ID.lock"
+REGISTRY_LOCK=$(secondmate_registry_lock_path "$STATE")
 RESTART_LOCK_HELD=0
-release_restart_lock() {
-  [ "$RESTART_LOCK_HELD" = 1 ] || return 0
-  RESTART_LOCK_HELD=0
-  fm_lock_release "$RESTART_LOCK" || true
+REGISTRY_LOCK_HELD=0
+release_restart_locks() {
+  if [ "$REGISTRY_LOCK_HELD" = 1 ]; then
+    REGISTRY_LOCK_HELD=0
+    fm_lock_release "$REGISTRY_LOCK" || true
+  fi
+  if [ "$RESTART_LOCK_HELD" = 1 ]; then
+    RESTART_LOCK_HELD=0
+    fm_lock_release "$RESTART_LOCK" || true
+  fi
 }
-trap release_restart_lock EXIT
+trap release_restart_locks EXIT
 if ! fm_lock_try_acquire "$RESTART_LOCK"; then
   echo "error: another spawn or restart is already changing second mate $ID; nothing was changed" >&2
   exit 1
 fi
 RESTART_LOCK_HELD=1
+RESTART_LOCK_OWNER=$FM_LOCK_OWNER_DIR
+if ! fm_lock_acquire_wait "$REGISTRY_LOCK"; then
+  echo "error: secondmate registry could not be locked; nothing was changed" >&2
+  exit 1
+fi
+REGISTRY_LOCK_HELD=1
+REGISTRY_LOCK_OWNER=$FM_LOCK_OWNER_DIR
+
+META_HOME=$(fm_meta_get "$META" home)
+if [ -z "$META_HOME" ] || ! secondmate_registry_validate_bindings \
+  "$DATA/secondmates.md" secondmate_registry_path_key "$ID"; then
+  echo "error: cannot reconcile second mate $ID with its authoritative registry route: ${SECONDMATE_REGISTRY_ERROR:-recorded home is missing}; nothing was changed" >&2
+  exit 1
+fi
+if [ "$SECONDMATE_REGISTRY_MATCH_REMOTE" = 1 ]; then
+  echo "error: second mate $ID is a remote route; its endpoint lives on its configured host and must be reconciled there, not restarted locally" >&2
+  exit 1
+fi
+if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
+  echo "error: second mate $ID has remote route metadata that conflicts with its authoritative local registry route; refusing an ambiguous endpoint without changing it" >&2
+  exit 1
+fi
+if ! secondmate_registry_validate_bindings \
+  "$DATA/secondmates.md" secondmate_registry_path_key "$ID" "$META_HOME"; then
+  echo "error: cannot reconcile second mate $ID with its authoritative registry route: $SECONDMATE_REGISTRY_ERROR; nothing was changed" >&2
+  exit 1
+fi
 
 fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
 BACKEND=$FM_BACKEND_VALIDATED_BACKEND
@@ -218,8 +254,9 @@ case "$REMOTE_CONTROL" in
   inherit) grep -qx 'remote_control=1' "$META_BACKUP" 2>/dev/null && SPAWN_ARGS+=(--remote-control) || : ;;
 esac
 
-release_restart_lock
-if SPAWN_OUT=$("$FM_ROOT/bin/fm-spawn.sh" "$ID" --secondmate ${SPAWN_ARGS[@]+"${SPAWN_ARGS[@]}"} 2>&1); then
+if SPAWN_OUT=$(FM_SPAWN_RESTART_TASK_LOCK_OWNER="$RESTART_LOCK_OWNER" \
+  FM_SPAWN_RESTART_REGISTRY_LOCK_OWNER="$REGISTRY_LOCK_OWNER" \
+  "$FM_ROOT/bin/fm-spawn.sh" "$ID" --secondmate ${SPAWN_ARGS[@]+"${SPAWN_ARGS[@]}"} 2>&1); then
   rm -f "$META_BACKUP" 2>/dev/null || true
   printf 'restarted %s %s\n' "$ID" "$(printf '%s\n' "$SPAWN_OUT" | tail -1)"
   exit 0
@@ -227,9 +264,13 @@ fi
 
 printf '%s\n' "$SPAWN_OUT" >&2
 RETRY="$FM_ROOT/bin/fm-secondmate-restart.sh ${INVOCATION[*]}"
-if mv -f "$META_BACKUP" "$META" 2>/dev/null; then
+if [ ! -e "$META_BACKUP" ]; then
   echo "error: second mate $ID was retired but its relaunch failed; its previous record was restored, so its home, backlog, work, and its own crewmates are untouched and the next session start relaunches it. Retry now with: $RETRY" >&2
+elif fm_lock_points_to_owner "$RESTART_LOCK" "$RESTART_LOCK_OWNER" \
+  && [ "$(cat "$RESTART_LOCK_OWNER/pid" 2>/dev/null || true)" = "${BASHPID:-$$}" ] \
+  && mv -f "$META_BACKUP" "$META" 2>/dev/null; then
+  echo "error: second mate $ID was not relaunched; its previous record was restored before lock handoff, so its home, backlog, work, and its own crewmates are untouched. Retry now with: $RETRY" >&2
 else
-  echo "error: second mate $ID was retired, its relaunch failed, and its previous record could not be restored from $META_BACKUP; its home and work are untouched. Restore that record, then retry with: $RETRY" >&2
+  echo "error: second mate $ID was retired, its relaunch failed, and its previous record could not be safely restored from $META_BACKUP without current task ownership; its home and work are untouched. Reconcile the current owner before retrying with: $RETRY" >&2
 fi
 exit 1
