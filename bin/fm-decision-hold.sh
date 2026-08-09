@@ -153,12 +153,29 @@ validate_one_line() {  # <label> <value>
   esac
 }
 
+has_non_whitespace() {  # <value>
+  case "$1" in
+    *[![:space:]]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # One structured context field as supplied on the command line. The byte cap is
 # the same one the exact question already carried, so no dimension can smuggle an
 # unbounded blob into a backlog row.
 validate_context_field() {  # <label> <value>
   local label=$1 value=$2
   validate_one_line "$label" "$value"
+  if ! has_non_whitespace "$value"; then
+    case "$label" in
+      question) fail "--question must state the concrete choice the captain needs to make" ;;
+      why) fail "--why must state plainly why this decision is needed now" ;;
+      affects) fail "--affects must state what this decision affects and what led to it" ;;
+      recommendation) fail "--recommendation must state which way you would go and why" ;;
+      no-surface) fail "--no-surface must state why no built surface applies" ;;
+      *) fail "$label must contain non-whitespace text" ;;
+    esac
+  fi
   [ "$(printf '%s' "$value" | LC_ALL=C wc -c | tr -d ' ')" -le 2000 ] \
     || fail "$label exceeds 2000 bytes"
 }
@@ -265,17 +282,26 @@ clear_body_field() {  # <body> <label>
 # filing unable to skip one and an idempotent retry able to supply none.
 require_decision_context() {  # <id> <body> <why> <affects> <recommendation> <decision-url> <no-surface>
   local id=$1 body=$2 why=$3 affects=$4 recommendation=$5 decision_url=$6 no_surface=$7
-  [ -n "$why" ] || [ -n "$(get_body_field "$body" "Why now")" ] \
+  local stored_why stored_affects stored_recommendation stored_decision_url stored_no_surface
+  stored_why=$(get_body_field "$body" "Why now")
+  stored_affects=$(get_body_field "$body" "What it affects")
+  stored_recommendation=$(get_body_field "$body" "Recommendation")
+  stored_decision_url=$(get_body_field "$body" "Decision URL")
+  stored_no_surface=$(get_body_field "$body" "No decision surface")
+  has_non_whitespace "$why" || has_non_whitespace "$stored_why" \
     || fail "captain decision $id needs --why: state plainly why this decision is needed now"
-  [ -n "$affects" ] || [ -n "$(get_body_field "$body" "What it affects")" ] \
+  has_non_whitespace "$affects" || has_non_whitespace "$stored_affects" \
     || fail "captain decision $id needs --affects: state what it affects and what led to it"
-  [ -n "$recommendation" ] || [ -n "$(get_body_field "$body" "Recommendation")" ] \
+  has_non_whitespace "$recommendation" || has_non_whitespace "$stored_recommendation" \
     || fail "captain decision $id needs --recommendation: state which way you would go and why"
+  if [ -z "$decision_url" ] && [ -z "$no_surface" ] \
+    && has_non_whitespace "$stored_decision_url" && has_non_whitespace "$stored_no_surface"; then
+    fail "captain decision $id records both Decision URL and No decision surface: pass --decision-url or --no-surface to settle the conflict"
+  fi
   [ -z "$decision_url" ] || [ -z "$no_surface" ] \
     || fail "captain decision $id cannot claim both a decision surface and none: pass --decision-url or --no-surface, not both"
-  [ -n "$decision_url" ] || [ -n "$no_surface" ] \
-    || [ -n "$(get_body_field "$body" "Decision URL")" ] \
-    || [ -n "$(get_body_field "$body" "No decision surface")" ] \
+  has_non_whitespace "$decision_url" || has_non_whitespace "$no_surface" \
+    || has_non_whitespace "$stored_decision_url" || has_non_whitespace "$stored_no_surface" \
     || fail "captain decision $id needs a conscious surface choice: pass --decision-url with the built surface the captain should look at, or --no-surface stating why no built surface applies"
 }
 

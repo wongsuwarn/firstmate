@@ -1044,6 +1044,44 @@ test_structured_context_is_required_and_stored_separately() {
   fi
   assert_grep "--recommendation" "$home/no-rec.err" "the refusal did not name the missing dimension"
 
+  # A supplied field must survive the same trimming used by the snapshot and
+  # board, or it has not actually addressed its dimension.
+  if run_decisions "$home" "${base[@]}" --question " " --why "w" --affects "a" \
+    --recommendation "r" --no-surface "none applies" \
+    > "$home/blank-question.out" 2> "$home/blank-question.err"; then
+    fail "a whitespace-only question was accepted"
+  fi
+  assert_grep "--question" "$home/blank-question.err" \
+    "the whitespace refusal did not name the question flag"
+  if run_decisions "$home" "${base[@]}" --why " " --affects "a" \
+    --recommendation "r" --no-surface "none applies" \
+    > "$home/blank-why.out" 2> "$home/blank-why.err"; then
+    fail "a whitespace-only why value was accepted"
+  fi
+  assert_grep "--why" "$home/blank-why.err" \
+    "the whitespace refusal did not name the why flag"
+  if run_decisions "$home" "${base[@]}" --why "w" --affects " " \
+    --recommendation "r" --no-surface "none applies" \
+    > "$home/blank-affects.out" 2> "$home/blank-affects.err"; then
+    fail "a whitespace-only affects value was accepted"
+  fi
+  assert_grep "--affects" "$home/blank-affects.err" \
+    "the whitespace refusal did not name the affects flag"
+  if run_decisions "$home" "${base[@]}" --why "w" --affects "a" \
+    --recommendation " " --no-surface "none applies" \
+    > "$home/blank-recommendation.out" 2> "$home/blank-recommendation.err"; then
+    fail "a whitespace-only recommendation was accepted"
+  fi
+  assert_grep "--recommendation" "$home/blank-recommendation.err" \
+    "the whitespace refusal did not name the recommendation flag"
+  if run_decisions "$home" "${base[@]}" --why "w" --affects "a" \
+    --recommendation "r" --no-surface " " \
+    > "$home/blank-no-surface.out" 2> "$home/blank-no-surface.err"; then
+    fail "a whitespace-only no-surface acknowledgment was accepted"
+  fi
+  assert_grep "--no-surface" "$home/blank-no-surface.err" \
+    "the whitespace refusal did not name the no-surface flag"
+
   # The surface choice must be conscious, so silence refuses and claiming both
   # refuses. Only an explicit answer either way gets through.
   if run_decisions "$home" "${base[@]}" --why "w" --affects "a" --recommendation "r" \
@@ -1084,6 +1122,27 @@ test_structured_context_is_required_and_stored_separately() {
   show=$(tasks_in "$home" show "$origin-decision-shape" --full)
   assert_contains "$show" 'Why now: The sample build stops until the shape is chosen.' \
     "an idempotent retry lost the recorded context"
+
+  tasks_in "$home" update "$origin-decision-shape" --body $'Why now:  \t\nWhat it affects: The sample header and every sample card under it.\nRecommendation: Take the compact shape; it survives a narrow screen.\nNo decision surface: Both shapes are text-only, so there is nothing built to compare.' >/dev/null
+  if run_decisions "$home" "${base[@]}" \
+    > "$home/stored-blank.out" 2> "$home/stored-blank.err"; then
+    fail "a whitespace-only stored context field satisfied the presence bar"
+  fi
+  assert_grep "--why" "$home/stored-blank.err" \
+    "the stored whitespace refusal did not name the missing dimension"
+  run_decisions "$home" "${base[@]}" \
+    --why "The sample build stops until the shape is chosen." >/dev/null \
+    || fail "a supplied value could not repair whitespace-only stored context"
+
+  tasks_in "$home" update "$origin-decision-shape" --body $'Why now: The sample build stops until the shape is chosen.\nWhat it affects: The sample header and every sample card under it.\nRecommendation: Take the compact shape; it survives a narrow screen.\nDecision URL: https://sample.tailnet.invalid/stale-aid\nNo decision surface: Both shapes are text-only, so there is nothing built to compare.' >/dev/null
+  if run_decisions "$home" "${base[@]}" \
+    > "$home/stored-surface-conflict.out" 2> "$home/stored-surface-conflict.err"; then
+    fail "contradictory stored surface choices were accepted without settlement"
+  fi
+  assert_grep "both Decision URL and No decision surface" "$home/stored-surface-conflict.err" \
+    "the stored surface conflict was not named"
+  assert_grep "--decision-url or --no-surface" "$home/stored-surface-conflict.err" \
+    "the stored surface conflict did not explain how to settle it"
 
   # A decision that gains a built surface must stop claiming it has none, through
   # either supported path, or the board would show a link and a denial together.
