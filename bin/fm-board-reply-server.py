@@ -8,6 +8,7 @@ hand is supported but the adapter is the interface.
 Usage:
   fm-board-reply-server.py --board <board.html> --requests <log>
                            --parser <fm-board-request-parse.pl>
+                           --registration <procevent source record>
                            [--port <n>] [--host 127.0.0.1]
                            [--max-body <bytes>]
 
@@ -16,6 +17,12 @@ WHAT IT DOES, and nothing else. One loopback port:
   GET  any path            the board file, read fresh from disk every time
   GET  ?fm-board-reply=... a small JSON presence answer for the board's own probe
   POST any path            validate one captain request and durably record it
+
+Recording a request is not the same as firstmate collecting it, so both answers
+report `armed`: whether a wake is registered for this board right now. The board
+uses it to keep its confirmation truthful, and startup prints it so a service
+launched against the wrong FM_HOME says so instead of quietly accepting requests
+nothing will ever read.
 
 AUTHORITY: none. A POST here performs nothing. It appends one line to a private
 append-only log and returns; firstmate later reads that line as captain INTENT and
@@ -109,12 +116,24 @@ def no_duplicate_keys(pairs):
 class Receiver:
     """Validation and durable append. One instance, shared by every request."""
 
-    def __init__(self, board, requests_log, parser, max_body):
+    def __init__(self, board, requests_log, parser, registration, max_body):
         self.board = board
         self.requests_log = requests_log
         self.parser = parser
+        self.registration = registration
         self.max_body = max_body
         self.lock = threading.Lock()
+
+    def armed(self):
+        """Whether a wake is registered for this board right now.
+
+        Recording a request is not the same as firstmate collecting it: a
+        continuity break retires the source until an operator rebases it, and a
+        deployment that never armed leaves the same gap from the start. The board
+        needs this to keep its confirmation truthful, so it is read fresh rather
+        than cached.
+        """
+        return os.path.isfile(self.registration) and not os.path.islink(self.registration)
 
     def record_line(self, received, attempt, wire):
         return "  %s,%s,%s\n" % (json_line_field(received),
@@ -215,12 +234,13 @@ class Receiver:
 
         with self.lock:
             if self.already_stored(attempt):
-                return 200, {"ok": True, "received": received, "duplicate": True}
+                return 200, {"ok": True, "received": received, "duplicate": True,
+                             "armed": self.armed()}
             try:
                 self.append(line)
             except OSError:
                 return 500, {"ok": False, "reason": "the request could not be recorded"}
-        return 200, {"ok": True, "received": received}
+        return 200, {"ok": True, "received": received, "armed": self.armed()}
 
     def append(self, line):
         """One durable append. The log is append-only and never rewritten here."""
@@ -274,7 +294,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.is_probe():
-            self.send_json(200, {"service": SERVICE, "v": 1})
+            self.send_json(200, {"service": SERVICE, "v": 1,
+                                 "armed": self.receiver.armed()})
             return
         try:
             body = self.receiver.board_bytes()
@@ -346,6 +367,7 @@ def main(argv):
     parser.add_argument("--board", required=True)
     parser.add_argument("--requests", required=True)
     parser.add_argument("--parser", required=True)
+    parser.add_argument("--registration", required=True)
     parser.add_argument("--port", type=int, default=4321)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--max-body", type=int, default=DEFAULT_MAX_BODY)
@@ -374,6 +396,7 @@ def main(argv):
     Handler.receiver = Receiver(os.path.abspath(options.board),
                                 os.path.abspath(options.requests),
                                 os.path.abspath(options.parser),
+                                os.path.abspath(options.registration),
                                 options.max_body)
     family = socket.AF_INET6 if ":" in options.host else socket.AF_INET
     Server.address_family = family
@@ -385,6 +408,8 @@ def main(argv):
     sys.stdout.write("listening: http://%s:%s/\n" % (options.host, port))
     sys.stdout.write("board: %s\n" % Handler.receiver.board)
     sys.stdout.write("requests: %s\n" % Handler.receiver.requests_log)
+    sys.stdout.write("armed: %s\n" % ("yes" if Handler.receiver.armed()
+                                      else "no (nothing is collecting replies for this board yet)"))
     sys.stdout.flush()
     try:
         server.serve_forever(poll_interval=0.2)

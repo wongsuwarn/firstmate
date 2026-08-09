@@ -1079,8 +1079,8 @@ def rc_confirm($intent):
   (@html "<div class=\"rc-ok\" data-ok=\"\($intent)\" hidden role=\"status\">")
   + icon_check
   + "<span class=\"rc-ok-t\"><strong class=\"rc-ok-h\"></strong>"
-  + "<span class=\"rc-ok-s\">Firstmate has this and applies it under its own checks."
-  + " It stays here until the call clears.</span></span></div>";
+  + "<span class=\"rc-ok-s\">Recorded for firstmate, which applies it under its own"
+  + " checks. It stays here until the call clears.</span></span></div>";
 
 def rc_form($intent; $question; $note_label; $placeholder; $send_label):
   (@html "<form class=\"rc-f\" data-toggle data-intent=\"\($intent)\" hidden>")
@@ -1519,6 +1519,11 @@ body.board-reply .rc-ask,body.lavish .rc-ask{border:1px solid var(--line);border
 .rc-ok-t{display:flex;flex-direction:column;gap:1px;min-width:0;}
 .rc-ok-h{color:#0b6b49;font-size:13.5px;font-weight:700;overflow-wrap:anywhere;}
 .rc-ok-s{color:var(--slate);font-size:12px;overflow-wrap:anywhere;}
+/* Recorded, but nothing is collecting it. The board proved only the first half,
+   so this keeps the needs-you tone rather than reading as a clean success. */
+.rc-ok.rc-warn{border-color:#ead7ae;border-left-color:var(--amber);background:var(--amber-soft);}
+.rc-ok.rc-warn .ck{color:var(--amber);}
+.rc-ok.rc-warn .rc-ok-h{color:#936218;}
 @media(max-width:720px){
   body.board-reply .rc,body.lavish .rc,
   body.board-reply .rc-ask,body.lavish .rc-ask{padding-left:16px;padding-right:16px;}
@@ -2336,6 +2341,23 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
      read-only board with no dead controls. */
   function ownUrl() { return window.location.pathname || \"/\"; }
 
+  var UNCOLLECTED = \"Recorded, but firstmate is not collecting replies from this board yet.\";
+  var collecting = true;
+
+  /* A confirmation restored on load is written before the probe can answer, so
+     once it does, any panel already on screen is corrected rather than left
+     claiming a collection that is not happening. */
+  function noteCollecting(ok) {
+    collecting = ok;
+    if (ok) { return; }
+    Array.prototype.forEach.call(document.querySelectorAll(\".rc-ok\"), function (panel) {
+      if (panel.hidden) { return; }
+      var note = panel.querySelector(\".rc-ok-s\");
+      if (note) { note.textContent = UNCOLLECTED; }
+      panel.classList.add(\"rc-warn\");
+    });
+  }
+
   var receiverReady = (function () {
     if (!window.fetch || !window.AbortController) { return Promise.resolve(false); }
     var stop, timer;
@@ -2350,14 +2372,16 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       .then(function (res) { return res.ok ? res.text() : \"\"; })
       .then(function (text) {
         var data = null;
-        try { data = JSON.parse(text); } catch (e) { return false; }
-        return !!(data && data.service === \"fm-board-reply\");
+        try { data = JSON.parse(text); } catch (e) { return null; }
+        return (data && data.service === \"fm-board-reply\") ? data : null;
       })
-      .catch(function () { return false; })
-      .then(function (present) {
+      .catch(function () { return null; })
+      .then(function (data) {
         try { clearTimeout(timer); } catch (e) { /* already fired */ }
-        if (present) { document.body.classList.add(\"board-reply\"); }
-        return present;
+        if (!data) { return false; }
+        document.body.classList.add(\"board-reply\");
+        noteCollecting(data.armed !== false);
+        return true;
       });
   }());
 
@@ -2376,7 +2400,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     try { text = await res.text(); } catch (e) { text = \"\"; }
     var data = null;
     try { data = JSON.parse(text); } catch (e) { data = null; }
-    if (res.ok && data && data.ok === true) { return true; }
+    if (res.ok && data && data.ok === true) { return data; }
     throw new Error((data && typeof data.reason === \"string\" && data.reason)
       || \"firstmate did not accept it\");
   }
@@ -2413,12 +2437,16 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     return block.querySelector(\"[data-ok=\\\"\" + intent + \"\\\"]\");
   }
 
-  function showConfirm(block, intent, label) {
+  function showConfirm(block, intent, label, warning) {
     var panel = confirmPanel(block, intent);
     if (!panel) { return; }
+    /* Unhide first: a live region mutated while hidden is often not announced. */
+    panel.hidden = false;
     var head = panel.querySelector(\".rc-ok-h\");
     if (head) { head.textContent = label; }
-    panel.hidden = false;
+    var note = panel.querySelector(\".rc-ok-s\");
+    if (note && warning) { note.textContent = warning; }
+    if (warning) { panel.classList.add(\"rc-warn\"); }
   }
 
   function hideConfirm(block, intent) {
@@ -2534,7 +2562,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
      The button keeps its acknowledged text and disabled state while hidden, so
      anything reading the row still sees which intent was acknowledged, and a
      sibling control the board can still resolve stays available. */
-  function applyAck(block, intent, delivery) {
+  function applyAck(block, intent, delivery, warning) {
     var label = ackLabel(intent, delivery);
     var opener = block.querySelector(\"[data-open=\\\"\" + intent + \"\\\"]\");
     if (opener) {
@@ -2548,7 +2576,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       var submit = form.querySelector(\".rc-go\");
       if (submit) { submit.disabled = true; submit.textContent = label; }
     });
-    showConfirm(block, intent, label);
+    showConfirm(block, intent, label, warning);
     if (confirmPanel(block, intent)) { noteOnly(block, ackSentence(label, delivery)); }
     else { say(block, ackSentence(label, delivery), false); }
   }
@@ -2727,7 +2755,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       requestInFlight[requestIdentity] = true;
       freezePayload(block, form, attempting);
       saveDrafts(true);
-      var recorded = false;
+      var recorded = null;
       var refused = \"\";
       try { recorded = await postRequest(wire, attempting.attempt); }
       catch (e) { refused = (e && e.message) || \"\"; }
@@ -2743,13 +2771,15 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       delete requestState[requestIdentity];
       releasePayload(form);
       if (area) { area.value = \"\"; }
+      noteCollecting(recorded.armed !== false);
+      var uncollected = collecting ? \"\" : UNCOLLECTED;
       if (persistent) {
         try { window.localStorage.setItem(identity, \"received\"); }
         catch (e) { /* page state still prevents a duplicate */ }
-        applyAck(block, request.intent, \"received\");
+        applyAck(block, request.intent, \"received\", uncollected);
       } else {
         var askLabel = ackLabel(request.intent, \"received\");
-        showConfirm(block, request.intent, askLabel);
+        showConfirm(block, request.intent, askLabel, uncollected);
         noteOnly(block, ackSentence(askLabel, \"received\"));
       }
       shut(block);

@@ -127,6 +127,10 @@ The banner claims only that, and never that the requested merge or decision has 
 The reply service answers after it has validated and durably recorded the request, so its labels are `Answer received`, `Merge request received`, and their corresponding forms.
 The pinned Lavish bridge returns before delivery completes, so on that path the truthful labels remain `Answer queued` and `Answer sent` according to what it confirmed.
 
+Recorded is not the same as collected, and the difference is a reachable live state rather than a hypothetical: a continuity break retires the wake until an operator rebases it, and a deployment that never armed leaves the same gap from the start.
+The service therefore reports whether a wake is registered for this board, and the banner says `Recorded, but firstmate is not collecting replies from this board yet` when it is not, instead of implying firstmate already has it.
+A confirmation restored on load is corrected as soon as the probe answers, so the wording always reflects the current state rather than the state at the time of the tap.
+
 A failed send leaves the form open, keeps its text editable, and remains retryable, and records no acknowledgement.
 An interrupted send is different, because it is genuinely ambiguous: the board keeps the exact payload in that draft's session record and locks editing and cancellation across full-document reloads, so a retry can neither send a duplicate nor acknowledge newer text while sending the older payload.
 Each attempt receives one durable browser-generated identity that the retry reuses, so the service recognises that exact attempt and records it once rather than twice.
@@ -156,6 +160,10 @@ Firstmate deploys it in three steps, none of which touch this repo:
 1. Render the board with `--controls` to a durable path outside any worktree, and keep regenerating it there.
 2. Run `bin/fm-procevent-board-reply.sh serve <board.html>` as a long-lived process, and point `tailscale serve` at `http://127.0.0.1:<port>/` rather than at the file.
 3. Arm the wake once with `bin/fm-procevent-board-reply.sh arm <board.html>`.
+
+`serve` and `arm` must run with the same `FM_HOME`, because both resolve the request log and the registration from it.
+A launch agent or unit that inherits no `FM_HOME` resolves them against the tracked code root instead, which reads as a working service on a board nothing is collecting.
+`serve` prints the home it resolved and whether the board is armed, so a mismatch is visible in its first three lines rather than as a request that silently goes nowhere.
 
 Arming has no precondition and is safe in any order: the request log is append-only and never consumed, so requests accepted while nothing is armed are picked up whole by a later arm.
 A request recorded by the service becomes an ordinary durable `check` wake through the same `state/procevent/` framework every other source uses, so firstmate's normal wake drain picks it up with no second notification path.
@@ -232,7 +240,9 @@ A real-browser regression also covers exact and fallback Answer prompts, main-ho
 
 `tests/fm-board-reply.test.sh` covers the direct transport with no Lavish anywhere.
 It re-proves every fail-closed rule at the service door and again at wake time, refuses a cross-site write and a non-loopback bind, holds captain text that looks like the wire format inside its own field, and pins the properties the cursor design rests on: a delta discarded before capture is re-derived byte for byte, a capture truncated before its end sentinel records no cursor and loses nothing, a captured delta advances the cursor so nothing is announced twice, a request accepted before arming survives to the next arm, one retried attempt is recorded once, and a broken cursor escalates exactly once with rebase as the recovery.
+It also pins that the service reports an unarmed board as uncollected, at its probe, in the answer to a recorded request, and in its own startup output.
 Its real-browser case serves the board through the service itself and drives a genuine Answer through to its confirmation, checks that the confirmation is a full-width banner rather than a label, that it survives a reload and fits a 390 by 844 viewport, and that killing the service leaves the next control open, editable, retryable, and unacknowledged.
+A second browser case retires the wake and proves that a request recorded while nothing is collecting is confirmed as recorded and explicitly not collected.
 That regression rewrites the served HTML file repeatedly while an Answer composer contains unsent text, then performs full document reloads and verifies the exact draft, control identity, tab, and anchored reading offset survive both replacements.
 With `FM_MISSION_CONTROL_LIVE_HOME` set to an active home, the same suite generates a fresh board directly from that fleet and uses Chrome at 390 by 844 to verify a meaningful reading anchor remains fixed through regeneration, a full reload, and the early refresh frames without printing fleet records.
 `tests/fm-procevent-mission-control.test.sh` pins the request normalizer against bytes captured from a real send through a real browser, and drives every fail-closed path - a forged envelope, an out-of-vocabulary intent, a truncated capture, a defer carrying reason text - to a refusal rather than a plausible request.

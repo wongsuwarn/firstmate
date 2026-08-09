@@ -76,6 +76,13 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
+# shellcheck source=bin/fm-pr-lib.sh
+. "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-procevent-lib.sh
+. "$SCRIPT_DIR/fm-procevent-lib.sh"
+
 PARSER="$SCRIPT_DIR/fm-board-request-parse.pl"
 SERVER="$SCRIPT_DIR/fm-board-reply-server.py"
 REQUEST_DIR="$STATE/board-reply"
@@ -121,8 +128,16 @@ ensure_request_dir() {
   [ -d "$REQUEST_DIR" ] && [ ! -L "$REQUEST_DIR" ] || die "request directory is unsafe: $REQUEST_DIR"
 }
 
+# The registration this board's wake would be armed under. The service reports
+# whether it exists, so the board can never confirm a request as collected when
+# nothing is collecting - and so a serve launched against the wrong FM_HOME says
+# so at startup instead of accepting requests no one will ever read.
+registration_path() {  # <source-id>
+  printf '%s/%s.source\n' "$(fm_procevent_registry_dir "$STATE")" "$1"
+}
+
 cmd_serve() {
-  local board='' port=$DEFAULT_PORT host=127.0.0.1 real log
+  local board='' port=$DEFAULT_PORT host=127.0.0.1 real log id
   while [ $# -gt 0 ]; do
     case "$1" in
       --port) [ $# -ge 2 ] || usage; port=$2; shift 2 ;;
@@ -136,10 +151,12 @@ cmd_serve() {
   [ -f "$PARSER" ] || die "request validator not found: $PARSER"
   [ -f "$SERVER" ] || die "reply service not found: $SERVER"
   real=$(real_path "$board") || die "cannot resolve the board path: $board"
+  id=$(cmd_source_id "$real") || exit 1
   log=$(cmd_log_path "$real") || exit 1
   ensure_request_dir
+  printf 'home: %s\n' "$FM_HOME"
   exec python3 "$SERVER" --board "$real" --requests "$log" --parser "$PARSER" \
-    --port "$port" --host "$host"
+    --registration "$(registration_path "$id")" --port "$port" --host "$host"
 }
 
 # Resume from the current end of the log, deliberately skipping anything the

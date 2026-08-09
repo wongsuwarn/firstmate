@@ -172,11 +172,25 @@ probe=$(http GET "${URL}?fm-board-reply=probe")
   = fm-board-reply ] || fail "the probe must identify the service, got: $probe"
 pass "the service serves the board on any path and answers the presence probe"
 
+# ------------------------------------------------------- collecting or not ----
+# Recording a request is not the same as firstmate collecting it. A board served
+# with nothing armed is exactly how the captain gets a confirmation for a request
+# no one reads, so the service reports the difference rather than implying it.
+probe_armed() { body_of "$(http GET "${URL}?fm-board-reply=probe")" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("armed"))'; }
+[ "$(probe_armed)" = False ] \
+  || fail "the probe must report an unarmed board as uncollected, got $(probe_armed)"
+assert_grep "armed: no" "$TMP_ROOT/serve.out" \
+  "starting the service with nothing armed must say so, so a wrong home is visible"
+pass "the service reports that nothing is collecting replies before the wake is armed"
+
 # ---------------------------------------------------------- accept and record -
 answer_wire=$(envelope '{"v":1,"intent":"answer","home":"main","id":"d1","note":"Go with the Tuesday window."}')
 accepted=$(send "$answer_wire" "fm-board:aaa1")
 [ "$(status_of "$accepted")" = 200 ] || fail "a valid answer must be accepted, got: $accepted"
 assert_contains "$(body_of "$accepted")" '"ok": true' "acceptance must say so plainly"
+assert_contains "$(body_of "$accepted")" '"armed": false' \
+  "accepting a request while nothing is armed must not claim it is being collected"
 [ "$(log_lines)" = 1 ] || fail "one accepted request must record exactly one line, got $(log_lines)"
 pass "a valid captain answer is accepted and durably recorded"
 
@@ -337,6 +351,11 @@ assert_contains "$(cat "$TMP_ROOT/arm.out")" "armed:" "arming must report the so
 listed=$("$PROCEVENT" list 2>&1)
 assert_contains "$listed" "board-reply" \
   "the source must be registered under the adapter name the wake will carry"
+[ "$(probe_armed)" = True ] \
+  || fail "an armed board must be reported as collecting, got $(probe_armed)"
+armed_answer=$(send "$answer_wire" "fm-board:armed1")
+assert_contains "$(body_of "$armed_answer")" '"armed": true' \
+  "a request recorded while the wake is armed must say it is being collected"
 "$PROCEVENT" start "$SOURCE_ID" > "$TMP_ROOT/start.out" 2>&1 \
   || fail "the runner must capture the recorded requests: $(cat "$TMP_ROOT/start.out")"
 captured=$(sed -n 's/^captured: //p' "$TMP_ROOT/start.out")
@@ -573,10 +592,14 @@ const revealState = `({body:document.body.className,
       width:Math.round(rect.width),rowWidth:Math.round(panel.parentElement.getBoundingClientRect().width),
       formClosed:b.querySelector('form[data-intent=answer]').hidden,
       deferStillOffered:!b.querySelector('[data-open=defer]').hidden,
+      note:panel.querySelector('.rc-ok-s').textContent,
+      tone:panel.className,
       message:b.querySelector('.rc-sent').textContent};
   })()`);
   assert(sent.confirmed && sent.head === "Answer received",
     "a request the service accepted was not confirmed truthfully: " + JSON.stringify(sent));
+  assert(sent.note.indexOf("Recorded for firstmate") === 0 && sent.tone.indexOf("rc-warn") === -1,
+    "a collected request must not be described or toned as uncollected: " + JSON.stringify(sent));
   assert(sent.openerHidden && sent.openerText === "Answer received" && sent.formClosed,
     "the acknowledged control was not replaced by its confirmation: " + JSON.stringify(sent));
   assert(sent.width >= sent.rowWidth - 2,
@@ -644,6 +667,67 @@ JS
   stop_service
   [ "$status" = 0 ] || fail "the board reply browser regression failed"
   pass "a real tap reaches the service, confirms unmistakably, survives a reload, and stays retryable when the service dies"
+
+  # A service running with nothing armed accepts requests no one will read. The
+  # confirmation must say that rather than implying firstmate already has it,
+  # because a confirmation for an uncollected request is the original fault.
+  "$ADAPTER" retire "$BOARD" >/dev/null || fail "retiring for the uncollected case must succeed"
+  start_service
+  node - "$chrome" "$URL" "$TMP_ROOT/chrome-profile-uncollected" <<'JS'
+const { spawn } = require("node:child_process");
+const [chromePath, serviceUrl, profile] = process.argv.slice(2);
+const chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--no-sandbox",
+  "--remote-debugging-pipe", `--user-data-dir=${profile}`],
+  {stdio:["ignore","ignore","ignore","pipe","pipe"]});
+let buffer = ""; let nextId = 0; const pending = new Map();
+function send(method, params = {}, sessionId) { return new Promise((resolve) => {
+  const id = ++nextId; pending.set(id, resolve);
+  chrome.stdio[3].write(`${JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})})}\0`);
+}); }
+chrome.stdio[4].on("data", (chunk) => { buffer += chunk; let at;
+  while ((at = buffer.indexOf("\0")) >= 0) { const raw = buffer.slice(0, at); buffer = buffer.slice(at + 1);
+    if (!raw) continue; const message = JSON.parse(raw); const resolve = pending.get(message.id);
+    if (resolve) { pending.delete(message.id); resolve(message); } }
+});
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function evaluate(sessionId, expression) {
+  const result = await send("Runtime.evaluate", {expression,awaitPromise:true,returnByValue:true}, sessionId);
+  if (result.result.exceptionDetails) throw new Error(result.result.exceptionDetails.text);
+  return result.result.result.value;
+}
+function assert(ok, message) { if (!ok) throw new Error(message); }
+(async () => {
+  const created = await send("Target.createTarget", {url:"about:blank"});
+  const attached = await send("Target.attachToTarget", {targetId:created.result.targetId,flatten:true});
+  const sid = attached.result.sessionId;
+  await send("Page.enable", {}, sid);
+  await send("Runtime.enable", {}, sid);
+  await send("Page.navigate", {url:serviceUrl}, sid);
+  for (let i=0;i<200;i++) { if (await evaluate(sid,"document.readyState") === "complete") break; await delay(20); }
+  await delay(600);
+  const uncollected = await evaluate(sid, `(async()=>{
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d2');
+    b.querySelector('[data-open=answer]').click();
+    b.querySelector('textarea').value='Nothing is collecting this yet.';
+    b.querySelector('form[data-intent=answer]').requestSubmit();
+    for (var i=0;i<200;i++){ if(!b.querySelector('[data-ok=answer]').hidden) break;
+      await new Promise(r=>setTimeout(r,50)); }
+    var panel=b.querySelector('[data-ok=answer]');
+    return {confirmed:!panel.hidden,head:panel.querySelector('.rc-ok-h').textContent,
+      note:panel.querySelector('.rc-ok-s').textContent,tone:panel.className};
+  })()`);
+  assert(uncollected.confirmed && uncollected.head === "Answer received",
+    "an uncollected request must still confirm what the service proved: " + JSON.stringify(uncollected));
+  assert(uncollected.note.indexOf("not collecting") !== -1
+    && uncollected.tone.indexOf("rc-warn") !== -1,
+    "a request nothing is collecting read as a clean success: " + JSON.stringify(uncollected));
+  process.stdout.write("uncollected wording ok\n");
+})().finally(() => chrome.kill()).catch((error) => { console.error(error.stack||error); process.exitCode=1; });
+JS
+  status=$?
+  stop_service
+  [ "$status" = 0 ] || fail "the uncollected-confirmation regression failed"
+  pass "a request recorded while nothing is collecting says so instead of implying firstmate has it"
 }
 
 test_board_replies_through_the_service_in_a_browser
