@@ -2143,6 +2143,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
      with script this selects Projects first, then preserves that card as the
      current reading position through the next managed reload. */
   var arrivalTimer = null;
+  var arrivalTarget = null;
   document.addEventListener(\"click\", function (ev) {
     var el = ev.target;
     if (el && el.nodeType !== 1) { el = el.parentElement; }
@@ -2159,10 +2160,16 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     select(\"projects\", false);
     target.scrollIntoView({block:\"center\"});
     if (arrivalTimer) { window.clearTimeout(arrivalTimer); }
+    if (arrivalTarget) { arrivalTarget.classList.remove(\"project-arrived\"); }
     target.classList.remove(\"project-arrived\");
     void target.offsetWidth;
     target.classList.add(\"project-arrived\");
-    arrivalTimer = window.setTimeout(function () { target.classList.remove(\"project-arrived\"); }, 1800);
+    arrivalTarget = target;
+    arrivalTimer = window.setTimeout(function () {
+      target.classList.remove(\"project-arrived\");
+      if (arrivalTarget === target) { arrivalTarget = null; }
+      arrivalTimer = null;
+    }, 1800);
     if (window.__fmSaveView) { window.__fmSaveView(target); }
   });
 

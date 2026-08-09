@@ -1139,6 +1139,20 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   result = await jump();
   assert(result.projects && result.highlight && result.visible && result.anchor === 'project:alpha' && result.alphaTags >= 2,
     'mobile project tag did not select, highlight, and save the alpha card: '+JSON.stringify(result));
+  await send("Emulation.setEmulatedMedia", {features:[{name:"prefers-reduced-motion",value:"reduce"}]}, sid);
+  result = await evaluate(sid, `(() => {
+    document.documentElement.className="js t-decisions";
+    var alpha=document.querySelector('.need-wrap .tag[data-project-anchor="project:alpha"]');
+    var gamma=document.querySelector('.need-wrap .tag[data-project-anchor="project:gamma"]');
+    alpha.click(); gamma.click();
+    return {alpha:document.getElementById('project:alpha').classList.contains('project-arrived'),
+      gamma:document.getElementById('project:gamma').classList.contains('project-arrived')};
+  })()`);
+  assert(!result.alpha && result.gamma,
+    'a replaced reduced-motion highlight remained visible: '+JSON.stringify(result));
+  await delay(2200);
+  assert(!(await evaluate(sid,"document.getElementById('project:gamma').classList.contains('project-arrived')")),
+    'the reduced-motion project arrival highlight did not clear');
   await send("Emulation.setTouchEmulationEnabled", {enabled:false}, sid);
   await send("Emulation.clearDeviceMetricsOverride", {}, sid);
   await send("Emulation.setScriptExecutionDisabled", {value:true}, sid);
