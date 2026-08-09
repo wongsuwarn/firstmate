@@ -134,7 +134,7 @@ For one-off or infrequent operational work, start with the simplest direct end-t
 Before commissioning an investigation, consult existing reports and established evidence.
 Classify the deliverable:
 
-- **Ship** is the default and produces a project change through the selected delivery mode; once implementation is authorized, dispatch a ship and keep any remaining bounded research inside it.
+- **Ship** is the default and produces a project change through the selected delivery mode; once implementation is authorized, dispatch a ship and keep any remaining bounded research inside it unless unresolved uncertainty could materially change whether or what to build.
 - **Scout** produces knowledge in `data/<id>/report.md`, never a PR, and fits investigation, diagnosis, planning, reproduction, or audit work, but choose it only when the captain explicitly requests a separate knowledge or design deliverable or unresolved uncertainty could materially change whether or what to build.
 
 If established evidence already answers an informational question, relay it without a design-only scout; when implementation intent is unclear, answer and ask one concise question rather than dispatching speculative design work.
