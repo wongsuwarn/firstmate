@@ -310,36 +310,45 @@ canonical_remote_identity() {
   printf 'remote:%s/%s\n' "$host" "$path"
 }
 
-local_remote_top() {
-  local repo_top=$1 remote=$2 path source_top
-  path=$(local_remote_path "$repo_top" "$remote") || return 1
-  source_top=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null) || return 1
-  (cd "$source_top" && pwd -P)
+repository_origin_identities() {
+  local repo_top=$1 remote identity source_path source_remote source_identity
+  remote=$(git -C "$repo_top" remote get-url origin 2>/dev/null || true)
+  identity=$(canonical_remote_identity "$repo_top" "$remote" || true)
+  [ -n "$identity" ] && printf '%s\n' "$identity"
+  source_path=$(local_remote_path "$repo_top" "$remote" || true)
+  [ -n "$source_path" ] || return 0
+  source_remote=$(git -C "$source_path" remote get-url origin 2>/dev/null || true)
+  source_identity=$(canonical_remote_identity "$source_path" "$source_remote" || true)
+  [ -n "$source_identity" ] && [ "$source_identity" != "$identity" ] && printf '%s\n' "$source_identity"
+  return 0
+}
+
+repository_identities_match() {
+  local left=$1 right=$2 left_identity right_identity
+  [ -n "$left" ] && [ -n "$right" ] || return 1
+  while IFS= read -r left_identity; do
+    while IFS= read -r right_identity; do
+      [ "$left_identity" = "$right_identity" ] && return 0
+    done <<EOF
+$right
+EOF
+  done <<EOF
+$left
+EOF
+  return 1
 }
 
 is_firstmate_repo_target() {
-  local target=$1 candidate target_top firstmate_top target_remote firstmate_remote
-  local target_identity firstmate_identity target_source_top target_source_remote target_source_identity
+  local target=$1 candidate target_top firstmate_top target_identities firstmate_identities
   firstmate_top=$(git -C "$FM_ROOT" rev-parse --show-toplevel 2>/dev/null) || return 1
   firstmate_top=$(cd "$firstmate_top" && pwd -P) || return 1
-  firstmate_remote=$(git -C "$firstmate_top" remote get-url origin 2>/dev/null || true)
-  firstmate_identity=$(canonical_remote_identity "$firstmate_top" "$firstmate_remote" || true)
+  firstmate_identities=$(repository_origin_identities "$firstmate_top")
   for candidate in "$target" "$FM_HOME/projects/$target"; do
     target_top=$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null) || continue
     target_top=$(cd "$target_top" && pwd -P) || continue
     [ "$target_top" = "$firstmate_top" ] && return 0
-    target_remote=$(git -C "$target_top" remote get-url origin 2>/dev/null || true)
-    target_identity=$(canonical_remote_identity "$target_top" "$target_remote" || true)
-    if [ -n "$firstmate_identity" ] && [ "$target_identity" = "$firstmate_identity" ]; then
-      return 0
-    fi
-    target_source_top=$(local_remote_top "$target_top" "$target_remote" || true)
-    [ "$target_source_top" = "$firstmate_top" ] && return 0
-    if [ -n "$target_source_top" ] && [ -n "$firstmate_identity" ]; then
-      target_source_remote=$(git -C "$target_source_top" remote get-url origin 2>/dev/null || true)
-      target_source_identity=$(canonical_remote_identity "$target_source_top" "$target_source_remote" || true)
-      [ "$target_source_identity" = "$firstmate_identity" ] && return 0
-    fi
+    target_identities=$(repository_origin_identities "$target_top")
+    repository_identities_match "$firstmate_identities" "$target_identities" && return 0
   done
   return 1
 }
