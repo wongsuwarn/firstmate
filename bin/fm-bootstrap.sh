@@ -1037,8 +1037,30 @@ crew_dispatch_validate() {
   fi
 }
 
+mission_control_rendered_stamp() {
+  LC_ALL=C perl -e '
+    my $limit = 8388608;
+    my $total = 0;
+    my $tail = "";
+    my $stamp;
+    while (1) {
+      my $want = $limit + 1 - $total;
+      $want = 65536 if $want > 65536;
+      my $read = read STDIN, my $chunk, $want;
+      exit 1 if !defined $read;
+      last if $read == 0;
+      $total += $read;
+      exit 1 if $total > $limit || index($chunk, "\0") >= 0;
+      my $scan = $tail . $chunk;
+      $stamp = $1 if !defined $stamp && $scan =~ /rendered ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)/;
+      $tail = length($scan) > 64 ? substr($scan, -64) : $scan;
+    }
+    print $stamp if defined $stamp;
+  ' 2>/dev/null
+}
+
 mission_control_board_staleness_check() {
-  local config_file target line_count size body stamp timestamp_epoch now threshold age
+  local config_file target line_count size stamp timestamp_epoch now threshold age
   config_file="$CONFIG/mission-control-board"
   [ -f "$config_file" ] && [ ! -L "$config_file" ] || return 0
   line_count=$(wc -l < "$config_file" 2>/dev/null) || return 0
@@ -1046,6 +1068,7 @@ mission_control_board_staleness_check() {
   [ "$line_count" = 1 ] || return 0
   IFS= read -r target < "$config_file" || return 0
   [ -n "$target" ] || return 0
+  command -v perl >/dev/null 2>&1 || return 0
 
   case "$target" in
     /*)
@@ -1054,34 +1077,20 @@ mission_control_board_staleness_check() {
       size=${size//[[:space:]]/}
       case "$size" in ''|*[!0-9]*) return 0 ;; esac
       [ "$size" -le 8388608 ] || return 0
-      body=$(< "$target") || return 0
+      stamp=$(mission_control_rendered_stamp < "$target") || return 0
       ;;
     http://*)
       [[ "$target" =~ ^http://127[.]0[.]0[.]1(:[0-9]+)?([/?#][^[:space:]]*)?$ ]] || return 0
       command -v curl >/dev/null 2>&1 || return 0
-      body=$(
+      stamp=$(
         set -o pipefail
         curl --disable --fail --silent --noproxy '*' --proto '=http' --proto-redir '=http' --max-filesize 8388608 --max-time 2 "$target" 2>/dev/null |
-          perl -e '
-            my $limit = 8388608;
-            my $body = "";
-            while (length($body) <= $limit) {
-              my $want = $limit + 1 - length($body);
-              $want = 65536 if $want > 65536;
-              my $read = read STDIN, my $chunk, $want;
-              exit 1 if !defined $read;
-              last if $read == 0;
-              $body .= $chunk;
-            }
-            exit 1 if length($body) > $limit;
-            print $body or exit 1;
-          '
+          mission_control_rendered_stamp
       ) || return 0
       ;;
     *) return 0 ;;
   esac
 
-  stamp=$(printf '%s\n' "$body" | grep -Eo 'rendered [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' | head -n 1 | cut -d ' ' -f 2) || return 0
   [ -n "$stamp" ] || return 0
   timestamp_epoch=$(TZ=UTC perl -MTime::Piece -e 'my $s = $ARGV[0]; my $t = eval { Time::Piece->strptime($s, "%Y-%m-%dT%H:%M:%SZ") }; exit 1 if $@ || !defined $t || $t->strftime("%Y-%m-%dT%H:%M:%SZ") ne $s; print $t->epoch' "$stamp" 2>/dev/null) || return 0
   case "$timestamp_epoch" in ''|*[!0-9]*) return 0 ;; esac

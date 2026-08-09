@@ -921,6 +921,10 @@ if [ "${FM_FAKE_CURL_OVERSIZED:-0}" = 1 ]; then
   perl -e '$SIG{PIPE} = "IGNORE"; print "<footer>rendered 2000-01-01T00:00:00Z</footer>\n"; print "x" x 8388609;'
   exit 0
 fi
+if [ "${FM_FAKE_CURL_NUL:-0}" = 1 ]; then
+  printf '<footer>rendered 2000-01-01T00:00:00Z</footer>\n\0'
+  exit 0
+fi
 printf '%s\n' '<footer>rendered 2000-01-01T00:00:00Z</footer>'
 SH
   chmod +x "$fakebin/curl"
@@ -937,12 +941,43 @@ SH
     "$ROOT/bin/fm-bootstrap.sh")
   [ -z "$out" ] || fail "oversized unknown-length Mission Control response should be silent, got: $out"
 
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_CURL_LOG="$curl_log" FM_FAKE_CURL_NUL=1 \
+    "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+  printf '%s\n' "$out" | grep -F 'MISSION_CONTROL_STALE:' >/dev/null \
+    && fail "NUL-containing Mission Control response should not report staleness"
+  printf '%s\n' "$out" | grep -F 'ignored null byte' >/dev/null \
+    && fail "NUL-containing Mission Control response should not emit a shell warning"
+
   : > "$curl_log"
   printf '%s\n' 'http://127.0.0.1:80@example.com/board' > "$home/config/mission-control-board"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_CURL_LOG="$curl_log" "$ROOT/bin/fm-bootstrap.sh")
   [ -z "$out" ] || fail "non-loopback Mission Control URL should be silent, got: $out"
   [ ! -s "$curl_log" ] || fail "non-loopback Mission Control URL should not invoke curl"
+
+  printf '<footer>rendered 2000-01-01T00:00:00Z</footer>\n\0' > "$board"
+  printf '%s\n' "$board" > "$home/config/mission-control-board"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+  printf '%s\n' "$out" | grep -F 'MISSION_CONTROL_STALE:' >/dev/null \
+    && fail "NUL-containing Mission Control file should not report staleness"
+  printf '%s\n' "$out" | grep -F 'ignored null byte' >/dev/null \
+    && fail "NUL-containing Mission Control file should not emit a shell warning"
+
+  cat > "$fakebin/perl" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'fake perl failure' >&2
+exit 127
+SH
+  chmod +x "$fakebin/perl"
+  printf '%s\n' '<footer>rendered 2000-01-01T00:00:00Z</footer>' > "$board"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+  printf '%s\n' "$out" | grep -F 'fake perl failure' >/dev/null \
+    && fail "Mission Control parser dependency failure should stay silent"
+  printf '%s\n' "$out" | grep -F 'MISSION_CONTROL_STALE:' >/dev/null \
+    && fail "Mission Control parser dependency failure should not report staleness"
   pass "bootstrap bounds opted-in Mission Control reads and reports only proved staleness"
 }
 
