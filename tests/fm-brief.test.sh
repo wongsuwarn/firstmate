@@ -439,6 +439,65 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout() {
   pass "fm-brief.sh: ship and scout scaffolds make omitted Herdr intent fail-visible"
 }
 
+test_firstmate_repo_identity_guard_applies_to_ship_and_scout() {
+  local home firstmate_clone firstmate_remote id kind brief command
+  home="$TMP_ROOT/firstmate-identity-guard-home"
+  firstmate_clone="$home/projects/firstmate"
+  mkdir -p "$home/data" "$home/projects"
+  git clone -q "$ROOT" "$firstmate_clone" \
+    || fail "firstmate-repository guard fixture clone failed"
+  firstmate_remote=$(git -C "$ROOT" remote get-url origin) \
+    || fail "firstmate-repository guard fixture has no origin remote"
+  git -C "$firstmate_clone" remote set-url origin "$firstmate_remote" \
+    || fail "firstmate-repository guard fixture could not match its origin remote"
+
+  for kind in ship scout; do
+    id="brief-firstmate-identity-$kind"
+    if [ "$kind" = scout ]; then
+      command=("$ROOT/bin/fm-brief.sh" "$id" firstmate --scout)
+    else
+      command=("$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes)
+    fi
+    FM_HOME="$home" "${command[@]}" >/dev/null 2>&1 \
+      || fail "$kind firstmate-repository brief should scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep "AGENTS.md" "$brief" \
+      "$kind firstmate-repository brief did not name AGENTS.md as the instruction collision"
+    assert_grep "CLAUDE.md" "$brief" \
+      "$kind firstmate-repository brief did not name CLAUDE.md as the instruction collision"
+    assert_grep "You are not firstmate." "$brief" \
+      "$kind firstmate-repository brief did not separate the worker from firstmate"
+    for command in bin/fm-spawn.sh bin/fm-brief.sh tasks-axi bin/fm-wake-drain.sh bin/fm-peek.sh bin/fm-send.sh bin/fm-watch.sh bin/fm-supervise-daemon.sh; do
+      assert_grep "\`$command\`" "$brief" \
+        "$kind firstmate-repository brief did not forbid $command"
+    done
+    assert_grep "only read or edit them as task work" "$brief" \
+      "$kind firstmate-repository brief did not limit orchestration commands to task editing"
+    assert_grep 'Never address "the captain"' "$brief" \
+      "$kind firstmate-repository brief did not forbid captain-facing communication"
+  done
+  pass "fm-brief.sh: firstmate-repository ship and scout briefs carry the identity guard"
+}
+
+test_ordinary_registered_project_brief_is_byte_stable() {
+  local home project brief digest expected
+  home="$TMP_ROOT/ordinary-project-byte-stability-home"
+  project="$home/projects/ordinary-project"
+  mkdir -p "$home/data" "$project"
+  printf '%s\n' '- ordinary-project [no-mistakes] - fixture' > "$home/data/projects.md"
+  fm_git_init_commit "$project"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" ordinary-project-byte-stability ordinary-project --mode no-mistakes >/dev/null 2>&1 \
+    || fail "ordinary registered project brief should scaffold"
+  brief="$home/data/ordinary-project-byte-stability/brief.md"
+  assert_no_grep "You are not firstmate." "$brief" \
+    "ordinary registered project brief unexpectedly gained the firstmate identity guard"
+  digest=$(sed -e "s|$home|<home>|g" -e "s|$ROOT|<root>|g" "$brief" | cksum)
+  expected='3440488874 6459'
+  [ "$digest" = "$expected" ] \
+    || fail "ordinary registered project brief changed bytes (got: $digest)"
+  pass "fm-brief.sh: ordinary registered project brief remains byte-identical"
+}
+
 test_secondmate_no_projects_charter() {
   local home brief status
   home="$TMP_ROOT/no-projects-home"
@@ -722,6 +781,8 @@ test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
+test_firstmate_repo_identity_guard_applies_to_ship_and_scout
+test_ordinary_registered_project_brief_is_byte_stable
 test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
