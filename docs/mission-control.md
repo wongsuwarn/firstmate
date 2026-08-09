@@ -33,7 +33,7 @@ The stage itself is derived by the snapshot rather than by the board; see `bin/f
   Each row names the home it came from when that home is not the main one.
   A decision filed with structured context shows it as labelled sections under the row - "Why now", "What it affects", "Recommendation", and, where the filer established that no built surface applies, "No built surface" - so the captain can find the recommendation without reading a paragraph for it.
   That block is a sibling of the row rather than part of it, because the row title is a link whenever the decision has one and reading the context must never navigate away; at phone width each label sits above the text it labels.
-  A decision filed before that schema existed carries none of those fields and renders exactly as it always has, from its hold reason alone.
+  An old-style decision that carries only a plain hold reason renders exactly as it always has, while an earlier decision that already records an optional question or decision-aid URL keeps that behavior without gaining the new labelled context block.
   [`docs/decision-hold-lifecycle.md`](decision-hold-lifecycle.md) owns the fields themselves and which of them a filing must supply.
   A structured HTTPS decision aid appears as its own readable link and remains on its recorded private host.
   Only valid HTTP or HTTPS references are clickable; a local report path such as `data/example/report.md` remains non-clickable context when no explicit served HTTPS aid exists, because the board does not serve fleet-local files.

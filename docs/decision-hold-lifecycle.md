@@ -5,7 +5,7 @@ This document records the deterministic mechanism, structured surfaces, and priv
 
 ## Mechanism
 
-`bin/fm-decision-hold.sh` is the only lifecycle command for captain decisions, whether an investigation or visual review discovered them or they gate a work item that already exists.
+`bin/fm-decision-hold.sh` is the only filing command for captain decisions, whether an investigation or visual review discovered them or they gate a work item that already exists.
 The command runs tasks-axi in the active `FM_HOME`, so the existing backlog remains the only durable work database and a secondmate-owned decision stays in the secondmate home.
 It never reads report bodies, review artifacts, terminal output, or chat.
 
@@ -17,14 +17,14 @@ It rejects an identity collision, a changed title, attempts to reopen an already
 ## Structured decision context
 
 A captain decision records its context as separate structured body fields rather than as one free-text hold reason: an optional `Decision question`, a required `Why now`, `What it affects`, and `Recommendation`, and exactly one of `Decision URL` or `No decision surface`.
-The structure is what makes the captain-facing due-diligence bar enforceable.
+The structure makes the required context dimensions and conscious surface choice enforceable.
 A single reason string lets a dimension be skipped silently, and an optional link flag lets the surface question be forgotten, which is what produced decisions that could not be acted on without re-reading their investigation.
 Prose quality is deliberately not machine-checked, because clarity and jargon-freeness are semantic judgements a script cannot make; the skill owns them, and `data/captain-shared.md` states the bar they are judged against.
 
 Each dimension is required only when the item does not already record it.
 A first filing therefore cannot omit one, while the idempotent retry that `hold` is designed for supplies none and preserves what is stored.
 The two surface fields are one choice, so recording either clears the other and an item can never claim a built surface and no built surface at once; `link` clears a recorded `No decision surface` for the same reason.
-The schema is additive: a hold filed before it existed carries none of these fields, keeps its plain hold reason, and renders unchanged.
+The schema is additive: an old-style hold that carries only a plain hold reason keeps that reason and renders unchanged, while a hold that already records the earlier optional question or URL keeps those fields too.
 `resolve`, `complete`, `verify`, `retract`, and `link` are untouched on such a hold.
 Re-arming one with `hold` does require the full bar, because the presence check reads the stored body and finds nothing there; that is the going-forward contract rather than a compatibility gap, and it converts an old hold into a complete one at the moment it is next touched.
 Structured context currently reaches the captain through Mission Control only.
