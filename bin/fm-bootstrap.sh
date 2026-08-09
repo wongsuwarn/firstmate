@@ -1059,7 +1059,24 @@ mission_control_board_staleness_check() {
     http://*)
       [[ "$target" =~ ^http://127[.]0[.]0[.]1(:[0-9]+)?([/?#][^[:space:]]*)?$ ]] || return 0
       command -v curl >/dev/null 2>&1 || return 0
-      body=$(curl --disable --fail --silent --noproxy '*' --proto '=http' --proto-redir '=http' --max-filesize 8388608 --max-time 2 "$target" 2>/dev/null) || return 0
+      body=$(
+        set -o pipefail
+        curl --disable --fail --silent --noproxy '*' --proto '=http' --proto-redir '=http' --max-filesize 8388608 --max-time 2 "$target" 2>/dev/null |
+          perl -e '
+            my $limit = 8388608;
+            my $body = "";
+            while (length($body) <= $limit) {
+              my $want = $limit + 1 - length($body);
+              $want = 65536 if $want > 65536;
+              my $read = read STDIN, my $chunk, $want;
+              exit 1 if !defined $read;
+              last if $read == 0;
+              $body .= $chunk;
+            }
+            exit 1 if length($body) > $limit;
+            print $body or exit 1;
+          '
+      ) || return 0
       ;;
     *) return 0 ;;
   esac

@@ -917,6 +917,10 @@ test_mission_control_board_staleness_check() {
   cat > "$fakebin/curl" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_FAKE_CURL_LOG"
+if [ "${FM_FAKE_CURL_OVERSIZED:-0}" = 1 ]; then
+  perl -e '$SIG{PIPE} = "IGNORE"; print "<footer>rendered 2000-01-01T00:00:00Z</footer>\n"; print "x" x 8388609;'
+  exit 0
+fi
 printf '%s\n' '<footer>rendered 2000-01-01T00:00:00Z</footer>'
 SH
   chmod +x "$fakebin/curl"
@@ -928,13 +932,18 @@ SH
   grep -F -- '--disable --fail --silent --noproxy * --proto =http --proto-redir =http --max-filesize 8388608 --max-time 2 http://127.0.0.1' "$curl_log" >/dev/null \
     || fail "loopback Mission Control GET should disable curl config, proxies, and non-HTTP protocols"
 
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_CURL_LOG="$curl_log" FM_FAKE_CURL_OVERSIZED=1 \
+    "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "oversized unknown-length Mission Control response should be silent, got: $out"
+
   : > "$curl_log"
   printf '%s\n' 'http://127.0.0.1:80@example.com/board' > "$home/config/mission-control-board"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_CURL_LOG="$curl_log" "$ROOT/bin/fm-bootstrap.sh")
   [ -z "$out" ] || fail "non-loopback Mission Control URL should be silent, got: $out"
   [ ! -s "$curl_log" ] || fail "non-loopback Mission Control URL should not invoke curl"
-  pass "bootstrap checks opted-in fresh Mission Control boards and reports only proved staleness"
+  pass "bootstrap bounds opted-in Mission Control reads and reports only proved staleness"
 }
 
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
