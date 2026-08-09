@@ -2509,8 +2509,13 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         var note = area ? area.value : \"\";
         var open = form.hasAttribute(\"data-toggle\") ? !form.hidden : note !== \"\";
         var pending = requestState[identity];
+        var retry = records[identity] && records[identity].retry;
         if (!open && !note) { delete records[identity]; return; }
         records[identity] = {identity:identity,open:open,note:note};
+        if (retry && typeof retry.payload === \"string\"
+            && typeof retry.attempt === \"string\" && retry.attempt) {
+          records[identity].retry = {payload:retry.payload,attempt:retry.attempt};
+        }
         if (pending) {
           records[identity].queued = {status:pending.status,payload:pending.payload,
             note:pending.note,attempt:pending.attempt};
@@ -2523,6 +2528,30 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       else { window.sessionStorage.removeItem(draftKey); }
     } catch (e) { /* draft memory unavailable */ }
     if (!skipView && window.__fmSaveView) { window.__fmSaveView(); }
+  }
+  function storedRetry(identity) {
+    var record = storedDrafts().find(function (candidate) {
+      return candidate && candidate.identity === identity;
+    });
+    var retry = record && record.retry;
+    return retry && typeof retry.payload === \"string\"
+      && typeof retry.attempt === \"string\" && retry.attempt ? retry : null;
+  }
+  function rememberRetry(identity, retry) {
+    var records = storedDrafts();
+    var found = false;
+    records.forEach(function (record) {
+      if (!record || record.identity !== identity) { return; }
+      found = true;
+      if (retry) { record.retry = {payload:retry.payload,attempt:retry.attempt}; }
+      else { delete record.retry; }
+    });
+    if (!found && retry) {
+      records.push({identity:identity,open:true,note:\"\",
+        retry:{payload:retry.payload,attempt:retry.attempt}});
+    }
+    try { window.sessionStorage.setItem(draftKey, JSON.stringify(records)); }
+    catch (e) { /* retry memory unavailable */ }
   }
   function restoreDrafts() {
     var records = storedDrafts();
@@ -2755,19 +2784,13 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
          it did not. There is no queued-but-undelivered middle state to recover
          from, so a clean failure leaves the composer open and editable. */
       if (requestInFlight[requestIdentity]) { return; }
-      var held = requestState[requestIdentity];
-      if (held && held.payload !== wire) {
-        keepQueuedPayload(block, form, held);
-        saveDrafts();
-        return;
-      }
-      var attempting = held
-        || {status: \"sending\", payload: wire, note: note, attempt: newAttempt()};
-      requestState[requestIdentity] = attempting;
-      attempting.status = \"sending\";
+      var retry = storedRetry(requestIdentity);
+      var attempting = {payload:wire,note:note,
+        attempt:retry && retry.payload === wire ? retry.attempt : newAttempt()};
       requestInFlight[requestIdentity] = true;
       freezePayload(block, form, attempting);
       saveDrafts(true);
+      rememberRetry(requestIdentity, attempting);
       var recorded = null;
       var refused = \"\";
       var definiteRefusal = false;
@@ -2778,14 +2801,14 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       }
       delete requestInFlight[requestIdentity];
       if (!recorded) {
-        if (definiteRefusal) { delete requestState[requestIdentity]; }
+        if (definiteRefusal) { rememberRetry(requestIdentity, null); }
         releasePayload(form);
         say(block, \"Not sent - \" + (refused || \"the board could not reach firstmate\")
           + \". Try again.\", true);
         saveDrafts();
         return;
       }
-      delete requestState[requestIdentity];
+      rememberRetry(requestIdentity, null);
       releasePayload(form);
       if (area) { area.value = \"\"; }
       noteCollecting(recorded.armed !== false);

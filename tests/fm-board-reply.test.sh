@@ -657,8 +657,8 @@ const revealState = `({body:document.body.className,
     return {message:b.querySelector('.rc-sent').textContent,
       open:!b.querySelector('form[data-intent=answer]').hidden,
       editable:!t.disabled,retry:!b.querySelector('.rc-go').disabled,
-      attempt:saved&&saved.queued&&saved.queued.attempt,
-      payload:saved&&saved.queued&&saved.queued.payload};
+      attempt:saved&&saved.retry&&saved.retry.attempt,
+      payload:saved&&saved.retry&&saved.retry.payload};
   })()`);
   assert(interrupted.message.indexOf("Not sent") === 0 && interrupted.open
     && interrupted.editable && interrupted.retry && interrupted.attempt
@@ -690,19 +690,44 @@ const revealState = `({body:document.body.className,
     b.querySelector('form[data-intent=answer]').requestSubmit();
     for (var i=0;i<200;i++){ if((b.querySelector('.rc-sent').textContent||'').indexOf('Not sent')===0) break;
       await new Promise(r=>setTimeout(r,50)); }
+    var drafts=()=>JSON.parse(sessionStorage.getItem(Object.keys(sessionStorage)
+      .find(k=>k.indexOf('fm-mission-control-drafts-v1:')===0))||'[]');
+    var saved=drafts().find(x=>x.identity.indexOf('d3')!==-1);
+    var firstAttempt=saved&&saved.retry&&saved.retry.attempt;
+    t.value+=' Still editable.';
+    t.dispatchEvent(new Event('input',{bubbles:true}));
+    var editedValue=t.value;
+    b.querySelector('.rc-sent').textContent='';
+    b.querySelector('form[data-intent=answer]').requestSubmit();
+    var nextAttempt='';
+    for (var j=0;j<200;j++){
+      saved=drafts().find(x=>x.identity.indexOf('d3')!==-1);
+      nextAttempt=saved&&saved.retry&&saved.retry.attempt;
+      if(nextAttempt&&nextAttempt!==firstAttempt) break;
+      await new Promise(r=>setTimeout(r,25));
+    }
+    for (var k=0;k<200;k++){
+      if((b.querySelector('.rc-sent').textContent||'').indexOf('Not sent')===0) break;
+      await new Promise(r=>setTimeout(r,25));
+    }
     return {message:b.querySelector('.rc-sent').textContent,
       confirmed:!b.querySelector('[data-ok=answer]').hidden,
       open:!b.querySelector('form[data-intent=answer]').hidden,
-      value:t.value,editable:!t.disabled,retry:!b.querySelector('.rc-go').disabled,
+      value:t.value,editedValue:editedValue,editable:!t.disabled,retry:!b.querySelector('.rc-go').disabled,
+      firstAttempt:firstAttempt,nextAttempt:nextAttempt,
       acked:Object.keys(localStorage).filter(k=>k.indexOf('fm-mission-control-ack-v1:')===0
         && k.indexOf('d3')!==-1).length};
   })()`);
   assert(stranded.message.indexOf("Not sent") === 0 && !stranded.confirmed,
     "an unreachable service was reported as a confirmation: " + JSON.stringify(stranded));
   assert(stranded.open && stranded.editable && stranded.retry
-    && stranded.value === "This answer must survive a dead service.",
+    && stranded.value === "This answer must survive a dead service. Still editable."
+    && stranded.editedValue === stranded.value,
     "an unreachable service did not leave the answer open, editable and retryable: "
     + JSON.stringify(stranded));
+  assert(stranded.firstAttempt && stranded.nextAttempt
+    && stranded.nextAttempt !== stranded.firstAttempt,
+    "editing a failed request did not mint a new attempt: " + JSON.stringify(stranded));
   assert(stranded.acked === 0, "an unreachable service left a remembered acknowledgement");
   assert(logLines() === before + 2, "an unreachable service recorded something anyway");
 
