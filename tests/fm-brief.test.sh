@@ -500,6 +500,32 @@ test_firstmate_repo_identity_guard_normalizes_ssh_and_https_origins() {
   pass "fm-brief.sh: firstmate-repository identity normalizes SSH and HTTPS origins"
 }
 
+test_firstmate_repo_identity_guard_normalizes_bare_local_origins() {
+  local fixture bare_source firstmate_runtime home firstmate_clone brief
+  fixture="$TMP_ROOT/firstmate-identity-bare-local"
+  bare_source="$fixture/firstmate.git"
+  firstmate_runtime="$fixture/runtime"
+  home="$fixture/home"
+  firstmate_clone="$home/projects/firstmate"
+  mkdir -p "$home/data" "$home/projects"
+  git clone --bare -q "$ROOT" "$bare_source" \
+    || fail "firstmate-repository bare local source fixture failed"
+  git clone -q "$bare_source" "$firstmate_runtime" \
+    || fail "firstmate-repository runtime fixture clone failed"
+  cp "$ROOT/bin/fm-brief.sh" "$firstmate_runtime/bin/fm-brief.sh" \
+    || fail "firstmate-repository runtime fixture did not receive the current fm-brief.sh"
+  git clone -q "$bare_source" "$firstmate_clone" \
+    || fail "firstmate-repository registered fixture clone failed"
+  git -C "$firstmate_clone" remote set-url origin "file://$bare_source" \
+    || fail "firstmate-repository registered fixture could not set its file origin"
+  FM_HOME="$home" "$firstmate_runtime/bin/fm-brief.sh" brief-firstmate-identity-bare-local firstmate --mode no-mistakes >/dev/null 2>&1 \
+    || fail "firstmate-repository brief with equivalent bare local origins should scaffold"
+  brief="$home/data/brief-firstmate-identity-bare-local/brief.md"
+  assert_grep "You are not firstmate." "$brief" \
+    "equivalent bare local origins did not receive the firstmate identity guard"
+  pass "fm-brief.sh: firstmate-repository identity normalizes bare local origins"
+}
+
 test_ordinary_registered_project_brief_is_byte_stable() {
   local home project brief digest expected
   home="$TMP_ROOT/ordinary-project-byte-stability-home"
@@ -804,6 +830,7 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
 test_firstmate_repo_identity_guard_applies_to_ship_and_scout
 test_firstmate_repo_identity_guard_normalizes_ssh_and_https_origins
+test_firstmate_repo_identity_guard_normalizes_bare_local_origins
 test_ordinary_registered_project_brief_is_byte_stable
 test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
