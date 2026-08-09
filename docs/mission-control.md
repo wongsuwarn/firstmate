@@ -36,7 +36,8 @@ The stage itself is derived by the snapshot rather than by the board; see `bin/f
   When a decision has downstream backlog dependents, it also shows one compact "Blocking:" line with each dependent's title, or its id when the available snapshot cannot resolve that title.
   That block is a sibling of the row rather than part of it, because the row title is a link whenever the decision has one and reading the context must never navigate away; at phone width each label sits above the text it labels.
   An old-style decision that carries only a plain hold reason renders exactly as it always has, while an earlier decision that already records an optional question or decision-aid URL keeps that behavior without gaining the new labelled context block.
-  When controls are enabled, a decision with two to four explicitly recorded option labels shows them as quick-answer buttons and keeps a `Write your own answer` control beside them.
+  When controls are enabled and the direct board-reply service proves it is available, a decision with two to four explicitly recorded option labels shows them as quick-answer buttons and keeps a `Write your own answer` control beside them.
+  The superseded Lavish transport remains Answer-only.
   No prose is parsed to invent options, so a decision without that field keeps the original free-text-only Answer control.
   [`docs/decision-hold-lifecycle.md`](decision-hold-lifecycle.md) owns the fields themselves and which of them a filing must supply.
   A structured HTTPS decision aid appears as its own readable link and remains on its recorded private host.
@@ -125,7 +126,7 @@ There are five request types, and each row offers only what it can actually reso
 
 A decision belonging to a second mate carries the home it came from and is applied in that home, never in the main one.
 An Answer form uses the exact structured question when one was recorded, otherwise it uses the decision title and reason as a concise reminder, and only falls back to `Your answer` when no useful context exists.
-An option button puts its recorded label through that same Answer form and submits the same `answer` request as free text; it creates no new wire intent or execution path.
+On the direct board-reply transport, an option button puts its recorded label through that same Answer form and submits the same `answer` request as free text; it creates no new wire intent or execution path.
 The textarea retains `Your answer` as its accessible label in every case, including a decision that also offers quick answers.
 Each decision also offers `Ask a question about this`, which focuses the one shared Ask-firstmate composer and pre-fills a quoted reference to that decision's title.
 It never creates a per-decision conversation or another transport.

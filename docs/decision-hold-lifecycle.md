@@ -76,7 +76,7 @@ A failed intermediate step leaves the hold open.
 It also parses every structured decision-context field written by `bin/fm-decision-hold.sh`, including the ordered option labels, then carries them through the main-home record and secondmate-home decision projection.
 It reads them for any row whose hold kind is `captain` or `parked`, not only a row whose own kind is `captain`, because a captain hold can gate an item of any kind and setting one aside changes only its hold kind.
 `bin/fm-mission-control.sh` renders the context fields it finds on the decision card and falls back to the plain hold reason for a decision that carries none.
-With reply controls enabled, a valid option set becomes quick-answer buttons without replacing the free-text Answer path.
+Once the direct board-reply service proves it is available, a valid option set becomes quick-answer buttons without replacing the free-text Answer path; the legacy Lavish transport remains Answer-only.
 It resolves every repeated `blocked-by:` edge against structured Done records, keeps missing blockers unresolved, and classifies any unblocked row with hold kind `captain` and a non-empty hold reason as actionable regardless of the row's own kind.
 Its secondmate-home summary classifies an actionable captain hold as `captain_decision` and preserves blocked captain holds as queued work in the owning home.
 

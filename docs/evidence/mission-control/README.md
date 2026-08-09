@@ -15,7 +15,7 @@ The after images show each row carrying only the controls it can resolve: the tw
 `before-decision-context-mobile.png` and `after-decision-context-mobile.png` show the same state at exactly 390px by 844px.
 The after images retain the complete long question, add the explicit private decision-aid link, give Answer and Set aside distinct calm treatments, and put the exact recorded question in the Answer prompt without horizontal overflow.
 
-`before-decision-options-desktop.png` and `after-decision-options-desktop.png` show the same structured binary decision at 1280px before and after explicit quick-answer buttons.
+`before-decision-options-desktop.png` and `after-decision-options-desktop.png` show the same structured binary decision through the direct board-reply service at 1280px before and after explicit quick-answer buttons.
 `before-decision-options-mobile.png` and `after-decision-options-mobile.png` show the full same board at exactly 390px by 844px.
 The after images keep `Write your own answer` beside the two explicit labels, while the before images retain the legacy Answer control only.
 
@@ -46,7 +46,7 @@ The decision-context evidence was verified on 2026-08-08 with `chrome-devtools-a
 The desktop and mobile checks returned document widths of 1280px and 390px respectively, reported no horizontal overflow, and confirmed that the Answer form was open in all four images.
 The after checks additionally confirmed that the explicit decision-aid link was present.
 
-The decision-options evidence was verified on 2026-08-10 with `chrome-devtools-axi 0.1.27` at 1280px by 900px and 390px by 844px.
+The decision-options evidence was verified on 2026-08-09 with `chrome-devtools-axi 0.1.27` at 1280px by 900px and 390px by 844px.
 The mobile after render returned a 390px document width, two 44px-high option buttons inside the viewport, and the unchanged free-text affordance.
 The real-browser regression submits one option and one typed answer through the same `answer` request path.
 
