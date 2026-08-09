@@ -442,7 +442,7 @@ if [ "$WITH_QUOTA" = 1 ]; then
   fi
 fi
 
-HTML=$(
+render_html() {
   printf '%s' "$SNAPSHOT" | jq -L "$SCRIPT_DIR" -r \
     --argjson quota "$QUOTA" \
     --arg quota_note "$QUOTA_NOTE" \
@@ -454,7 +454,7 @@ HTML=$(
     --argjson projects_present "$PROJECTS_PRESENT" \
     --arg today "$TODAY" \
     --argjson controls "$CONTROLS" \
-    --argjson refresh "$REFRESH" '
+    --argjson refresh "$REFRESH" -f /dev/fd/3 3<<'FM_MISSION_CONTROL_JQ'
 
 include "fm-web-url";
 
@@ -2940,8 +2940,10 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
 " end)
 + "</body></html>
 "
-'
-) || die "rendering failed"
+FM_MISSION_CONTROL_JQ
+}
+
+HTML=$(render_html) || die "rendering failed"
 
 if [ "$TO_STDOUT" = 1 ]; then
   printf '%s\n' "$HTML"
