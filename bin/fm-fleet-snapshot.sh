@@ -793,8 +793,7 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
             blocks_ids:((.blocks_ids // []) | map(trunc(120))),
             reason:(.hold_reason | trunc(160)),source:"backlog"} ]) as $captain_holds_all
     | ([ $backlog.records[]?
-         | select(.state == "done" and .structured
-                  and (.kind != "captain" or ((.blocks_ids // []) | length) > 0))
+         | select(.state == "done" and .structured and .kind != "captain")
          | {id:(.id | trunc(120)),title:(.title | trunc(120)),
             pr_url:((.pr_url // null) | if . == null then null else trunc(500) end),
             report_path:((.report_path // null) | if . == null then null else trunc(500) end),

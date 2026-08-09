@@ -329,13 +329,15 @@ EOF
         and .captain_actionable == false)
     and (.backlog.records[] | select(.id == "worker")
       | .state == "done" and .blocks_ids == ["captain-run"])
+    and (.backlog.records[] | select(.id == "route-choice")
+      | .state == "done" and .blocks_ids == ["post-decision"])
   ' >/dev/null || fail "one completed blocker did not leave exactly one unresolved id: $out"
   summary=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
   printf '%s' "$summary" | jq -e '
     (.queued[] | select(.id == "review") | .blocks_ids == ["captain-run"])
       and (.landed[] | select(.id == "worker") | .blocks_ids == ["captain-run"])
-      and (.landed[] | select(.id == "route-choice")
-        | .blocks_ids == ["post-decision"])
+      and ([.decisions_open[], .holds[], .queued[], .landed[]]
+        | any(.id == "route-choice") | not)
   ' >/dev/null || fail "secondmate summary did not carry live and historical reverse dependencies: $summary"
 
   cat > "$home/data/backlog.md" <<'EOF'
