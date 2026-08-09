@@ -1741,12 +1741,15 @@ test_beacon_stays_fresh_while_absorbing() {
 }
 
 test_captain_action_notifier_runs_from_watcher() {
-  local dir state fakebin out notifier log pid
+  local dir state fakebin out notifier log status_file drain_out pid i
   dir=$(make_case captain-action-notifier); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; notifier="$dir/captain-action-notifier"; log="$dir/notifier.log"
+  status_file="$state/task.status"; drain_out="$dir/drain.out"
   cat > "$notifier" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' invoked >> "${FM_CAPTAIN_ACTION_NOTIFY_LOG:?}"
+trap 'printf "%s\n" stopped >> "${FM_CAPTAIN_ACTION_NOTIFY_LOG:?}"; exit 0' TERM
+printf '%s\n' started >> "${FM_CAPTAIN_ACTION_NOTIFY_LOG:?}"
+sleep 30
 SH
   chmod +x "$notifier"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
@@ -1760,9 +1763,22 @@ SH
     i=$((i + 1))
   done
   [ -s "$log" ] || { reap "$pid"; fail "watcher did not invoke the captain-action transition helper"; }
-  wait_live "$pid" 10 || { reap "$pid"; fail "captain-action helper stopped ordinary watcher supervision"; }
-  reap "$pid"
-  pass "the watcher periodically invokes the isolated captain-action transition helper without creating a wake"
+  printf 'needs-decision: choose the release channel\n' > "$status_file"
+  wait_for_exit "$pid" 40 || { reap "$pid"; fail "slow captain-action helper blocked ordinary watcher supervision"; }
+  grep -F "signal: $status_file" "$out" >/dev/null \
+    || fail "watcher did not surface an actionable signal while its notification helper was slow"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
+    || fail "drain after the concurrent captain-action check failed"
+  grep "$(printf '\tsignal\t')" "$drain_out" | grep -F "$status_file" >/dev/null \
+    || fail "actionable signal concurrent with the notification helper was not queued"
+  i=0
+  while ! grep -Fx stopped "$log" >/dev/null 2>&1 && [ "$i" -lt 30 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -Fx stopped "$log" >/dev/null 2>&1 \
+    || fail "captain-action helper exceeded its whole-call bound"
+  pass "the watcher bounds captain-action checks without delaying ordinary supervision"
 }
 
 # --- afk coherence: the daemon owns triage; the watcher does not double-triage ---
