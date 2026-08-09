@@ -599,9 +599,9 @@ const revealState = `({body:document.body.className,
   const wideOptions = await evaluate(sid, `(() => {var root=document.documentElement;
     var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d1');
     var buttons=[...b.querySelectorAll('[data-answer-choice]')]; return {
-      viewport:root.clientWidth,document:root.scrollWidth,answer:b.querySelector('[data-open=answer]').innerText,
+      requested:window.innerWidth,viewport:root.clientWidth,document:root.scrollWidth,answer:b.querySelector('[data-open=answer]').innerText,
       buttons:buttons.map(x=>{var r=x.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width,height:r.height};})};})()`);
-  assert(wideOptions.viewport === 1280 && wideOptions.document <= wideOptions.viewport
+  assert(wideOptions.requested === 1280 && wideOptions.document <= wideOptions.viewport
     && wideOptions.answer === "Write your own answer" && wideOptions.buttons.length === 2
     && wideOptions.buttons.every(x=>x.width>0&&x.height>0&&x.left>=0&&x.right<=wideOptions.viewport+.5),
     "direct-board quick answers did not fit at 1280px: "+JSON.stringify(wideOptions));
@@ -610,9 +610,9 @@ const revealState = `({body:document.body.className,
   const narrowOptions = await evaluate(sid, `(() => {var root=document.documentElement;
     var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d1');
     var buttons=[...b.querySelectorAll('[data-answer-choice]')]; return {
-      viewport:root.clientWidth,document:root.scrollWidth,
+      requested:window.innerWidth,viewport:root.clientWidth,document:root.scrollWidth,
       buttons:buttons.map(x=>{var r=x.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width,height:r.height};})};})()`);
-  assert(narrowOptions.viewport === 390 && narrowOptions.document <= narrowOptions.viewport
+  assert(narrowOptions.requested === 390 && narrowOptions.document <= narrowOptions.viewport
     && narrowOptions.buttons.every(x=>x.width>0&&x.height>=44&&x.left>=0&&x.right<=narrowOptions.viewport+.5),
     "direct-board quick answers did not fit at 390px: "+JSON.stringify(narrowOptions));
   await send("Emulation.clearDeviceMetricsOverride", {}, sid);
