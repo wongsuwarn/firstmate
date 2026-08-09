@@ -77,7 +77,7 @@ A silent bootstrap section needs no action and `BOOTSTRAP_INFO:` lines are compl
 ## 4. Harness and runtime dispatch
 
 The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, and `kimi`; never dispatch on an unverified adapter.
-When static `config/crew-harness` or `config/secondmate-harness` names one, report it and fall back only to a verified adapter rather than launching it.
+When static `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, report it and fall back only to a verified adapter rather than launching it.
 
 `docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/fm-harness.sh` owns static resolution, and `bin/fm-spawn.sh` owns launch flags and fail-closed validation.
 When dispatch profiles exist, consult them at every crewmate or scout intake and pass `fm-spawn` the resolved concrete profile.
