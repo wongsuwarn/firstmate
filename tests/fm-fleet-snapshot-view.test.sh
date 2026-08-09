@@ -263,7 +263,7 @@ EOF
 }
 
 test_normalized_roles_and_plural_blocker_readiness() {
-  local home fakebin out
+  local home fakebin out summary
   home=$(make_home normalized-records)
   mkdir -p "$home/projects/worker"
   cat > "$home/data/backlog.md" <<'EOF'
@@ -297,7 +297,12 @@ EOF
         | .blocked_by == "review"
           and .blocked_by_ids == ["worker", "review"]
           and .unresolved_blocker_ids == ["worker", "review"]
+          and .blocks_ids == []
           and .captain_actionable == false)
+      and (.backlog.records[] | select(.id == "worker")
+        | .blocks_ids == ["captain-run"])
+      and (.backlog.records[] | select(.id == "review")
+        | .blocks_ids == ["captain-run"])
   ' >/dev/null || fail "normalized role or plural blocker fields were wrong: $out"
 
   cat > "$home/data/backlog.md" <<'EOF'
@@ -315,12 +320,18 @@ EOF
   rm "$home/state/worker.meta" "$home/state/worker.status"
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
   printf '%s' "$out" | jq -e '
-    .backlog.records[] | select(.id == "captain-run")
-    | .blocked_by == "review"
-      and .blocked_by_ids == ["worker", "review"]
-      and .unresolved_blocker_ids == ["review"]
-      and .captain_actionable == false
+    (.backlog.records[] | select(.id == "captain-run")
+      | .blocked_by == "review"
+        and .blocked_by_ids == ["worker", "review"]
+        and .unresolved_blocker_ids == ["review"]
+        and .captain_actionable == false)
+    and (.backlog.records[] | select(.id == "worker")
+      | .state == "done" and .blocks_ids == ["captain-run"])
   ' >/dev/null || fail "one completed blocker did not leave exactly one unresolved id: $out"
+  summary=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$summary" | jq -e '
+    .queued[] | select(.id == "review") | .blocks_ids == ["captain-run"]
+  ' >/dev/null || fail "secondmate summary did not carry reverse dependencies: $summary"
 
   cat > "$home/data/backlog.md" <<'EOF'
 ## In flight
@@ -352,7 +363,7 @@ EOF
       and .unresolved_blocker_ids == ["missing"]
       and .captain_actionable == false
   ' >/dev/null || fail "a missing blocker was incorrectly treated as resolved: $out"
-  pass "backlog normalization preserves strict roles and resolves every blocker compatibly"
+  pass "backlog normalization preserves strict roles, blocker readiness, and reverse dependencies"
 }
 
 # Any row held for the captain can be set aside under a parked hold kind.
