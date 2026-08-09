@@ -737,7 +737,8 @@ const revealState = `({body:document.body.className,
       note:panel.querySelector('.rc-ok-s').textContent,submit:b.querySelector('.rc-go').textContent,
       disabled:b.querySelector('.rc-go').disabled};})()`);
   assert(filed.confirmed && filed.head === "New work request received"
-    && filed.note.indexOf("Recorded for firstmate") === 0
+    && filed.note.indexOf("No action is needed from you right now.") === 0
+    && filed.note.indexOf("Firstmate has your request") !== -1
     && filed.submit === "New work request received" && filed.disabled,
     "the new-work composer did not use the persistent confirmation treatment: " + JSON.stringify(filed));
   assert(logLines() === before + 2,
