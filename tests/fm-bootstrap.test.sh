@@ -965,13 +965,22 @@ SH
   printf '%s\n' "$out" | grep -F 'ignored null byte' >/dev/null \
     && fail "NUL-containing Mission Control file should not emit a shell warning"
 
+  printf '%s\n' '<footer>rendered 2000-01-01T00:00:00Z</footer>' > "$board"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_MISSION_CONTROL_STALE_SECS=999999999999999999999999999999999999 \
+    "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+  printf '%s\n' "$out" | grep -F 'threshold 300s' >/dev/null \
+    || fail "out-of-range Mission Control threshold should use the 300-second default, got: $out"
+  printf '%s\n' "$out" | grep -F 'integer expression expected' >/dev/null \
+    && fail "out-of-range Mission Control threshold should not emit an arithmetic warning"
+
   cat > "$fakebin/perl" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' 'fake perl failure' >&2
 exit 127
 SH
   chmod +x "$fakebin/perl"
-  printf '%s\n' '<footer>rendered 2000-01-01T00:00:00Z</footer>' > "$board"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh" 2>&1)
   printf '%s\n' "$out" | grep -F 'fake perl failure' >/dev/null \

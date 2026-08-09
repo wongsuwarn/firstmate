@@ -1097,7 +1097,16 @@ mission_control_board_staleness_check() {
   now=$(date +%s 2>/dev/null) || return 0
   case "$now" in ''|*[!0-9]*) return 0 ;; esac
   threshold=${FM_MISSION_CONTROL_STALE_SECS:-300}
-  case "$threshold" in ''|*[!0-9]*|0) threshold=300 ;; esac
+  threshold=$(perl -MConfig -e '
+    my $value = $ARGV[0];
+    exit 1 if $value !~ /\A[0-9]+\z/;
+    $value =~ s/\A0+//;
+    exit 1 if $value eq "";
+    my $maximum = $Config{ivsize} >= 8 ? "9223372036854775807" : "2147483647";
+    exit 1 if length($value) > length($maximum);
+    exit 1 if length($value) == length($maximum) && $value gt $maximum;
+    print $value;
+  ' "$threshold" 2>/dev/null) || threshold=300
   [ "$now" -ge "$timestamp_epoch" ] || return 0
   age=$((now - timestamp_epoch))
   [ "$age" -gt "$threshold" ] || return 0
