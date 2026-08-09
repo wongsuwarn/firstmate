@@ -56,6 +56,7 @@ if ! printf '%s' "$snapshot" | jq -e '
   and (.backlog.records | type == "array")
   and (.tasks | type == "array")
   and (.secondmate_current.records | type == "array")
+  and all(.secondmate_current.records[]; (.decisions_open | type == "array"))
 ' >/dev/null 2>&1; then
   captain_action_log "snapshot was malformed; notification check skipped"
   exit 0
@@ -72,9 +73,8 @@ items=$(printf '%s' "$snapshot" | jq -r '
       | select(.captain_actionable == true)
       | action("main"; .id; .title)),
     (.secondmate_current.records[]? as $home
-      | $home.queued[]?
-      | select(.captain_actionable == true)
-      | action(("secondmate/" + ($home.id | tostring)); .id; .title)),
+      | $home.decisions_open[]?
+      | action(("secondmate/" + ($home.id | tostring)); (.key // .id); (.summary // .title // .id))),
     (.tasks[]?
       | select(.kind != "secondmate" and ((.pr.url // "") | type == "string") and (.pr.url != ""))
       | {key:("pr/main/" + (.id | tostring) + "/" + .pr.url),

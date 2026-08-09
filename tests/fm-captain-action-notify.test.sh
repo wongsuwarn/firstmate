@@ -25,13 +25,13 @@ SH
   printf '%s\n' "$dir"
 }
 
-write_snapshot() {  # <file> <captain-actionable json array> <PR json array>
-  local file=$1 decisions=$2 prs=$3
-  jq -n --argjson decisions "$decisions" --argjson prs "$prs" '
+write_snapshot() {  # <file> <captain-actionable json array> <PR json array> [secondmates json array]
+  local file=$1 decisions=$2 prs=$3 secondmates=${4:-[]}
+  jq -n --argjson decisions "$decisions" --argjson prs "$prs" --argjson secondmates "$secondmates" '
     {schema:"fm-fleet-snapshot.v1",
      backlog:{records:$decisions},
      tasks:($prs | map({id,kind:"ship",pr:{url:.url},backlog:{title:.title}})),
-     secondmate_current:{records:[]}}
+     secondmate_current:{records:$secondmates}}
   ' > "$file"
 }
 
@@ -97,7 +97,35 @@ test_transition_detection_and_batching() {
     '[{"id":"decide-theme","title":"Choose the alert tone","captain_actionable":true}]' '[]'
   run_notify "$dir" || fail "reopened notification check failed"
   [ "$(notification_count "$dir")" = 3 ] || fail "resolved then reopened decision was not re-notified"
+
+  write_snapshot "$dir/snapshot.json" '[]' '[]' \
+    '[{"id":"domain-alpha","decisions_open":[{"id":"worker","key":"release-channel","summary":"Choose the release channel","verb":"needs-decision"}]}]'
+  run_notify "$dir" || fail "secondmate decision notification check failed"
+  [ "$(notification_count "$dir")" = 4 ] || fail "new secondmate decision was not notified"
+  tail -1 "$dir/notifications.log" | grep -F 'Decision: Choose the release channel' >/dev/null \
+    || fail "secondmate decision notification omitted its summary"
+  grep -Fx 'decision/secondmate/domain-alpha/release-channel' "$dir/home/state/.captain-action-notification-set" >/dev/null \
+    || fail "secondmate decision identity did not preserve its decision key"
   pass "captain action notifier baselines silently, batches transitions, suppresses stable items, and re-notifies reopenings"
+}
+
+test_sibling_config_is_independent() {
+  local dir
+  dir=$(make_case sibling-config)
+  printf 'off\n' > "$dir/home/config/wedge-alarm"
+  printf 'osascript\n' > "$dir/home/config/captain-action-notifications"
+  write_snapshot "$dir/snapshot.json" '[]' '[]'
+  run_notify "$dir" || fail "sibling-config baseline failed"
+  write_snapshot "$dir/snapshot.json" \
+    '[{"id":"configured","title":"Use sibling preferences","captain_actionable":true}]' '[]'
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" \
+    FM_FLEET_SNAPSHOT_BIN="$dir/snapshot" FM_SNAPSHOT_FIXTURE="$dir/snapshot.json" \
+    FM_CAPTAIN_ACTION_NOTIFICATION_EXEC="$dir/recorder" \
+    FM_CAPTAIN_ACTION_NOTIFICATION_LOG="$dir/notifications.log" \
+    "$NOTIFY" || fail "sibling-config notification check failed"
+  [ "$(notification_count "$dir")" = 1 ] \
+    || fail "wedge-alarm preferences incorrectly disabled captain-action notifications"
+  pass "captain action notifications use their independent sibling config"
 }
 
 test_snapshot_and_notifier_failures_are_silent() {
@@ -129,4 +157,5 @@ SH
 }
 
 test_transition_detection_and_batching
+test_sibling_config_is_independent
 test_snapshot_and_notifier_failures_are_silent

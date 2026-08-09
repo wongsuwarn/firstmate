@@ -682,14 +682,14 @@ escalate_flush() {  # <state>
 
 # Print the configured channel directives, one per line. FM_WEDGE_ALARM_CHANNEL
 # wins (a single directive); else each non-empty, non-comment line of
-# config/wedge-alarm; else "auto".
+# FM_WEDGE_ALARM_CONFIG or config/wedge-alarm; else "auto".
 wedge_alarm_configured_channels() {
   local cfg line found=
   if [ -n "${FM_WEDGE_ALARM_CHANNEL:-}" ]; then
     printf '%s\n' "$FM_WEDGE_ALARM_CHANNEL"
     return 0
   fi
-  cfg="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/wedge-alarm"
+  cfg="${FM_WEDGE_ALARM_CONFIG:-${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/wedge-alarm}"
   if [ -f "$cfg" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
       line="${line#"${line%%[![:space:]]*}"}"
