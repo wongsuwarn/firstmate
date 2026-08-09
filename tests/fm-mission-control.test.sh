@@ -2628,6 +2628,7 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(success.routed === "Answer sent" && success.routedB === "Answer sent", "home or decision-key acknowledgement identities collided");
   assert(success.prompts === 5, "duplicate answer submission reached the bridge or a distinct identity was dropped");
 
+  await send("Emulation.setDeviceMetricsOverride", {width:1280,height:844,deviceScaleFactor:1,mobile:false}, sid);
   const unconfirmed = await evaluate(sid, `(async()=>{
     localStorage.setItem('test-delivery-unconfirmed','1');
     var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d-hostile');
@@ -3001,6 +3002,10 @@ async function inspect(path,width,mobile){
     const askButton=blocks.find(block=>block.dataset.id==='alpha').querySelector('[data-ask-about]');
     askButton.scrollIntoView({block:'center'}); askButton.click();
     const composer=document.querySelector('#ask-firstmate-composer textarea');
+    const composerValue=composer.value;
+    composer.value='x'.repeat(1998); composer.dispatchEvent(new Event('input',{bubbles:true}));
+    blocks.find(block=>block.dataset.id==='delta').querySelector('[data-ask-about]').click();
+    const boundedComposerValue=composer.value;
     const boxes=[askButton,...answered.map(block=>block.querySelector('[data-ok=answer]'))]
       .map(element=>{const rect=element.getBoundingClientRect();return {left:rect.left,right:rect.right,width:rect.width};});
     return {
@@ -3014,7 +3019,7 @@ async function inspect(path,width,mobile){
       deferred:[...document.querySelectorAll('#deferred-shelf .defer .ask')].map(row=>row.firstChild.textContent),
       deferredControls:document.querySelectorAll('#deferred-shelf .rc').length,
       composers:document.querySelectorAll('#ask-firstmate-composer').length,
-      composerValue:composer.value, focused:document.activeElement===composer,
+      composerValue, boundedComposerValue, focused:document.activeElement===composer,
       boxes, documentWidth:document.documentElement.scrollWidth,
       viewportWidth:document.documentElement.clientWidth
     };
@@ -3037,6 +3042,9 @@ async function inspect(path,width,mobile){
       && seen.deferredControls===0,`the Deferred shelf was reordered or made actionable: ${JSON.stringify(seen)}`);
     assert(seen.composers===1 && seen.focused && seen.composerValue==="About “Choose alpha path”:\n",
       `the per-decision question entry did not focus and prefill the one shared composer: ${JSON.stringify(seen)}`);
+    assert(seen.boundedComposerValue.length<=2000
+      && seen.boundedComposerValue.endsWith("About “Choose delta path”:\n"),
+      `a near-limit shared composer lost the quoted decision reference: ${JSON.stringify(seen)}`);
     assert(seen.documentWidth<=seen.viewportWidth && seen.boxes.every(box=>box.left>=0&&box.right<=seen.viewportWidth+0.5&&box.width>0),
       `a new decision-card visual state overflowed at ${width}px: ${JSON.stringify(seen)}`);
   }}

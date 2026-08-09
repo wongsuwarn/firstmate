@@ -777,6 +777,7 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   const sid = attached.result.sessionId;
   await send("Page.enable", {}, sid);
   await send("Runtime.enable", {}, sid);
+  await send("Emulation.setDeviceMetricsOverride", {width:1280,height:844,deviceScaleFactor:1,mobile:false}, sid);
   await send("Page.navigate", {url:serviceUrl}, sid);
   for (let i=0;i<200;i++) { if (await evaluate(sid,"document.readyState") === "complete") break; await delay(20); }
   await delay(600);

@@ -3138,7 +3138,9 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       var reference = \"About \\u201c\" + title + \"\\u201d:\\n\";
       if (!askArea.value.replace(/^\\s+|\\s+$/g, \"\")) { askArea.value = reference; }
       else if (askArea.value.indexOf(reference) === -1) {
-        askArea.value = (askArea.value.replace(/\\s+$/g, \"\") + \"\\n\\n\" + reference).slice(0, 2000);
+        var draft = askArea.value.replace(/\\s+$/g, \"\");
+        var available = Math.max(0, 2000 - reference.length - 2);
+        askArea.value = draft.slice(0, available).replace(/\\s+$/g, \"\") + \"\\n\\n\" + reference;
       }
       askArea.dispatchEvent(new Event(\"input\", {bubbles:true}));
       askComposer.scrollIntoView({block:\"center\"});
