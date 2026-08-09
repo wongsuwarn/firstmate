@@ -113,7 +113,7 @@ A board request is evidence of the captain's intent, not an authenticated captai
 Firstmate does with it exactly what it would have done had the captain said the same words in chat, under its own contract in `AGENTS.md`: an approval that needs the captain's explicit word still gets confirmed with the captain first, a merge still happens only if firstmate's own checks pass, and nothing destructive, irreversible, or security-sensitive is ever executed from a tap.
 The surface is reachable by anything that can reach the service serving it, so being able to reach it is never treated as authorization for any of that.
 
-There are five controls, and each row offers only what it can actually resolve:
+There are five request types, and each row offers only what it can actually resolve:
 
 - **Approve merge** and **Reply**, on a PR awaiting the captain.
 - **Answer** and **Set aside**, on a decision the captain holds in a backlog.
@@ -281,7 +281,7 @@ The decision-context case renders a structured and an old-style decision from on
 It then measures the rendered page in a real browser at desktop and 390px, because markup alone cannot show that the context block sits outside the row link or that it does not push the board sideways; that measurement self-skips when Chrome or Node is absent.
 It also pins a fixed current time and commits its fixture clones at explicit epochs, so the last-change wording, its three degrade-to-dash paths, and the promise that no clone is written to are all checked against times the test chose.
 
-The reply layer is covered in the same suite: that the default board is unchanged by its existence, that each row offers only the controls it can resolve, that a control names no host, port, or absolute endpoint and derives its target from the URL the document was loaded from, that it stays hidden until a transport is proved, and that the confirmation banner ships hidden and empty.
+The reply layer is covered in the same suite: that the default board is unchanged by its existence, that each row offers only the controls it can resolve, that a control names no host, port, or absolute endpoint and derives its target from the URL the document was loaded from, that it stays hidden until a transport is proved, and that the confirmation banner ships hidden with an empty outcome heading.
 Fleet prose is checked to stay escaped inside the attributes a control carries.
 A real-browser regression also covers exact and fallback Answer prompts, the per-decision entry into the one shared Ask-firstmate composer, main-home and secondmate decision links, malformed and hostile inputs, successful and failed sends, duplicate prevention, acknowledgement restoration and retirement, active-tab restoration, stable reading anchors, explicit-navigation precedence, and disappeared-anchor fallback.
 It renders two fresh board copies from one durable request log and measures the recorded quiet banners, answered-row ordering, shared composer, Deferred shelf, and exact cross-home identity at 1280px and 390px.
