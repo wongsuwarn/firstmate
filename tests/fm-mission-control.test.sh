@@ -1067,8 +1067,8 @@ EOF
     "a structured option must render as a labelled answer button"
   assert_contains "$route_block" 'data-answer-choice="Use public route"' \
     "every structured option must render as its own answer button"
-  assert_contains "$route_block" '>Write your own answer</button>' \
-    "quick answers must keep the free-text answer affordance"
+  assert_contains "$route_block" 'data-open="answer" data-answer-custom>Answer</button>' \
+    "quick answers must retain the legacy label until the direct reply service is proved"
 
   # The conscious "nothing built applies" answer is shown too, because a decision
   # nobody prepared a surface for and one where none applies are not the same.
@@ -2584,8 +2584,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
     function answer(home,id){return block(home,id).querySelector('form[data-intent=answer] textarea');}
     return {
       exact:[answer('main','d-exact').placeholder,answer('main','d-exact').getAttribute('aria-label')],
-      options:[...block('main','d-exact').querySelectorAll('[data-answer-choice]')].map(x=>x.textContent),
-      custom:block('main','d-exact').querySelector('[data-open=answer]').textContent,
+      options:[...block('main','d-exact').querySelectorAll('[data-answer-choice]')].map(x=>({text:x.textContent,display:getComputedStyle(x).display})),
+      custom:block('main','d-exact').querySelector('[data-open=answer]').innerText,
       legacyOptions:block('main','d-fallback').querySelectorAll('[data-answer-choice]').length,
       fallback:answer('main','d-fallback').placeholder,
       empty:answer('main','d-empty').placeholder,
@@ -2605,9 +2605,10 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   })()`);
   assert(dom.exact[0] === "Should the prototype lead with guidance before showing raw detail?", "exact question was not the answer prompt");
   assert(dom.exact[1] === "Your answer", "the answer textarea lost its accessible label");
-  assert(JSON.stringify(dom.options) === JSON.stringify(["Lead with guidance","Lead with raw detail"])
-    && dom.custom === "Write your own answer" && dom.legacyOptions === 0,
-    "structured options or the legacy free-text fallback rendered incorrectly: " + JSON.stringify(dom));
+  assert(JSON.stringify(dom.options) === JSON.stringify([
+      {text:"Lead with guidance",display:"none"},{text:"Lead with raw detail",display:"none"}])
+    && dom.custom === "Answer" && dom.legacyOptions === 0,
+    "Lavish did not preserve its legacy Answer-only view: " + JSON.stringify(dom));
   assert(dom.fallback === "Choose the comparison layout - Scanning speed trades off against explanation", "decision context fallback was not specific");
   assert(dom.empty === "Your answer", "an empty decision invented context");
   assert(dom.hostile === 'Question " ><img src=x onerror=alert(1)> stays text?' && dom.injectedImages === 0, "hostile question escaped its text context");
@@ -2619,23 +2620,18 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(dom.cards >= 8, "ordinary multi-card decision list did not render");
 
   await send("Emulation.setDeviceMetricsOverride", {width:1280,height:900,deviceScaleFactor:1,mobile:false}, sid);
-  const wideOptions = await evaluate(sid, `(() => {var root=document.documentElement;
-    var buttons=[...document.querySelectorAll('[data-answer-choice]')]; return {
-      viewport:root.clientWidth,document:root.scrollWidth,
-      buttons:buttons.map(x=>{var r=x.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width,height:r.height};})};})()`);
-  assert(wideOptions.viewport === 1280 && wideOptions.document <= wideOptions.viewport
-    && wideOptions.buttons.length >= 4
-    && wideOptions.buttons.every(x=>x.width>0&&x.height>0&&x.left>=0&&x.right<=wideOptions.viewport+.5),
-    "quick answers did not fit the rendered 1280px board: "+JSON.stringify(wideOptions));
+  const wideOptions = await evaluate(sid, `(() => ({buttons:[...document.querySelectorAll('[data-answer-choice]')]
+    .map(x=>getComputedStyle(x).display),answer:[...document.querySelectorAll('[data-answer-custom]')]
+    .map(x=>x.innerText)}))()`);
+  assert(wideOptions.buttons.every(x=>x==="none") && wideOptions.answer.every(x=>x==="Answer"),
+    "Lavish exposed direct-board answer controls at 1280px: "+JSON.stringify(wideOptions));
 
   await send("Emulation.setDeviceMetricsOverride", {width:390,height:844,deviceScaleFactor:1,mobile:true}, sid);
-  const narrowOptions = await evaluate(sid, `(() => {var root=document.documentElement;
-    var buttons=[...document.querySelectorAll('[data-answer-choice]')]; return {
-      viewport:root.clientWidth,document:root.scrollWidth,
-      buttons:buttons.map(x=>{var r=x.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width,height:r.height};})};})()`);
-  assert(narrowOptions.viewport === 390 && narrowOptions.document <= narrowOptions.viewport
-    && narrowOptions.buttons.every(x=>x.width>0&&x.height>=44&&x.left>=0&&x.right<=narrowOptions.viewport+.5),
-    "quick answers did not fit the rendered 390px board: "+JSON.stringify(narrowOptions));
+  const narrowOptions = await evaluate(sid, `(() => ({buttons:[...document.querySelectorAll('[data-answer-choice]')]
+    .map(x=>getComputedStyle(x).display),answer:[...document.querySelectorAll('[data-answer-custom]')]
+    .map(x=>x.innerText)}))()`);
+  assert(narrowOptions.buttons.every(x=>x==="none") && narrowOptions.answer.every(x=>x==="Answer"),
+    "Lavish exposed direct-board answer controls at 390px: "+JSON.stringify(narrowOptions));
   await send("Emulation.setTouchEmulationEnabled", {enabled:true,maxTouchPoints:1}, sid);
   const mobileTap = await evaluate(sid, `(() => {var ref=document.querySelector('.local-ref'); ref.scrollIntoView({block:'center'});
     var r=ref.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,before:location.href,anchor:!!ref.closest('a')};})()`);
@@ -2686,7 +2682,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
 
   const success = await evaluate(sid, `(async()=>{
     function block(home,id,key=''){return [...document.querySelectorAll('.rc')].find(x=>x.dataset.home===home&&x.dataset.id===id&&x.dataset.key===key);}
-    var a=block('main','d-exact'); a.querySelector('[data-answer-choice="Lead with guidance"]').click();
+    var a=block('main','d-exact'); a.querySelector('[data-open=answer]').click();
+    a.querySelector('textarea').value='Lead with guidance'; a.querySelector('form[data-intent=answer]').requestSubmit();
     await new Promise(r=>setTimeout(r,20));
     var p=block('main','pr-ready'); p.querySelector('[data-open=merge]').click(); p.querySelector('form[data-intent=merge]').requestSubmit();
     await new Promise(r=>setTimeout(r,20));

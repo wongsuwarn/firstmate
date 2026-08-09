@@ -1287,8 +1287,10 @@ def controls_for:
     + (($c.intents | map(
         if . == "merge" then rc_button("merge"; "Approve merge")
         elif . == "reply" then rc_button("reply"; "Reply")
-        elif . == "answer" then rc_button("answer";
-          if ($options | length) > 0 then "Write your own answer" else "Answer" end)
+        elif . == "answer" then
+          if ($options | length) > 0
+          then (@html "<button type=\"button\" class=\"rc-b rc-answer\" data-open=\"answer\" data-answer-custom>Answer</button>")
+          else rc_button("answer"; "Answer") end
         elif . == "defer" then rc_button("defer"; "Set aside")
         else "" end)) | add // "")
     + (if $w.kind == "decision" then rc_ask_about($w.title) else "" end)
@@ -1719,8 +1721,10 @@ body.board-reply .rc-ask,body.lavish .rc-ask{border:1px solid var(--line);border
 .rc-b.rc-answer{color:#936218;background:var(--amber-soft);border-color:#ead7ae;}
 .rc-b.rc-answer:hover{color:#724b10;background:#f8eccf;border-color:#dfc58e;}
 .rc-choice-label{color:var(--faint);font-size:11px;font-weight:700;letter-spacing:.06em;
-  text-transform:uppercase;margin-right:1px;}
-.rc-b.rc-choice{color:#724b10;background:var(--panel);border-color:#dfc58e;}
+  text-transform:uppercase;margin-right:1px;display:none;}
+.rc-b.rc-choice{color:#724b10;background:var(--panel);border-color:#dfc58e;display:none;}
+body.board-reply .rc-choice-label{display:inline;}
+body.board-reply .rc-b.rc-choice{display:inline-block;}
 .rc-b.rc-choice:hover{background:#f8eccf;border-color:#d3b771;}
 .rc-b.rc-defer{color:var(--slate);background:var(--slate-soft);border-color:#dce1e8;}
 .rc-b.rc-defer:hover{color:var(--ink);background:#e5e9ef;border-color:#cbd2dc;}
@@ -2712,6 +2716,12 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     });
   }
 
+  function enableDirectAnswers() {
+    Array.prototype.forEach.call(document.querySelectorAll(\"[data-answer-custom]\"), function (opener) {
+      if (!opener.disabled) { opener.textContent = \"Write your own answer\"; }
+    });
+  }
+
   var receiverReady = (function () {
     if (!window.fetch || !window.AbortController) { return Promise.resolve(false); }
     var stop, timer;
@@ -2734,6 +2744,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         try { clearTimeout(timer); } catch (e) { /* already fired */ }
         if (!data) { return false; }
         document.body.classList.add(\"board-reply\");
+        enableDirectAnswers();
         noteCollecting(data.armed !== false);
         return true;
       });
@@ -3134,6 +3145,11 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     if (area) { area.value = state.note || \"\"; area.disabled = true; }
     if (close) { close.disabled = true; }
     if (submit) { submit.disabled = true; }
+    if (form.getAttribute(\"data-intent\") === \"answer\") {
+      Array.prototype.forEach.call(block.querySelectorAll(\"[data-answer-choice]\"), function (choice) {
+        choice.disabled = true;
+      });
+    }
   }
 
   function releasePayload(form) {
@@ -3143,6 +3159,14 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     if (area) { area.disabled = false; }
     if (close) { close.disabled = false; }
     if (submit) { submit.disabled = false; }
+    if (form.getAttribute(\"data-intent\") === \"answer\") {
+      var block = form.closest(\".rc\");
+      if (block) {
+        Array.prototype.forEach.call(block.querySelectorAll(\"[data-answer-choice]\"), function (choice) {
+          choice.disabled = false;
+        });
+      }
+    }
   }
 
   /* An interrupted send is genuinely ambiguous, so the exact payload is frozen and

@@ -595,11 +595,44 @@ const revealState = `({body:document.body.className,
   assert(live.body.includes("board-reply") && live.visible > 0,
     "the reply layer stayed hidden while the service was answering: " + JSON.stringify(live));
 
+  await send("Emulation.setDeviceMetricsOverride", {width:1280,height:900,deviceScaleFactor:1,mobile:false}, sid);
+  const wideOptions = await evaluate(sid, `(() => {var root=document.documentElement;
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d1');
+    var buttons=[...b.querySelectorAll('[data-answer-choice]')]; return {
+      viewport:root.clientWidth,document:root.scrollWidth,answer:b.querySelector('[data-open=answer]').innerText,
+      buttons:buttons.map(x=>{var r=x.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width,height:r.height};})};})()`);
+  assert(wideOptions.viewport === 1280 && wideOptions.document <= wideOptions.viewport
+    && wideOptions.answer === "Write your own answer" && wideOptions.buttons.length === 2
+    && wideOptions.buttons.every(x=>x.width>0&&x.height>0&&x.left>=0&&x.right<=wideOptions.viewport+.5),
+    "direct-board quick answers did not fit at 1280px: "+JSON.stringify(wideOptions));
+
+  await send("Emulation.setDeviceMetricsOverride", {width:390,height:844,deviceScaleFactor:1,mobile:true}, sid);
+  const narrowOptions = await evaluate(sid, `(() => {var root=document.documentElement;
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d1');
+    var buttons=[...b.querySelectorAll('[data-answer-choice]')]; return {
+      viewport:root.clientWidth,document:root.scrollWidth,
+      buttons:buttons.map(x=>{var r=x.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width,height:r.height};})};})()`);
+  assert(narrowOptions.viewport === 390 && narrowOptions.document <= narrowOptions.viewport
+    && narrowOptions.buttons.every(x=>x.width>0&&x.height>=44&&x.left>=0&&x.right<=narrowOptions.viewport+.5),
+    "direct-board quick answers did not fit at 390px: "+JSON.stringify(narrowOptions));
+  await send("Emulation.clearDeviceMetricsOverride", {}, sid);
+
   const sent = await evaluate(sid, `(async()=>{
     var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d1');
-    b.querySelector('[data-answer-choice="Tuesday morning"]').click();
+    var originalFetch=window.fetch.bind(window),releasePost;
+    window.fetch=function(url,options){
+      if(options&&options.method==='POST')return new Promise(resolve=>{releasePost=()=>resolve(originalFetch(url,options));});
+      return originalFetch(url,options);
+    };
+    var choices=[...b.querySelectorAll('[data-answer-choice]')];
+    choices[0].click();
+    for(var locked=0;locked<100&&!choices.every(x=>x.disabled);locked++)await new Promise(r=>setTimeout(r,10));
+    choices[1].click();
+    var frozen={value:b.querySelector('textarea').value,disabled:choices.map(x=>x.disabled)};
+    releasePost();
     for (var i=0;i<200;i++){ if(!b.querySelector('[data-ok=answer]').hidden) break;
       await new Promise(r=>setTimeout(r,50)); }
+    window.fetch=originalFetch;
     var panel=b.querySelector('[data-ok=answer]');
     var opener=b.querySelector('[data-open=answer]');
     var rect=panel.getBoundingClientRect();
@@ -610,7 +643,7 @@ const revealState = `({body:document.body.className,
       deferStillOffered:!b.querySelector('[data-open=defer]').hidden,
       note:panel.querySelector('.rc-ok-s').textContent,
       tone:panel.className,
-      message:b.querySelector('.rc-sent').textContent};
+      message:b.querySelector('.rc-sent').textContent,frozen:frozen};
   })()`);
   assert(sent.confirmed && sent.head === "Answer received",
     "a request the service accepted was not confirmed truthfully: " + JSON.stringify(sent));
@@ -624,6 +657,8 @@ const revealState = `({body:document.body.className,
     "the confirmation must be a full-width banner, not a small label: " + JSON.stringify(sent));
   assert(sent.deferStillOffered,
     "acknowledging one control removed a sibling the board can still resolve");
+  assert(sent.frozen.value === "Tuesday morning" && sent.frozen.disabled.every(Boolean),
+    "an in-flight quick answer allowed a sibling choice to replace its payload: " + JSON.stringify(sent.frozen));
   assert(logLines() === before + 1,
     `one tap must record exactly one request, log went from ${before} to ${logLines()}`);
   const quickAnswer = requestWires().find((request) => request.note === "Tuesday morning");
