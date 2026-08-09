@@ -145,8 +145,9 @@ A confirmation restored on load is corrected as soon as the probe answers, so th
 
 Ask firstmate is the one control that continues past its acknowledgement.
 Firstmate posts a reply into that board's own conversation, the board shows the captain's messages and firstmate's replies together in order under the composer, and the captain answers there instead of switching to chat.
+Each physical board has one continuing conversation rather than a new sub-thread for every Ask-firstmate message.
 The conversation is display and nothing else: a firstmate message carries no control, no target, and no intent, it opens no execution path, and what reaches firstmate is still only ever a captain request.
-It ships hidden and empty for the same reason the banner does, so a statically served copy shows no conversation at all.
+It ships hidden and empty for the same reason the banner does, so a copy served as a static file or opened from disk shows no conversation at all.
 It also keeps a tick of its own rather than riding the document reload, because that reload is deliberately held while a composer holds unsent text - exactly when the captain is mid-follow-up and a reply is most likely to arrive.
 
 A failed or interrupted send leaves the form open, keeps its text editable, remains retryable, and records no acknowledgement.
@@ -189,7 +190,7 @@ A request recorded by the service becomes an ordinary durable `check` wake throu
 `bin/fm-procevent-board-reply.sh say-source <source-id> <text>|-` is how firstmate answers a board-reply wake into its originating board's conversation, while `say <board.html> <text>|-` is the board-path form and `reply-log-path <board.html>` prints where that conversation is kept.
 A reply is validated by the same program over the same bytes, under its own marker and its own single permitted intent, and direction is taken from the leading marker so neither side can claim the other's.
 It is appended to a separate log the wake source never reads, which is what keeps firstmate from being woken by its own words and keeps a firstmate message from ever reaching the request path.
-The service returns both sides together on a read the board makes for display only, keeps the newest messages when a conversation outgrows the window it holds, and reports that a read was partial rather than presenting a truncated history as the whole of it.
+The service returns both sides together on a read the board makes for display only, keeps the newest 50 messages from a 256KB tail of each log, and reports that a read was partial rather than presenting a truncated history as the whole of it.
 Both logs stamp whole seconds and the captain's side is laid out first, so a message and the reply to it recorded in the same second still read in that order.
 
 Two properties are worth stating precisely, because both are easy to assume and wrong.
@@ -199,6 +200,7 @@ A runner that died after the source printed but before the runner captured there
 This is still not lossless delivery, and must never be described as such; [`bin/fm-procevent-lib.sh`](../bin/fm-procevent-lib.sh) owns the exact boundary, and a request the browser never managed to send was never here at all.
 
 A loopback port is reachable by any page the captain happens to have open, so the service refuses a cross-site write three independent ways: the required `application/json` content type and the required `X-Fm-Board-Reply` header are both outside what a cross-origin request may send without a preflight, no preflight is ever granted, and a browser-asserted `Sec-Fetch-Site` that is present and not `same-origin` is rejected outright.
+The conversation read uses the same loopback-only port and sends no `Access-Control-Allow-*` header, so another origin may issue the GET but cannot read its answer.
 The request itself still carries no authority either way; this only keeps another page from putting words in the captain's mouth.
 
 If the request log stops matching the recorded cursor - it was replaced, truncated, or hand-edited - the source reports one continuity break, retires itself, and stays unarmed rather than re-announcing forever.
