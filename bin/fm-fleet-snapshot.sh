@@ -792,11 +792,14 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
             no_surface:((.decision_no_surface // null) | if . == null then null else trunc(2000) end),
             blocks_ids:((.blocks_ids // []) | map(trunc(120))),
             reason:(.hold_reason | trunc(160)),source:"backlog"} ]) as $captain_holds_all
-    | ([ $backlog.records[]? | select(.state == "done" and .structured and .kind != "captain")
+    | ([ $backlog.records[]?
+         | select(.state == "done" and .structured
+                  and (.kind != "captain" or ((.blocks_ids // []) | length) > 0))
          | {id:(.id | trunc(120)),title:(.title | trunc(120)),
             pr_url:((.pr_url // null) | if . == null then null else trunc(500) end),
             report_path:((.report_path // null) | if . == null then null else trunc(500) end),
-            local_note:((.local_note // null) | if . == null then null else trunc(120) end),completion} ]
+            local_note:((.local_note // null) | if . == null then null else trunc(120) end),
+            blocks_ids:((.blocks_ids // []) | map(trunc(120))),completion} ]
        | sort_by([(.completion.date // ""), .id]) | reverse) as $landed_all
     | ([ $tasks[] | select(.current_state.state == "unknown") ]) as $unknown_children
     | ([ $owned_in_flight[]

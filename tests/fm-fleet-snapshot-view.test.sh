@@ -313,9 +313,11 @@ EOF
 ## Queued
 - [ ] review - Security review (repo: alpha) (kind: ship)
 - [ ] captain-run - Run canary blocked-by: worker blocked-by: review (repo: alpha) (kind: captain) (hold: captain runs canary) (hold-kind: captain)
+- [ ] post-decision - Apply approved routing blocked-by: route-choice (repo: alpha) (kind: ship)
 
 ## Done
 - [x] worker - Real worker (repo: alpha) (kind: ship) (done 2026-07-22)
+- [x] route-choice - Choose routing policy (repo: alpha) (kind: captain) (done 2026-07-22)
 EOF
   rm "$home/state/worker.meta" "$home/state/worker.status"
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
@@ -330,8 +332,11 @@ EOF
   ' >/dev/null || fail "one completed blocker did not leave exactly one unresolved id: $out"
   summary=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
   printf '%s' "$summary" | jq -e '
-    .queued[] | select(.id == "review") | .blocks_ids == ["captain-run"]
-  ' >/dev/null || fail "secondmate summary did not carry reverse dependencies: $summary"
+    (.queued[] | select(.id == "review") | .blocks_ids == ["captain-run"])
+      and (.landed[] | select(.id == "worker") | .blocks_ids == ["captain-run"])
+      and (.landed[] | select(.id == "route-choice")
+        | .blocks_ids == ["post-decision"])
+  ' >/dev/null || fail "secondmate summary did not carry live and historical reverse dependencies: $summary"
 
   cat > "$home/data/backlog.md" <<'EOF'
 ## In flight
