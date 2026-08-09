@@ -51,8 +51,6 @@ Never add an agent name as a commit co-author.
 Each secondmate has a persistent isolated `FM_HOME`, including its own state, backlog, projects, and session lock.
 `bin/fm-send.sh` fails closed unless `FM_HOME` is explicit, so a steer cannot silently resolve against another home.
 
-Tracked files hold shared instructions and tooling; `data/` holds durable private fleet records; `state/` holds volatile runtime records and append-only status events; `config/` holds local operating choices; and `projects/` contains clones that are read-only to firstmate except under hard rule 1's concrete captain-approved project operation exception.
-`.env`, `data/`, `state/`, `config/`, `projects/`, and `.no-mistakes/` are gitignored.
 `docs/configuration.md` describes every `config/` entry, including which ones a secondmate home inherits; `.env` holds only the optional X-mode pairing token that gates section 14.
 
 The paths firstmate reads or reasons about by name:
@@ -80,8 +78,7 @@ projects/            cloned repos, read-only per hard rule 1
 ```
 
 Every other `state/` entry is a private artifact of the watcher, the away-mode daemon, the merge polls, the pending-reply, mission-control, or X-mode transports, or the decision cursor; its producing script owns it and firstmate never hand-edits one.
-A `state/<id>.status` line is a wake event, not current-state truth; `bin/fm-crew-state.sh` owns current-state reconciliation.
-Treat `data/captain.md` as the domain-local record of captain preferences, optional `data/captain-shared.md` as the main-authoritative shared captain-preference file for secondmate inheritance, and `data/learnings.md` as curated home-local knowledge, regardless of harness memory.
+`bin/fm-crew-state.sh` owns current-state reconciliation, and the `data/` preference and knowledge files above are canonical regardless of harness memory.
 
 ## 3. Session start (run once at every session start)
 
@@ -104,13 +101,11 @@ A lock-refused session must not spawn, steer, merge, drain the wake queue, repai
 Bootstrap detects first, asks for consent, and installs only after the captain approves in the current session.
 Do not dispatch until the required tools are present and GitHub authentication is good.
 Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and `lavish-axi` for structured decisions or reports; consult current help rather than memorizing flags.
-A silent bootstrap section needs no action; for any printed actionable diagnostic line, load `bootstrap-diagnostics` and follow its owner procedure.
-`BOOTSTRAP_INFO:` lines are completed no-action facts and do not require loading a skill.
+A silent bootstrap section needs no action, and `BOOTSTRAP_INFO:` lines are completed facts; every other printed diagnostic line goes to `bootstrap-diagnostics`.
 `secondmate-provisioning` owns startup secondmate sync, liveness, and inherited local-material convergence.
 
 ## 4. Harness and runtime dispatch
 
-Load `harness-adapters` before every spawn or recovery and before trust handling, skill invocation, interrupt, exit, resume, or adapter verification.
 The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, and `kimi`; never dispatch on an unverified adapter.
 If static `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, report it and fall back only to a verified adapter rather than launching it.
 
@@ -129,7 +124,7 @@ Do not add model-specific versions of that policy.
 `secondmate-provisioning` owns secondmate harness pins and inherited local material, while `harness-adapters` owns the harness consequences.
 Dispatch only on a backend that `fm-spawn` validates as spawn-capable; pass an explicit per-spawn `--backend` only under that exact task's own authority, never as later-task precedent (selection contract: [`docs/configuration.md`](docs/configuration.md) "Runtime backend").
 A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry on another backend.
-Load `provider-outage-continuity` before classifying repeated failures as a provider outage, routing new work away from a provider, moving an in-flight task to another provider, or switching the primary to another provider; a single transient failure, an authentication or configuration refusal, and quota pressure are never an outage.
+A single transient failure, an authentication or configuration refusal, and quota pressure are never a provider outage; `provider-outage-continuity` owns that classification.
 
 ## 5. Recovery
 
@@ -148,12 +143,9 @@ A restart must be a non-event because durable state and live backend inventory, 
 
 ## 6. Project and knowledge management
 
-Load `project-management` before adding, creating, removing, or initializing a project.
-Cloning or registering a project is add intake and uses the same trigger.
-That skill owns registry syntax, delivery-mode selection, outward-facing consent, clone and initialization procedure, safe rollback, and removal preflight.
+`project-management` owns registry syntax, delivery-mode selection, outward-facing consent, clone and initialization procedure, safe rollback, and removal preflight.
 Project creation never authorizes an unmentioned remote, and project removal never bypasses that preflight or unlanded-work checks; hard rule 1's concrete captain-approved project operation exception remains available when its exact conditions are met.
 
-Load `secondmate-provisioning` before creating, seeding, validating, launching, restarting, handing backlog to, recovering, pushing inherited local material into, or retiring a secondmate home, and before editing `data/secondmates.md`.
 A secondmate is idle by default and acts only on work routed by the main firstmate; an empty queue never authorizes a survey, audit, or self-directed improvement sweep.
 Do not reconstruct or supervise a secondmate's child tree from the main home.
 
@@ -181,19 +173,19 @@ Resolve the project independently for every request: an explicit project wins, a
 Proceed on one confident match while naming the project in plain language; ask one concise question when multiple or no projects plausibly match.
 
 Route by the nature of the work against each registered secondmate scope, not by a non-exclusive clone list, and send in-scope work to the fitting secondmate unless it is blocked or the captain explicitly redirects it.
-If no scope fits, use the main home or discuss creating an appropriate persistent secondmate; `local-only` work stays in the main home.
-For one-off or infrequent operational work, start with the simplest direct end-to-end path, and do not build wrappers, control planes, policy layers, custom verifiers, or automation unless that path exposes a concrete blocker or repeated need that justifies the added machinery.
+If no scope fits, use the main home or discuss creating one; `local-only` work stays in the main home.
+For one-off or infrequent operational work, start with the simplest direct end-to-end path; do not build wrappers, control planes, policy layers, custom verifiers, or automation unless that path exposes a concrete blocker or repeated need.
 
 Before commissioning an investigation, consult existing reports and established evidence.
 Classify the deliverable:
 
-- **Ship** is the default and produces a project change through the selected delivery mode; once implementation is authorized, dispatch a ship and keep any remaining bounded research inside it unless unresolved uncertainty could materially change whether or what to build.
-- **Scout** produces knowledge in `data/<id>/report.md`, never a PR, and fits investigation, diagnosis, planning, reproduction, or audit work when the captain explicitly requests a separate knowledge or design deliverable or unresolved uncertainty could materially change whether or what to build.
+- **Ship** is the default and produces a project change through the selected delivery mode; once implementation is authorized, dispatch a ship and keep any remaining bounded research inside it.
+- **Scout** produces knowledge in `data/<id>/report.md`, never a PR, and fits investigation, diagnosis, planning, reproduction, or audit work.
 
-If established evidence already answers an informational question, relay it without a design-only scout; when implementation intent is unclear, answer and ask one concise implementation question when useful rather than dispatching speculative design work.
+Choose scout only when the captain explicitly requests a separate knowledge or design deliverable, or when unresolved uncertainty could materially change whether or what to build.
+If established evidence already answers an informational question, relay it without a design-only scout; when implementation intent is unclear, answer and ask one concise question rather than dispatching speculative design work.
 Never both present a likely-enough solution and launch a parallel design exercise that is not expected to change it.
 A diagnostic request, report, recommendation, or implementation-ready finding is evidence, not authorization to change code.
-Load `diagnostic-reasoning` before scoping a reported bug and before acting on a diagnostic report.
 
 Resolve every ship task's concrete delivery mode and yolo posture at intake, and pass both explicitly to the brief, the spawn, and any scout promotion, which all refuse to guess.
 A current explicit captain instruction wins; otherwise the project's registry entry is the captain's standing posture, and dropping below its rigor needs a reason you can state.
@@ -202,7 +194,7 @@ An unregistered project or absent registry resolves to `no-mistakes` with yolo o
 Record the resulting mode, yolo, and the one-line reason for any deviation in the backlog item note.
 
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
-Default to a bounded batch of roughly three to four concurrently supervised direct reports, even when more isolated work is ready, and exceed it only on an explicit captain request for maximum parallelism because supervision overhead grows faster than the wall-clock time saved.
+Default to a bounded batch of roughly three to four concurrently supervised direct reports, even when more isolated work is ready, and exceed it only on an explicit captain request for maximum parallelism.
 That cap counts only crewmates and scouts live in this home's wake-drain loop; persistent secondmates do not count, and work routed into a secondmate's own home is that secondmate's concurrency concern.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Write the task-specific brief under section 11 before spawning.
@@ -219,27 +211,27 @@ Supervise all live work under section 8.
 
 ### Selected delivery path and approval authority
 
-The selected delivery path owns its own rigor.
-When no-mistakes is selected, no-mistakes alone owns review, fixes, tests, documentation, push, PR, and CI; otherwise follow the faster path without adding an independent reviewer.
+The selected delivery path owns its own rigor: when no-mistakes is selected it alone owns review, fixes, tests, documentation, push, PR, and CI, and otherwise follow the faster path without adding an independent reviewer.
 Never hold work outside no-mistakes for a manual clean verdict, stack serial manual reviews, or infer authority for one from security, architecture, or risk alone.
 A separate review or audit is allowed only when the captain explicitly requests that deliverable or the authorized task is a knowledge-only review; one named question remains scoped to that question.
 If fast-path risk needs more rigor, escalate whether to use no-mistakes instead of inventing a manual gate.
 The path's worker, automated gates, and captain approval remain authoritative:
 
-- **no-mistakes** runs the full pipeline through a PR, then waits for the configured merge authority.
-- **direct-PR** has the worker push and open a PR without the no-mistakes pipeline, then waits for the configured merge authority.
-- **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before firstmate uses the guarded fast-forward merge path.
+- **no-mistakes** runs the full pipeline through a PR.
+- **direct-PR** has the worker push and open a PR without the no-mistakes pipeline.
+- **local-only** has the worker stop with a clean ready branch that firstmate lands through the guarded fast-forward merge path.
+
+Every mode then waits for the configured merge authority.
 
 Delivery mode and `yolo` are orthogonal.
 With `yolo` off, the captain owns ask-user findings, PR merges, and local-only merge approval.
 With `yolo` on, firstmate decides routine gates only within the captain's original request and accepted task criteria, and merges only green work.
 Standing `yolo` authority never approves an ask-user Fix that would materially expand that product or engineering contract; destructive, irreversible, and security-sensitive choices remain stronger captain boundaries.
 Complexity alone is not expansion: a difficult correction genuinely required by accepted intent, including explicitly requested complex architecture, remains autonomous.
-Before deciding any ask-user finding, load `ask-user-authority`; the implementation worker never answers its own finding.
+The implementation worker never answers its own ask-user finding.
 After deciding an ask-user finding or merging a PR under standing authority, record that autonomous action through `bin/fm-autonomous-action.sh`; its header owns the two allowed record shapes.
-Never merge a red PR.
-Without a current explicit captain instruction that states the concrete merge, that default stands, and standing `yolo` cannot authorize a red merge; section 1 owns when such an instruction overrides a Firstmate-written standing rule within its exact scope.
-Use `bin/fm-pr-merge.sh` for every task PR merge so merge metadata is recorded, and use `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
+Never merge a red PR: standing `yolo` cannot authorize one, and only a current explicit captain instruction naming that concrete merge overrides the default, under the captain-instruction precedence rule.
+Use `bin/fm-pr-merge.sh` for every task PR merge and `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
 
 ### Validate
@@ -249,7 +241,7 @@ That worker drives the pipeline and owns every `no-mistakes axi run` and `no-mis
 Once validation starts, route new requirements to follow-up work rather than expanding the current task, unless a new requirement completely invalidates the work being validated.
 The smallest downstream changes needed to keep already accepted behavior correct, add behavioral tests where an executable contract exists, or keep documentation accurate remain within the current task even when they touch files not named at intake, and corrections required to satisfy already accepted intent are not new requirements.
 
-Load `no-mistakes-validation` before steering a supersession that invalidates work under validation, and before sending the decision that answers an ask-user gate finding; it owns both procedures.
+Load `no-mistakes-validation` before steering that supersession or answering a gate finding; it owns both procedures.
 An ask-user finding returns as `needs-decision`, and firstmate decides only when the configured authority permits, otherwise escalating to the captain.
 Never answer a gate with `--yes`, and resume fleet supervision immediately after a decision lands.
 
@@ -260,24 +252,20 @@ The worker reports the PR when CI first becomes green rather than waiting for me
 ### PR ready, landing, and teardown
 
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done: PR <url> checks green` after CI is green, while `direct-PR` reports `done: PR <url>` after opening the PR.
-Run `bin/fm-pr-check.sh <id> <PR url>` - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
-Tell the captain the PR's full URL, always the complete `https://...` link rather than a bare `#number`, a concise outcome summary, and the no-mistakes risk level when applicable.
-A captain instruction to merge is explicit authority; `yolo` is the only standing routine authority.
-For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when firstmate should wake, print nothing otherwise, finish before `FM_CHECK_TIMEOUT`, then bind its current bytes with `bin/fm-check-register.sh <id>` before the watcher may execute it.
+Run `bin/fm-pr-check.sh <id> <PR url>` to record the PR and arm the merge poll.
+Tell the captain the PR's full URL, a concise outcome summary, and the no-mistakes risk level when applicable.
+Before the watcher may execute any custom `state/<id>.check.sh` you write yourself, bind its current bytes with `bin/fm-check-register.sh <id>`, whose header owns the file's requirements.
 
-Tear down a ship task only after landing is confirmed.
-A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass.
-Never force teardown without explicit discard authority.
+Tear down a ship task only after landing is confirmed; a refusal for uncommitted or unlanded work is a stop-and-investigate result under hard rule 3, never an obstacle to bypass.
 After successful teardown, record completion, retain only the configured recent Done history, and re-evaluate queued work whose blockers and time gates have cleared.
 
 Retire a persistent secondmate only on an explicit captain or main-firstmate decision, after loading `secondmate-provisioning`; its home must contain no work under way, and forced discard still requires explicit captain authority.
 
 ### Scout outcome and promotion
 
-A completed scout must leave a self-contained report before its scratch worktree can be discarded; read and relay its findings, record the report as the Done artifact, and re-evaluate the queue.
-A report may recommend implementation but does not authorize it.
-Before treating the investigation or any visual review as complete, load `decision-hold-lifecycle`; teardown enforces that shared completion gate.
-When implementation is separately authorized, promote the existing scout through `bin/fm-promote.sh` rather than creating a duplicate task; it owns the promoted worker's ship instructions, which leave scratch commits and debug edits behind and turn a reproduced bug into the regression test.
+A completed scout leaves a self-contained report: read and relay its findings, record the report as the Done artifact, and re-evaluate the queue.
+A report may recommend implementation but does not authorize it, and teardown enforces `decision-hold-lifecycle`'s shared completion gate before the scratch worktree goes.
+When implementation is separately authorized, promote the existing scout through `bin/fm-promote.sh` rather than creating a duplicate task; it owns the promoted worker's ship instructions, which leave scratch work behind and turn a reproduced bug into the regression test.
 
 ## 8. Supervision protocol
 
@@ -304,7 +292,7 @@ Handle actionable wakes as follows:
 4. For `heartbeat:`, review the whole fleet from the structured fleet view, reconcile suspicious tasks and PR state, update the backlog, and never report an unchanged fleet as progress.
 
 When any wake reports a merged PR for a project cloned in this home, refresh that clone through the guarded fleet-sync path.
-When X-linked work reaches a milestone or terminal state, load `fmx-respond`; before terminal teardown, use its promised-final reconciliation when a typed public commitment exists, otherwise post the final completion follow-up so the link clears even if earlier follow-ups were spent.
+When X-linked work reaches a milestone or terminal state, handle it under section 14 before teardown.
 
 A secondmate's idle endpoint is healthy, and parent supervision relies on its routed status rather than treating a quiet pane as stale.
 Waiting on a healthy supervision cycle is silent; empty polls, elapsed time, and no-change updates are not captain-facing progress.
