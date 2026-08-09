@@ -63,7 +63,9 @@ cat > "$SNAP" <<'JSON'
     "hold_reason":"Two valid windows compete","decision_question":"Which rollout window?",
     "repo":"alpha"},
    {"state":"queued","id":"d2","captain_actionable":true,"title":"Choose the cache shape",
-    "hold_reason":"Two shapes compete","repo":"alpha"}]}}
+    "hold_reason":"Two shapes compete","repo":"alpha"},
+   {"state":"queued","id":"d3","captain_actionable":true,"title":"Choose the fallback region",
+    "hold_reason":"Two regions compete","repo":"alpha"}]}}
 JSON
 
 BOARD="$TMP_ROOT/mission-control.html"
@@ -530,6 +532,7 @@ const chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--no-sandb
   "--remote-debugging-pipe", `--user-data-dir=${profile}`],
   {stdio:["ignore","ignore","ignore","pipe","pipe"]});
 let buffer = ""; let nextId = 0; const pending = new Map();
+let replaceNextPostResponse = false;
 function send(method, params = {}, sessionId) { return new Promise((resolve) => {
   const id = ++nextId; pending.set(id, resolve);
   chrome.stdio[3].write(`${JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})})}\0`);
@@ -537,7 +540,15 @@ function send(method, params = {}, sessionId) { return new Promise((resolve) => 
 chrome.stdio[4].on("data", (chunk) => { buffer += chunk; let at;
   while ((at = buffer.indexOf("\0")) >= 0) { const raw = buffer.slice(0, at); buffer = buffer.slice(at + 1);
     if (!raw) continue; const message = JSON.parse(raw); const resolve = pending.get(message.id);
-    if (resolve) { pending.delete(message.id); resolve(message); } }
+    if (resolve) { pending.delete(message.id); resolve(message); continue; }
+    if (message.method === "Fetch.requestPaused" && replaceNextPostResponse) {
+      replaceNextPostResponse = false;
+      send("Fetch.fulfillRequest", {requestId:message.params.requestId,responseCode:200,
+        responseHeaders:[{name:"Content-Type",value:"application/json"}],
+        body:Buffer.from("{").toString("base64")}, message.sessionId)
+        .then(() => send("Fetch.disable", {}, message.sessionId));
+    }
+  }
 });
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function evaluate(sessionId, expression) {
@@ -631,12 +642,49 @@ const revealState = `({body:document.body.className,
     "the confirmation banner overflowed a 390px viewport: " + JSON.stringify(narrow));
   await send("Emulation.clearDeviceMetricsOverride", {}, sid);
 
+  replaceNextPostResponse = true;
+  await send("Fetch.enable", {patterns:[{urlPattern:"*",requestStage:"Response"}]}, sid);
+  const interrupted = await evaluate(sid, `(async()=>{
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d2');
+    b.querySelector('[data-open=answer]').click();
+    var t=b.querySelector('textarea'); t.value='Keep this attempt across response loss.';
+    b.querySelector('form[data-intent=answer]').requestSubmit();
+    for (var i=0;i<200;i++){ if((b.querySelector('.rc-sent').textContent||'').indexOf('Not sent')===0) break;
+      await new Promise(r=>setTimeout(r,50)); }
+    var drafts=JSON.parse(sessionStorage.getItem(Object.keys(sessionStorage)
+      .find(k=>k.indexOf('fm-mission-control-drafts-v1:')===0))||'[]');
+    var saved=drafts.find(x=>x.identity.indexOf('d2')!==-1);
+    return {message:b.querySelector('.rc-sent').textContent,
+      open:!b.querySelector('form[data-intent=answer]').hidden,
+      editable:!t.disabled,retry:!b.querySelector('.rc-go').disabled,
+      attempt:saved&&saved.queued&&saved.queued.attempt,
+      payload:saved&&saved.queued&&saved.queued.payload};
+  })()`);
+  assert(interrupted.message.indexOf("Not sent") === 0 && interrupted.open
+    && interrupted.editable && interrupted.retry && interrupted.attempt
+    && interrupted.payload.indexOf("Keep this attempt across response loss.") !== -1,
+    "response loss did not preserve a retryable attempt and payload: " + JSON.stringify(interrupted));
+  assert(logLines() === before + 2,
+    "the service did not record the request before its response was lost");
+  const retried = await evaluate(sid, `(async()=>{
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d2');
+    b.querySelector('form[data-intent=answer]').requestSubmit();
+    for (var i=0;i<200;i++){ if(!b.querySelector('[data-ok=answer]').hidden) break;
+      await new Promise(r=>setTimeout(r,50)); }
+    return {confirmed:!b.querySelector('[data-ok=answer]').hidden,
+      head:b.querySelector('[data-ok=answer] .rc-ok-h').textContent};
+  })()`);
+  assert(retried.confirmed && retried.head === "Answer received",
+    "retrying the interrupted attempt did not confirm receipt: " + JSON.stringify(retried));
+  assert(logLines() === before + 2,
+    "retrying after response loss recorded the same captain answer twice");
+
   // The service dies with the page already open. A tap must then say so and stay
   // retryable rather than showing a confirmation nothing recorded.
   process.kill(Number(servicePid), "SIGTERM");
   await delay(600);
   const stranded = await evaluate(sid, `(async()=>{
-    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d2');
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d3');
     b.querySelector('[data-open=answer]').click();
     var t=b.querySelector('textarea'); t.value='This answer must survive a dead service.';
     b.querySelector('form[data-intent=answer]').requestSubmit();
@@ -647,7 +695,7 @@ const revealState = `({body:document.body.className,
       open:!b.querySelector('form[data-intent=answer]').hidden,
       value:t.value,editable:!t.disabled,retry:!b.querySelector('.rc-go').disabled,
       acked:Object.keys(localStorage).filter(k=>k.indexOf('fm-mission-control-ack-v1:')===0
-        && k.indexOf('d2')!==-1).length};
+        && k.indexOf('d3')!==-1).length};
   })()`);
   assert(stranded.message.indexOf("Not sent") === 0 && !stranded.confirmed,
     "an unreachable service was reported as a confirmation: " + JSON.stringify(stranded));
@@ -656,7 +704,7 @@ const revealState = `({body:document.body.className,
     "an unreachable service did not leave the answer open, editable and retryable: "
     + JSON.stringify(stranded));
   assert(stranded.acked === 0, "an unreachable service left a remembered acknowledgement");
-  assert(logLines() === before + 1, "an unreachable service recorded something anyway");
+  assert(logLines() === before + 2, "an unreachable service recorded something anyway");
 
   process.stdout.write("browser reply flow ok\n");
 })().finally(() => chrome.kill()).catch((error) => { console.error(error.stack||error); process.exitCode=1; });
@@ -673,9 +721,9 @@ JS
   # because a confirmation for an uncollected request is the original fault.
   "$ADAPTER" retire "$BOARD" >/dev/null || fail "retiring for the uncollected case must succeed"
   start_service
-  node - "$chrome" "$URL" "$TMP_ROOT/chrome-profile-uncollected" <<'JS'
-const { spawn } = require("node:child_process");
-const [chromePath, serviceUrl, profile] = process.argv.slice(2);
+  node - "$chrome" "$URL" "$TMP_ROOT/chrome-profile-uncollected" "$ADAPTER" "$BOARD" <<'JS'
+const { spawn, spawnSync } = require("node:child_process");
+const [chromePath, serviceUrl, profile, adapter, board] = process.argv.slice(2);
 const chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--no-sandbox",
   "--remote-debugging-pipe", `--user-data-dir=${profile}`],
   {stdio:["ignore","ignore","ignore","pipe","pipe"]});
@@ -721,6 +769,26 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   assert(uncollected.note.indexOf("not collecting") !== -1
     && uncollected.tone.indexOf("rc-warn") !== -1,
     "a request nothing is collecting read as a clean success: " + JSON.stringify(uncollected));
+  const armed = spawnSync(adapter, ["arm", board], {env:process.env,encoding:"utf8"});
+  assert(armed.status === 0, "arming the board failed: " + armed.stdout + armed.stderr);
+  const collecting = await evaluate(sid, `(async()=>{
+    var ask=document.querySelector('.rc-ask');
+    ask.querySelector('textarea').value='Confirm collection is active now.';
+    ask.querySelector('form[data-intent=ask]').requestSubmit();
+    for (var i=0;i<200;i++){
+      if(!ask.querySelector('[data-ok=ask]').hidden) break;
+      await new Promise(r=>setTimeout(r,50));
+    }
+    var prior=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d2')
+      .querySelector('[data-ok=answer]');
+    return {priorNote:prior.querySelector('.rc-ok-s').textContent,priorTone:prior.className,
+      askConfirmed:!ask.querySelector('[data-ok=ask]').hidden,
+      askTone:ask.querySelector('[data-ok=ask]').className};
+  })()`);
+  assert(collecting.askConfirmed && collecting.askTone.indexOf("rc-warn") === -1
+    && collecting.priorNote.indexOf("Recorded for firstmate") === 0
+    && collecting.priorTone.indexOf("rc-warn") === -1,
+    "an armed response left stale uncollected styling: " + JSON.stringify(collecting));
   process.stdout.write("uncollected wording ok\n");
 })().finally(() => chrome.kill()).catch((error) => { console.error(error.stack||error); process.exitCode=1; });
 JS

@@ -2341,6 +2341,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
      read-only board with no dead controls. */
   function ownUrl() { return window.location.pathname || \"/\"; }
 
+  var COLLECTED = \"Recorded for firstmate, which applies it under its own checks. It stays here until the call clears.\";
   var UNCOLLECTED = \"Recorded, but firstmate is not collecting replies from this board yet.\";
   var collecting = true;
 
@@ -2349,12 +2350,15 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
      claiming a collection that is not happening. */
   function noteCollecting(ok) {
     collecting = ok;
-    if (ok) { return; }
     Array.prototype.forEach.call(document.querySelectorAll(\".rc-ok\"), function (panel) {
-      if (panel.hidden) { return; }
       var note = panel.querySelector(\".rc-ok-s\");
-      if (note) { note.textContent = UNCOLLECTED; }
-      panel.classList.add(\"rc-warn\");
+      if (ok) {
+        if (note) { note.textContent = COLLECTED; }
+        panel.classList.remove(\"rc-warn\");
+      } else if (!panel.hidden) {
+        if (note) { note.textContent = UNCOLLECTED; }
+        panel.classList.add(\"rc-warn\");
+      }
     });
   }
 
@@ -2397,12 +2401,21 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       body: JSON.stringify({wire: wire, attempt: attempt})
     });
     var text = \"\";
-    try { text = await res.text(); } catch (e) { text = \"\"; }
+    if (!res.ok) {
+      try { text = await res.text(); } catch (e) { text = \"\"; }
+      var refusalData = null;
+      try { refusalData = JSON.parse(text); } catch (e) { refusalData = null; }
+      var refusal = new Error((refusalData && typeof refusalData.reason === \"string\"
+        && refusalData.reason) || \"firstmate did not accept it\");
+      refusal.definite = true;
+      throw refusal;
+    }
+    text = await res.text();
     var data = null;
     try { data = JSON.parse(text); } catch (e) { data = null; }
-    if (res.ok && data && data.ok === true) { return data; }
+    if (data && data.ok === true) { return data; }
     throw new Error((data && typeof data.reason === \"string\" && data.reason)
-      || \"firstmate did not accept it\");
+      || \"firstmate did not confirm receipt\");
   }
 
   function formsIn(block) {
@@ -2757,11 +2770,15 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       saveDrafts(true);
       var recorded = null;
       var refused = \"\";
+      var definiteRefusal = false;
       try { recorded = await postRequest(wire, attempting.attempt); }
-      catch (e) { refused = (e && e.message) || \"\"; }
+      catch (e) {
+        refused = (e && e.message) || \"\";
+        definiteRefusal = !!(e && e.definite === true);
+      }
       delete requestInFlight[requestIdentity];
       if (!recorded) {
-        delete requestState[requestIdentity];
+        if (definiteRefusal) { delete requestState[requestIdentity]; }
         releasePayload(form);
         say(block, \"Not sent - \" + (refused || \"the board could not reach firstmate\")
           + \". Try again.\", true);
