@@ -163,7 +163,7 @@ Firstmate deploys it in three steps, none of which touch this repo:
 
 `serve` and `arm` must run with the same `FM_HOME`, because both resolve the request log and the registration from it.
 A launch agent or unit that inherits no `FM_HOME` resolves them against the tracked code root instead, which reads as a working service on a board nothing is collecting.
-`serve` prints the home it resolved and whether the board is armed, so a mismatch is visible in its first three lines rather than as a request that silently goes nowhere.
+`serve` prints the home it resolved and whether the board is armed in its startup output, so a mismatch is visible immediately rather than as a request that silently goes nowhere.
 
 Arming has no precondition and is safe in any order: the request log is append-only and never consumed, so requests accepted while nothing is armed are picked up whole by a later arm.
 A request recorded by the service becomes an ordinary durable `check` wake through the same `state/procevent/` framework every other source uses, so firstmate's normal wake drain picks it up with no second notification path.
