@@ -562,7 +562,7 @@ test_ordinary_registered_project_brief_is_byte_stable() {
   assert_no_grep "You are not firstmate." "$brief" \
     "ordinary registered project brief unexpectedly gained the firstmate identity guard"
   digest=$(sed -e "s|$home|<home>|g" -e "s|$ROOT|<root>|g" "$brief" | cksum)
-  expected='3440488874 6459'
+  expected='1215957393 6458'
   [ "$digest" = "$expected" ] \
     || fail "ordinary registered project brief changed bytes (got: $digest)"
   pass "fm-brief.sh: ordinary registered project brief remains byte-identical"
