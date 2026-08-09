@@ -10,7 +10,7 @@ metadata:
 
 # no-mistakes-validation
 
-`AGENTS.md` section 7's "Validate" subsection owns the always-loaded boundaries: the trigger, the rule that the task worker owns every `no-mistakes axi run` and `no-mistakes axi respond` call for its own run, the rule that firstmate never invokes `no-mistakes axi respond` for a crew-owned run, the scope boundary on new requirements, the ask-user escalation authority, and the rule that validation is judged by reconciled state rather than shell liveness or the run step.
+`AGENTS.md` section 13 indexes this skill's load trigger, and its section 7 "Validate" subsection owns the always-loaded boundaries: the rule that the task worker owns every `no-mistakes axi run` and `no-mistakes axi respond` call for its own run, the rule that firstmate never invokes `no-mistakes axi respond` for a crew-owned run, the scope boundary on new requirements, the ask-user escalation authority, and the rule that validation is judged by reconciled state rather than shell liveness or the run step.
 This skill owns the two procedures that fire only inside a live run.
 `bin/fm-crew-state.sh`'s header owns the exact state mapping, and current `no-mistakes axi --help` owns exact command syntax.
 
