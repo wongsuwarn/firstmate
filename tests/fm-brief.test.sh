@@ -440,16 +440,12 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout() {
 }
 
 test_firstmate_repo_identity_guard_applies_to_ship_and_scout() {
-  local home firstmate_clone firstmate_remote id kind brief command
+  local home firstmate_clone id kind brief command
   home="$TMP_ROOT/firstmate-identity-guard-home"
   firstmate_clone="$home/projects/firstmate"
   mkdir -p "$home/data" "$home/projects"
   git clone -q "$ROOT" "$firstmate_clone" \
     || fail "firstmate-repository guard fixture clone failed"
-  firstmate_remote=$(git -C "$ROOT" remote get-url origin) \
-    || fail "firstmate-repository guard fixture has no origin remote"
-  git -C "$firstmate_clone" remote set-url origin "$firstmate_remote" \
-    || fail "firstmate-repository guard fixture could not match its origin remote"
 
   for kind in ship scout; do
     id="brief-firstmate-identity-$kind"
@@ -477,6 +473,31 @@ test_firstmate_repo_identity_guard_applies_to_ship_and_scout() {
       "$kind firstmate-repository brief did not forbid captain-facing communication"
   done
   pass "fm-brief.sh: firstmate-repository ship and scout briefs carry the identity guard"
+}
+
+test_firstmate_repo_identity_guard_normalizes_ssh_and_https_origins() {
+  local home firstmate_clone firstmate_remote ssh_remote brief
+  home="$TMP_ROOT/firstmate-identity-normalized-home"
+  firstmate_clone="$home/projects/firstmate"
+  mkdir -p "$home/data" "$home/projects"
+  git clone -q "$ROOT" "$firstmate_clone" \
+    || fail "firstmate-repository normalized-origin fixture clone failed"
+  firstmate_remote=$(git -C "$ROOT" remote get-url origin) \
+    || fail "firstmate-repository normalized-origin fixture has no origin remote"
+  case "$firstmate_remote" in
+    https://*) ssh_remote="git@${firstmate_remote#https://}" ;;
+    http://*) ssh_remote="git@${firstmate_remote#http://}" ;;
+    *) fail "firstmate-repository normalized-origin fixture requires an HTTP origin" ;;
+  esac
+  ssh_remote="${ssh_remote%%/*}:${ssh_remote#*/}"
+  git -C "$firstmate_clone" remote set-url origin "$ssh_remote" \
+    || fail "firstmate-repository normalized-origin fixture could not set its SSH origin"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-firstmate-identity-normalized firstmate --mode no-mistakes >/dev/null 2>&1 \
+    || fail "firstmate-repository brief with equivalent SSH origin should scaffold"
+  brief="$home/data/brief-firstmate-identity-normalized/brief.md"
+  assert_grep "You are not firstmate." "$brief" \
+    "equivalent SSH and HTTPS origins did not receive the firstmate identity guard"
+  pass "fm-brief.sh: firstmate-repository identity normalizes SSH and HTTPS origins"
 }
 
 test_ordinary_registered_project_brief_is_byte_stable() {
@@ -782,6 +803,7 @@ test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
 test_firstmate_repo_identity_guard_applies_to_ship_and_scout
+test_firstmate_repo_identity_guard_normalizes_ssh_and_https_origins
 test_ordinary_registered_project_brief_is_byte_stable
 test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
