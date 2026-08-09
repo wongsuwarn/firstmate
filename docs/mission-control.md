@@ -131,9 +131,9 @@ Recorded is not the same as collected, and the difference is a reachable live st
 The service therefore reports whether a wake is registered for this board, and the banner says `Recorded, but firstmate is not collecting replies from this board yet` when it is not, instead of implying firstmate already has it.
 A confirmation restored on load is corrected as soon as the probe answers, so the wording always reflects the current state rather than the state at the time of the tap.
 
-A failed send leaves the form open, keeps its text editable, and remains retryable, and records no acknowledgement.
-An interrupted send is different, because it is genuinely ambiguous: the board keeps the exact payload in that draft's session record and locks editing and cancellation across full-document reloads, so a retry can neither send a duplicate nor acknowledge newer text while sending the older payload.
-Each attempt receives one durable browser-generated identity that the retry reuses, so the service recognises that exact attempt and records it once rather than twice.
+A failed or interrupted send leaves the form open, keeps its text editable, remains retryable, and records no acknowledgement.
+The draft's session record keeps the attempted payload and its browser-generated identity across reloads: a byte-identical retry reuses that identity, while edited text receives a new identity.
+That lets the service recognise an exact retry and record it once rather than twice without preventing the captain from changing the request.
 Every open composer and its draft are saved eagerly in session storage under the exact board, owning home, item, decision key, and intent identity.
 A full document reload restores only controls whose exact identity still exists, so an external generator rewrite cannot erase an in-progress answer and cannot attach it to a neighbouring decision.
 Submitted presentation state is browser-local, scoped by board home, document, owning home, item, decision key, and intent.

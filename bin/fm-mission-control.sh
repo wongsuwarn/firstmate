@@ -2407,7 +2407,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       try { refusalData = JSON.parse(text); } catch (e) { refusalData = null; }
       var refusal = new Error((refusalData && typeof refusalData.reason === \"string\"
         && refusalData.reason) || \"firstmate did not accept it\");
-      refusal.definite = true;
+      refusal.definite = !!(refusalData && refusalData.ok === false
+        && typeof refusalData.reason === \"string\");
       throw refusal;
     }
     text = await res.text();

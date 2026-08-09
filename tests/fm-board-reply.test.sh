@@ -543,9 +543,9 @@ chrome.stdio[4].on("data", (chunk) => { buffer += chunk; let at;
     if (resolve) { pending.delete(message.id); resolve(message); continue; }
     if (message.method === "Fetch.requestPaused" && replaceNextPostResponse) {
       replaceNextPostResponse = false;
-      send("Fetch.fulfillRequest", {requestId:message.params.requestId,responseCode:200,
-        responseHeaders:[{name:"Content-Type",value:"application/json"}],
-        body:Buffer.from("{").toString("base64")}, message.sessionId)
+      send("Fetch.fulfillRequest", {requestId:message.params.requestId,responseCode:502,
+        responseHeaders:[{name:"Content-Type",value:"text/plain"}],
+        body:Buffer.from("Bad Gateway").toString("base64")}, message.sessionId)
         .then(() => send("Fetch.disable", {}, message.sessionId));
     }
   }
