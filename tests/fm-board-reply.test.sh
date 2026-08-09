@@ -846,8 +846,14 @@ BOARD="$TMP_ROOT/thread-board.html"
   || fail "the thread board fixture must render"
 LOG=$("$ADAPTER" log-path "$BOARD") || fail "log-path must resolve for the thread board"
 REPLY_LOG=$("$ADAPTER" reply-log-path "$BOARD") || fail "reply-log-path must resolve"
+THREAD_SOURCE_ID=$("$ADAPTER" source-id "$BOARD") || fail "source-id must resolve for the thread board"
 [ "$REPLY_LOG" != "$LOG" ] \
   || fail "firstmate's replies must not share the log the wake source reads"
+"$ADAPTER" arm "$BOARD" >/dev/null || fail "arming the thread board must succeed"
+[ "$("$ADAPTER" board-path "$THREAD_SOURCE_ID")" = "$(perl -MCwd=realpath -e 'print realpath($ARGV[0])' "$BOARD")" ] \
+  || fail "a board-reply wake source must resolve to its originating board"
+"$ADAPTER" board-path board-not-registered >/dev/null 2>&1 \
+  && fail "an unregistered source id must not resolve to a board"
 start_service
 
 thread_read() { body_of "$(http GET "${URL}?fm-board-reply=thread")"; }
@@ -883,8 +889,8 @@ pass "the one-shot Ask-firstmate flow is unchanged, and a one-action control nev
 # The stamps both logs keep are whole seconds, so each turn is taken in its own
 # second here rather than letting the test depend on the same-second tie-break.
 sleep 1.1
-"$ADAPTER" say "$BOARD" "Nothing is blocking it - the credential landed." >/dev/null \
-  || fail "firstmate must be able to reply to the board"
+"$ADAPTER" say-source "$THREAD_SOURCE_ID" "Nothing is blocking it - the credential landed." >/dev/null \
+  || fail "firstmate must be able to reply using the source id from the wake"
 sleep 1.1
 [ "$(status_of "$(ask 'Then ship it tonight.' fm-board:th3)")" = 200 ] \
   || fail "the captain must be able to reply to firstmate's reply"
@@ -900,7 +906,6 @@ pass "a captain ask, firstmate's answer, and the captain's reply to it read back
 # The wake source reads the request log and only the request log, so nothing
 # firstmate says to the board can come back to firstmate as work to do.
 [ "$(log_lines)" = 3 ] || fail "a firstmate reply reached the request log, now $(log_lines) lines"
-"$ADAPTER" arm "$BOARD" >/dev/null || fail "arming the thread board must succeed"
 "$ADAPTER" source "$BOARD" > "$TMP_ROOT/thread-source.txt" || fail "the source must report"
 grep -q "credential landed" "$TMP_ROOT/thread-source.txt" \
   && fail "a firstmate reply was announced to firstmate as a request"
@@ -993,6 +998,7 @@ s.close()')
   node - "$chrome" "$URL" "http://127.0.0.1:$static_port/" \
     "$TMP_ROOT/chrome-profile-thread" "$ADAPTER" "$BOARD" <<'JS'
 const { spawn, spawnSync } = require("node:child_process");
+const fs = require("node:fs");
 const [chromePath, serviceUrl, staticUrl, profile, adapter, board] = process.argv.slice(2);
 const chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--no-sandbox",
   "--remote-debugging-pipe", `--user-data-dir=${profile}`],
@@ -1084,6 +1090,21 @@ const rows = `[...document.querySelectorAll('#ask-thread .thr-m')].map(function 
   assert(arrived.stillHeld === true,
     "the thread only updated because the board reloaded under it: " + JSON.stringify(arrived));
 
+  for (let i=0;i<51;i++) {
+    const added = spawnSync(adapter, ["say", board, `Window message ${i}.`],
+      {env:process.env,encoding:"utf8"});
+    assert(added.status === 0, "posting a window message failed: " + added.stdout + added.stderr);
+  }
+  const bounded = await evaluate(sid, `(async()=>{
+    for (var i=0;i<300;i++){ var r=${rows};
+      if(r.length===50 && r[r.length-1]==='Firstmate: Window message 50.') return r;
+      await new Promise(x=>setTimeout(x,50)); }
+    return ${rows};
+  })()`);
+  assert(bounded.length === 50 && bounded[bounded.length - 1] === "Firstmate: Window message 50.",
+    "the open board did not reconcile to the authoritative 50-message window: "
+      + JSON.stringify(bounded));
+
   // Nothing in the conversation is a control, and nothing about it holds the
   // board: a reply is text, and text alone.
   const inertRows = await evaluate(sid, `(() => { var t=document.getElementById('ask-thread');
@@ -1101,6 +1122,28 @@ const rows = `[...document.querySelectorAll('#ask-thread .thr-m')].map(function 
   assert(!narrow.overflow && narrow.box.every((r) => r.left >= 0 && r.right <= 390),
     "the conversation overflowed a 390px viewport: " + JSON.stringify(narrow));
 
+  const requestPath = spawnSync(adapter, ["log-path", board],
+    {env:process.env,encoding:"utf8"}).stdout.trim();
+  const replyPath = spawnSync(adapter, ["reply-log-path", board],
+    {env:process.env,encoding:"utf8"}).stdout.trim();
+  const filler = "x".repeat(1900);
+  const partial = [];
+  for (let i=0;i<150;i++) {
+    const wire = "FM-BOARD-REQUEST " + JSON.stringify(
+      {v:1,intent:"answer",home:"main",id:"d1",note:filler});
+    partial.push(`  ${JSON.stringify("2026-08-09T12:00:00Z")},`
+      + `${JSON.stringify(`fm-board:partial-${i}`)},${JSON.stringify(wire)}\n`);
+  }
+  fs.writeFileSync(requestPath, partial.join(""));
+  fs.writeFileSync(replyPath, "");
+  const emptyPartial = await evaluate(sid, `(async()=>{ for(var i=0;i<300;i++){
+    var t=document.getElementById('ask-thread'); var state={hidden:t.hidden,
+      more:t.querySelector('.thr-more').hidden,rows:${rows}.length};
+    if(!state.hidden && !state.more && state.rows===0) return state;
+    await new Promise(r=>setTimeout(r,50)); } return state; })()`);
+  assert(!emptyPartial.hidden && !emptyPartial.more && emptyPartial.rows === 0,
+    "an empty partial read hid its truncation disclosure: " + JSON.stringify(emptyPartial));
+
   process.stdout.write("board thread ok\n");
 })().finally(() => chrome.kill()).catch((error) => { console.error(error.stack||error); process.exitCode=1; });
 JS
@@ -1113,5 +1156,29 @@ JS
 
 test_the_thread_reads_and_updates_on_the_board
 stop_service
+
+# The record count applies to conversation messages, not unrelated one-action
+# records that happen to share the captain request log.
+BOARD="$TMP_ROOT/thread-window-board.html"
+"$BOARD_BIN" --snapshot "$SNAP" --no-quota --controls --refresh 300 --out "$BOARD" >/dev/null \
+  || fail "the thread window board fixture must render"
+LOG=$("$ADAPTER" log-path "$BOARD") || fail "log-path must resolve for the thread window board"
+REPLY_LOG=$("$ADAPTER" reply-log-path "$BOARD") || fail "reply-log-path must resolve for the thread window board"
+start_service
+[ "$(status_of "$(ask 'Keep this ask visible.' fm-board:window-ask)")" = 200 ] \
+  || fail "the window fixture ask must be accepted"
+window_answer=$(envelope '{"v":1,"intent":"answer","home":"main","id":"d1","note":"Window filler."}')
+n=1
+while [ "$n" -le 55 ]; do
+  [ "$(status_of "$(send "$window_answer" "fm-board:window-$n")")" = 200 ] \
+    || fail "one-action window filler $n must be accepted"
+  n=$((n + 1))
+done
+[ "$(thread_says 'len(thread["messages"])')" = 1 ] \
+  || fail "unrelated one-action records evicted the Ask conversation: $(thread_read)"
+[ "$(thread_says 'thread["messages"][0]["text"]')" = "Keep this ask visible." ] \
+  || fail "the retained Ask conversation message changed: $(thread_read)"
+stop_service
+pass "the 50-message bound is applied after filtering and merging the conversation"
 
 printf '\nall board reply transport tests passed\n'

@@ -5,6 +5,8 @@
 #   fm-procevent-board-reply.sh serve <board.html> [--port <n>] [--host <addr>]
 #   fm-procevent-board-reply.sh arm <board.html> [--rebase]
 #   fm-procevent-board-reply.sh say <board.html> <text>|-
+#   fm-procevent-board-reply.sh say-source <source-id> <text>|-
+#   fm-procevent-board-reply.sh board-path <source-id>
 #   fm-procevent-board-reply.sh source <board.html>
 #   fm-procevent-board-reply.sh requests <result-file>
 #   fm-procevent-board-reply.sh classify <result-file>
@@ -45,6 +47,8 @@
 #            `source` reads the request log and only the request log, so a reply
 #            can never become a wake, can never be adjudicated as captain intent,
 #            and opens no execution path: it is display text for one board.
+# say-source Post the same reply using the source id carried by a board-reply
+#            wake. `board-path` resolves that id through its live registration.
 # source     The registered blocking child. NEVER run this in a conversational
 #            turn; the runner exists to hold it outside one.
 # requests   Normalize a captured result into one JSON record per line, through
@@ -160,6 +164,30 @@ ensure_request_dir() {
 # so at startup instead of accepting requests no one will ever read.
 registration_path() {  # <source-id>
   printf '%s/%s.source\n' "$(fm_procevent_registry_dir "$STATE")" "$1"
+}
+
+cmd_board_path() {
+  local id=${1-} registration adapter argc expected board derived
+  local -a argv=()
+  [ "$#" -eq 1 ] || usage
+  fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
+  registration=$(registration_path "$id")
+  [ -f "$registration" ] && [ ! -L "$registration" ] \
+    || die "board-reply source is not registered: $id"
+  adapter=$(sed -n 's/^adapter=//p' "$registration" | head -1)
+  argc=$(sed -n 's/^argc=//p' "$registration" | head -1)
+  [ "$adapter" = board-reply ] && [ "$argc" = 3 ] \
+    || die "source is not a board-reply registration: $id"
+  while IFS= read -r expected; do argv+=("$expected"); done \
+    < <(sed -n '/^argv:$/,$p' "$registration" | tail -n +2)
+  [ "${#argv[@]}" -eq 3 ] \
+    && [ "${argv[0]}" = "$SCRIPT_DIR/fm-procevent-board-reply.sh" ] \
+    && [ "${argv[1]}" = source ] \
+    || die "board-reply registration is malformed: $id"
+  board=${argv[2]}
+  derived=$(cmd_source_id "$board") || exit 1
+  [ "$derived" = "$id" ] || die "board-reply registration does not match its source id: $id"
+  real_path "$board" || die "cannot resolve the board path: $board"
 }
 
 cmd_serve() {
@@ -340,6 +368,13 @@ close($fh) or refuse("the reply could not be recorded");
 print "posted: $id\n";
 ' "$PARSER" "$log" "$text" || exit 1
   printf 'thread: %s\n' "$log"
+}
+
+cmd_say_source() {
+  local id=${1-} text=${2-} board
+  [ "$#" -eq 2 ] || usage
+  board=$(cmd_board_path "$id") || exit 1
+  cmd_say "$board" "$text"
 }
 
 # The registered blocking child. It reads and never writes: the cursor comes from
@@ -565,6 +600,8 @@ case "${1-}" in
   serve)     shift; cmd_serve "$@" ;;
   arm)       shift; cmd_arm "$@" ;;
   say)       shift; cmd_say "$@" ;;
+  say-source) shift; cmd_say_source "$@" ;;
+  board-path) shift; cmd_board_path "$@" ;;
   source)    shift; cmd_source "$@" ;;
   requests)  shift; cmd_requests "$@" ;;
   classify)  shift; cmd_classify "$@" ;;

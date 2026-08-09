@@ -133,7 +133,7 @@ def no_duplicate_keys(pairs):
     return seen
 
 
-def tail_records(path, max_bytes, max_records):
+def tail_records(path, max_bytes):
     """The last whole record lines of an append-only log, and whether any were cut.
 
     Only complete lines are records, so a write in progress at the end of the file
@@ -156,9 +156,6 @@ def tail_records(path, max_bytes, max_records):
         lines = lines[1:]
     usable = [line for line in lines if line[:1] in (" ", "\t") and "\r" not in line]
     cut = cut or len(usable) != len(lines)
-    if len(usable) > max_records:
-        usable = usable[-max_records:]
-        cut = True
     return usable, cut
 
 
@@ -212,7 +209,7 @@ class Thread:
         cached = self.cache.get(path)
         if cached is not None and cached[0] == fingerprint:
             return cached[1], cached[2]
-        lines, cut = tail_records(path, THREAD_TAIL_BYTES, THREAD_MAX_MESSAGES)
+        lines, cut = tail_records(path, THREAD_TAIL_BYTES)
         messages = self.parse(lines, kind, intent, sender) if lines else []
         self.cache[path] = (fingerprint, messages, cut)
         return messages, cut

@@ -2647,7 +2647,6 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   var thread = document.getElementById(\"ask-thread\");
   var threadList = thread ? thread.querySelector(\".thr-list\") : null;
   var threadMore = thread ? thread.querySelector(\".thr-more\") : null;
-  var threadSeen = {};
   var threadReading = false;
   var threadFirst = true;
 
@@ -2659,40 +2658,52 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     catch (e) { return at; }
   }
 
-  /* Messages are appended, never re-rendered, so a poll that returns the same
-     conversation does not churn the DOM under a captain who is reading it. */
   function renderThread(data) {
-    if (!threadList || !data || !data.messages || !data.messages.length) { return; }
+    if (!threadList || !data || !data.messages) { return; }
     if (threadFirst) { threadList.setAttribute(\"aria-live\", \"off\"); }
+    var existing = {};
+    Array.prototype.forEach.call(threadList.children, function (row) {
+      if (row._fmThreadKey) { existing[row._fmThreadKey] = row; }
+    });
+    var wanted = {};
+    var place = threadList.firstChild;
     Array.prototype.forEach.call(data.messages, function (message) {
       if (!message || typeof message.text !== \"string\" || !message.text) { return; }
       var key = (typeof message.id === \"string\" && message.id) ? message.id
         : (message.from + \" \" + message.at + \" \" + message.text);
-      if (threadSeen[key]) { return; }
-      threadSeen[key] = true;
+      if (wanted[key]) { return; }
+      wanted[key] = true;
       var mine = message.from === \"captain\";
-      var row = document.createElement(\"li\");
-      row.className = mine ? \"thr-m thr-captain\" : \"thr-m thr-firstmate\";
-      var head = document.createElement(\"div\");
-      head.className = \"thr-head\";
-      var who = document.createElement(\"span\");
-      who.className = \"thr-who\";
-      who.textContent = mine ? \"You\" : \"Firstmate\";
-      head.appendChild(who);
-      var when = threadWhen(message.at);
-      if (when) {
-        var stamp = document.createElement(\"time\");
-        stamp.className = \"thr-at\";
-        stamp.textContent = when;
-        if (typeof message.at === \"string\") { stamp.setAttribute(\"datetime\", message.at); }
-        head.appendChild(stamp);
+      var row = existing[key];
+      if (!row) {
+        row = document.createElement(\"li\");
+        row._fmThreadKey = key;
+        row.className = mine ? \"thr-m thr-captain\" : \"thr-m thr-firstmate\";
+        var head = document.createElement(\"div\");
+        head.className = \"thr-head\";
+        var who = document.createElement(\"span\");
+        who.className = \"thr-who\";
+        who.textContent = mine ? \"You\" : \"Firstmate\";
+        head.appendChild(who);
+        var when = threadWhen(message.at);
+        if (when) {
+          var stamp = document.createElement(\"time\");
+          stamp.className = \"thr-at\";
+          stamp.textContent = when;
+          if (typeof message.at === \"string\") { stamp.setAttribute(\"datetime\", message.at); }
+          head.appendChild(stamp);
+        }
+        var body = document.createElement(\"p\");
+        body.className = \"thr-t\";
+        body.textContent = message.text;
+        row.appendChild(head);
+        row.appendChild(body);
       }
-      var body = document.createElement(\"p\");
-      body.className = \"thr-t\";
-      body.textContent = message.text;
-      row.appendChild(head);
-      row.appendChild(body);
-      threadList.appendChild(row);
+      if (row !== place) { threadList.insertBefore(row, place); }
+      place = row.nextSibling;
+    });
+    Array.prototype.forEach.call(Array.prototype.slice.call(threadList.children), function (row) {
+      if (!row._fmThreadKey || !wanted[row._fmThreadKey]) { threadList.removeChild(row); }
     });
     /* Announce what ARRIVES, not what was already there: reading back the whole
        conversation on load would bury the one line the captain is waiting for. */
@@ -2700,8 +2711,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       threadFirst = false;
       setTimeout(function () { threadList.setAttribute(\"aria-live\", \"polite\"); }, 0);
     }
-    if (threadList.children.length && thread) { thread.hidden = false; }
     if (threadMore) { threadMore.hidden = data.truncated !== true; }
+    if (thread) { thread.hidden = !threadList.children.length && data.truncated !== true; }
   }
 
   function readThread() {

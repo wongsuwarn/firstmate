@@ -186,7 +186,7 @@ A launch agent or unit that inherits no `FM_HOME` resolves them against the trac
 Arming has no precondition and is safe in any order: the request log is append-only and never consumed, so requests accepted while nothing is armed are picked up whole by a later arm.
 A request recorded by the service becomes an ordinary durable `check` wake through the same `state/procevent/` framework every other source uses, so firstmate's normal wake drain picks it up with no second notification path.
 
-`bin/fm-procevent-board-reply.sh say <board.html> <text>|-` is how firstmate answers into a board's conversation, and `reply-log-path <board.html>` prints where that conversation is kept.
+`bin/fm-procevent-board-reply.sh say-source <source-id> <text>|-` is how firstmate answers a board-reply wake into its originating board's conversation, while `say <board.html> <text>|-` is the board-path form and `reply-log-path <board.html>` prints where that conversation is kept.
 A reply is validated by the same program over the same bytes, under its own marker and its own single permitted intent, and direction is taken from the leading marker so neither side can claim the other's.
 It is appended to a separate log the wake source never reads, which is what keeps firstmate from being woken by its own words and keeps a firstmate message from ever reaching the request path.
 The service returns both sides together on a read the board makes for display only, keeps the newest messages when a conversation outgrows the window it holds, and reports that a read was partial rather than presenting a truncated history as the whole of it.
