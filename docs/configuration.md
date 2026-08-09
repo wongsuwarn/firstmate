@@ -130,14 +130,16 @@ See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`veri
 ## Captain-action notifications (config/captain-action-notifications)
 
 The watcher compares each current `fm-fleet-snapshot.v1` captain-actionable decision and main-home recorded PR against the immediately prior check.
+This check and its desktop alert run independently of the Mission Control page, so closing the page does not disable notifications while the watcher remains active.
 `state/.captain-action-notification-set` stores only that prior identity set, while `state/.last-captain-action-notification-check` schedules the next check.
 An absent set establishes a silent baseline, so enabling this feature never replays existing work.
-Only identities newly entering that set post one batched notification, while a resolved item that later reopens posts again.
-`config/captain-action-notifications` is local and gitignored and uses the same `off`, `auto`/`default`, `osascript`, `herdr`, and `command:<cmd>` directive grammar as `config/wedge-alarm`.
+Only identities newly entering that set produce one batched alert through each configured channel, while a resolved item that later reopens alerts again.
+`config/captain-action-notifications` is local and gitignored and uses the channel grammar defined for [`config/wedge-alarm`](wedge-alarm.md#channels).
 Its absent default is `auto`, which posts through macOS Notification Center when available.
 It is intentionally a sibling rather than an extension of `config/wedge-alarm`: turning off the rare away-mode wedge alarm must not turn off normal review and decision prompts.
 `FM_CAPTAIN_ACTION_NOTIFICATION_CHANNEL` overrides this config with one directive, and `FM_CAPTAIN_ACTION_NOTIFY_INTERVAL` sets the watcher cadence in seconds (default 60).
-The delivery machinery, timeout, argv-safe AppleScript, and test recorder seam are the existing wedge-alarm implementation; a missing or failing notifier only logs and cannot interrupt supervision.
+The delivery machinery, timeout, argv-safe AppleScript, and test recorder seam are the existing wedge-alarm implementation.
+An unavailable or malformed snapshot and missing tooling, denied notification permission, or any notifier failure log only to watcher triage and cannot crash supervision or create a supervision wake.
 
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
