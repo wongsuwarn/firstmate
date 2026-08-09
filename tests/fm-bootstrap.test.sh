@@ -878,7 +878,7 @@ test_routine_bootstrap_contract_runs_under_system_bash() {
 }
 
 test_mission_control_board_staleness_check() {
-  local case_dir home fakebin board out fresh
+  local case_dir home fakebin board curl_log out fresh
   case_dir="$TMP_ROOT/mission-control-staleness"
   home="$case_dir/home"
   mkdir -p "$home/config"
@@ -912,6 +912,28 @@ test_mission_control_board_staleness_check() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   [ -z "$out" ] || fail "malformed Mission Control timestamp should fail closed, got: $out"
+
+  curl_log="$case_dir/curl.log"
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_FAKE_CURL_LOG"
+printf '%s\n' '<footer>rendered 2000-01-01T00:00:00Z</footer>'
+SH
+  chmod +x "$fakebin/curl"
+  printf '%s\n' 'http://127.0.0.1' > "$home/config/mission-control-board"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_CURL_LOG="$curl_log" "$ROOT/bin/fm-bootstrap.sh")
+  printf '%s\n' "$out" | grep -F 'MISSION_CONTROL_STALE: board last rendered 2000-01-01T00:00:00Z' >/dev/null \
+    || fail "bare loopback Mission Control URL should be fetched, got: $out"
+  grep -F -- '--disable --fail --silent --noproxy * --proto =http --proto-redir =http --max-filesize 8388608 --max-time 2 http://127.0.0.1' "$curl_log" >/dev/null \
+    || fail "loopback Mission Control GET should disable curl config, proxies, and non-HTTP protocols"
+
+  : > "$curl_log"
+  printf '%s\n' 'http://127.0.0.1:80@example.com/board' > "$home/config/mission-control-board"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_CURL_LOG="$curl_log" "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "non-loopback Mission Control URL should be silent, got: $out"
+  [ ! -s "$curl_log" ] || fail "non-loopback Mission Control URL should not invoke curl"
   pass "bootstrap checks opted-in fresh Mission Control boards and reports only proved staleness"
 }
 

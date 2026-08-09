@@ -1056,9 +1056,10 @@ mission_control_board_staleness_check() {
       [ "$size" -le 8388608 ] || return 0
       body=$(< "$target") || return 0
       ;;
-    http://127.0.0.1/*|http://127.0.0.1:*)
+    http://*)
+      [[ "$target" =~ ^http://127[.]0[.]0[.]1(:[0-9]+)?([/?#][^[:space:]]*)?$ ]] || return 0
       command -v curl >/dev/null 2>&1 || return 0
-      body=$(curl --fail --silent --noproxy '*' --max-filesize 8388608 --max-time 2 "$target" 2>/dev/null) || return 0
+      body=$(curl --disable --fail --silent --noproxy '*' --proto '=http' --proto-redir '=http' --max-filesize 8388608 --max-time 2 "$target" 2>/dev/null) || return 0
       ;;
     *) return 0 ;;
   esac
