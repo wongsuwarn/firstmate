@@ -24,8 +24,10 @@
 #     captain_actionable, and captain_deferred fields. Repeated blocker tokens
 #     remain ordered; a blocker resolves only when its structured record is Done,
 #     and missing ids stay open.
-#     captain_deferred is the same captain decision under a "parked" hold kind:
-#     the captain has consciously set it aside, so it is neither actionable nor
+#     Any queued row with a non-empty captain hold and no unresolved blocker is
+#     captain_actionable regardless of the row's own kind. captain_deferred is
+#     the same kind-independent classification under a "parked" hold kind: the
+#     captain has consciously set it aside, so it is neither actionable nor
 #     blocked, and it is excluded from the secondmate holds projection for that
 #     reason.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
@@ -173,9 +175,10 @@ aggregation, and marks inventory contradictions or unavailable child state inval
 Its invalidity object names the normalized failure kind and affected ids.
 Actionable tasks-axi captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, captain_deferred, and plural blocker fields
-for downstream projections. A captain hold is actionable only when every blocker
-is Done. A captain decision under a parked hold kind is deferred rather than
-actionable or blocked, and is left out of holds.
+for downstream projections. A non-empty captain hold is actionable only when
+every blocker is Done, regardless of the row's own kind. The same row under a
+parked hold kind is deferred rather than actionable or blocked, and is left out
+of holds.
 Cross-home reads use FM_SNAPSHOT_SECONDMATES (default 20, 0 lifts the count
 bound), FM_SNAPSHOT_SECONDMATE_TIMEOUT, and FM_SNAPSHOT_SECONDMATE_MAX_BYTES.
 Terminal contradiction evidence uses
