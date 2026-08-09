@@ -116,7 +116,7 @@ There are five controls, and each row offers only what it can actually resolve:
 - **Approve merge** and **Reply**, on a PR awaiting the captain.
 - **Answer** and **Set aside**, on a decision the captain holds in a backlog.
 - **Answer** alone on a task-level open decision, because there is no backlog row behind it and therefore no hold kind to change.
-- **Ask firstmate**, once, for something new.
+- **Ask firstmate**, for something new, and the only control that carries a conversation rather than resolving in a single action.
 
 A decision belonging to a second mate carries the home it came from and is applied in that home, never in the main one.
 An Answer form uses the exact structured question when one was recorded, otherwise it uses the decision title and reason as a concise reminder, and only falls back to `Your answer` when no useful context exists.
@@ -143,6 +143,12 @@ Recorded is not the same as collected, and the difference is a reachable live st
 The service therefore reports whether a wake is registered for this board, and the banner says `Recorded, but firstmate is not collecting replies from this board yet` when it is not, instead of implying firstmate already has it.
 A confirmation restored on load is corrected as soon as the probe answers, so the wording always reflects the current state rather than the state at the time of the tap.
 
+Ask firstmate is the one control that continues past its acknowledgement.
+Firstmate posts a reply into that board's own conversation, the board shows the captain's messages and firstmate's replies together in order under the composer, and the captain answers there instead of switching to chat.
+The conversation is display and nothing else: a firstmate message carries no control, no target, and no intent, it opens no execution path, and what reaches firstmate is still only ever a captain request.
+It ships hidden and empty for the same reason the banner does, so a statically served copy shows no conversation at all.
+It also keeps a tick of its own rather than riding the document reload, because that reload is deliberately held while a composer holds unsent text - exactly when the captain is mid-follow-up and a reply is most likely to arrive.
+
 A failed or interrupted send leaves the form open, keeps its text editable, remains retryable, and records no acknowledgement.
 The draft's session record keeps the attempted payload and its browser-generated identity across reloads: a byte-identical retry reuses that identity, while edited text receives a new identity.
 That lets the service recognise an exact retry and record it once rather than twice without preventing the captain from changing the request.
@@ -151,8 +157,8 @@ A full document reload restores only controls whose exact identity still exists,
 Submitted presentation state is browser-local, scoped by board home, document, owning home, item, decision key, and intent.
 It survives a reload only while the same actionable item remains, and is retired when that item disappears; it is never fleet truth.
 
-[`bin/fm-procevent-board-reply.sh`](../bin/fm-procevent-board-reply.sh) owns the reply service, arming the wake, and turning what was recorded into validated requests.
-[`bin/fm-board-request-parse.pl`](../bin/fm-board-request-parse.pl) is the single owner of the request vocabulary and of every fail-closed rule, shared by both transports, and the service validates a request at its door with that same program over the same bytes it is about to store.
+[`bin/fm-procevent-board-reply.sh`](../bin/fm-procevent-board-reply.sh) owns the reply service, arming the wake, posting firstmate's replies into the board conversation, and turning what was recorded into validated requests.
+[`bin/fm-board-request-parse.pl`](../bin/fm-board-request-parse.pl) is the single owner of the board message vocabulary in both directions and of every fail-closed rule, shared by both transports, and the service validates a message at its door with that same program over the same bytes it is about to store.
 
 The legacy Lavish-bridged surface in [`bin/fm-procevent-mission-control.sh`](../bin/fm-procevent-mission-control.sh) remains supported and is not extended.
 It is superseded because Lavish's own annotate review mode defaults on and cannot be configured off, and while it is on a real tap on a board control reaches Lavish's annotation prompt instead of the button.
@@ -161,7 +167,7 @@ That surface also lasts only as long as the review session behind it: ending the
 ## The board reply service
 
 `bin/fm-procevent-board-reply.sh serve <board.html>` runs one small service in the foreground.
-It serves the board file for GET and accepts one validated captain request per POST, on one port, and does nothing else.
+It serves the board file and its Ask-firstmate conversation for GET, accepts one validated captain request per POST, on one port, and does nothing else.
 It binds loopback only and refuses a non-loopback bind rather than making the port wider.
 The default port is 4321, `FM_BOARD_REPLY_PORT` changes the default, and `--port` overrides it for one run.
 The script's own header and `--help` own its exact flags, and [`bin/fm-board-reply-server.py`](../bin/fm-board-reply-server.py) owns the exact wire behavior.
@@ -179,6 +185,12 @@ A launch agent or unit that inherits no `FM_HOME` resolves them against the trac
 
 Arming has no precondition and is safe in any order: the request log is append-only and never consumed, so requests accepted while nothing is armed are picked up whole by a later arm.
 A request recorded by the service becomes an ordinary durable `check` wake through the same `state/procevent/` framework every other source uses, so firstmate's normal wake drain picks it up with no second notification path.
+
+`bin/fm-procevent-board-reply.sh say <board.html> <text>|-` is how firstmate answers into a board's conversation, and `reply-log-path <board.html>` prints where that conversation is kept.
+A reply is validated by the same program over the same bytes, under its own marker and its own single permitted intent, and direction is taken from the leading marker so neither side can claim the other's.
+It is appended to a separate log the wake source never reads, which is what keeps firstmate from being woken by its own words and keeps a firstmate message from ever reaching the request path.
+The service returns both sides together on a read the board makes for display only, keeps the newest messages when a conversation outgrows the window it holds, and reports that a read was partial rather than presenting a truncated history as the whole of it.
+Both logs stamp whole seconds and the captain's side is laid out first, so a message and the reply to it recorded in the same second still read in that order.
 
 Two properties are worth stating precisely, because both are easy to assume and wrong.
 
@@ -267,6 +279,9 @@ It also pins that the service reports an unarmed board as uncollected, at its pr
 Its real-browser case serves the board through the service itself and drives a genuine Answer through to its confirmation, checks that the confirmation is a full-width banner rather than a label, that it survives a reload and fits a 390 by 844 viewport, and that killing the service leaves the next control open, editable, retryable, and unacknowledged.
 A second browser case retires the wake and proves that a request recorded while nothing is collecting is confirmed as recorded and explicitly not collected.
 That regression rewrites the served HTML file repeatedly while an Answer composer contains unsent text, then performs full document reloads and verifies the exact draft, control identity, tab, and anchored reading offset survive both replacements.
+The Ask-firstmate conversation is covered in the same suite: a real thread of captain message, firstmate reply, and the captain's reply to that reply reads back in order, while the single-message flow is unchanged when no reply is ever posted.
+A firstmate reply never reaches the wake source, is held to the same fail-closed rules as a captain request, and stays a quotation when it quotes the wire format; a forged or malformed conversation line is never rendered, and a partial read says so.
+A third browser case proves the conversation is absent from a statically served copy, that both sides appear in order on the served board, that a reply posted from the command line reaches the board while its refresh is held by an open composer, that the conversation contains no control of any kind, and that it fits a 390 by 844 viewport.
 With `FM_MISSION_CONTROL_LIVE_HOME` set to an active home, the same suite generates a fresh board directly from that fleet and uses Chrome at 390 by 844 to verify a meaningful reading anchor remains fixed through regeneration, a full reload, and the early refresh frames without printing fleet records.
 `tests/fm-procevent-mission-control.test.sh` pins the request normalizer against bytes captured from a real send through a real browser, and drives every fail-closed path - a forged envelope, an out-of-vocabulary intent, a truncated capture, a defer carrying reason text - to a refusal rather than a plausible request.
 

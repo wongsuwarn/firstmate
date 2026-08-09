@@ -4,12 +4,14 @@
 # Usage:
 #   fm-procevent-board-reply.sh serve <board.html> [--port <n>] [--host <addr>]
 #   fm-procevent-board-reply.sh arm <board.html> [--rebase]
+#   fm-procevent-board-reply.sh say <board.html> <text>|-
 #   fm-procevent-board-reply.sh source <board.html>
 #   fm-procevent-board-reply.sh requests <result-file>
 #   fm-procevent-board-reply.sh classify <result-file>
 #   fm-procevent-board-reply.sh terminal <result-file>
 #   fm-procevent-board-reply.sh source-id <board.html>
 #   fm-procevent-board-reply.sh log-path <board.html>
+#   fm-procevent-board-reply.sh reply-log-path <board.html>
 #   fm-procevent-board-reply.sh retire <board.html>
 #
 # This is the transport the mission control board's reply controls use. Unlike its
@@ -18,8 +20,10 @@
 # for that derivation is safer than two that can drift.
 #
 # serve      Run the loopback reply service for this board in the foreground:
-#            it serves the board file for GET and accepts one validated captain
-#            request per POST. bin/fm-board-reply-server.py owns its exact wire
+#            it serves the board file and its Ask-firstmate conversation for GET
+#            and accepts one validated captain request per POST, and the
+#            conversation it serves is display text with no way back into the
+#            request path. bin/fm-board-reply-server.py owns its exact wire
 #            behavior, binding rule, and same-site refusals; docs/mission-control.md
 #            owns how firstmate deploys it and exposes it over the tailnet.
 # arm        Register the wake. The wake it produces is
@@ -31,6 +35,16 @@
 #            --rebase resumes from the CURRENT end of the request log, skipping any
 #            ambiguous region. It is the supported recovery after a continuity
 #            break, and it deliberately drops whatever it skips.
+# say        Post one firstmate reply to THIS board's Ask-firstmate thread, so an
+#            ask the captain sent from the board is answered on the board rather
+#            than only in chat. `-` reads the text from stdin. It is validated by
+#            the same shared program, over the exact record line it is about to
+#            store, and appended to a SEPARATE reply log.
+#
+#            That separation is the safety boundary, not a filing convenience.
+#            `source` reads the request log and only the request log, so a reply
+#            can never become a wake, can never be adjudicated as captain intent,
+#            and opens no execution path: it is display text for one board.
 # source     The registered blocking child. NEVER run this in a conversational
 #            turn; the runner exists to hold it outside one.
 # requests   Normalize a captured result into one JSON record per line, through
@@ -45,7 +59,9 @@
 #
 # Request validation, the vocabulary, and every fail-closed rule are owned by
 # bin/fm-board-request-parse.pl and shared with the legacy Lavish-bridged adapter,
-# so a rule fixed in one place is fixed for both transports.
+# so a rule fixed in one place is fixed for both transports. That one program
+# also owns the firstmate-to-board direction `say` uses, so a reply is held to
+# every rule a captain request is.
 #
 # NON-DESTRUCTIVE READ, stated precisely. The service appends to a private
 # append-only log and never consumes it. `source` reads a delta from a cursor and
@@ -121,6 +137,16 @@ cmd_log_path() {
   printf '%s/%s.log\n' "$REQUEST_DIR" "$id"
 }
 
+# Firstmate's own replies, kept apart from the captain's requests on purpose: the
+# wake source reads the request log alone, so nothing here can ever be announced
+# to firstmate as something to act on.
+cmd_reply_log_path() {
+  local board=${1-} id
+  [ -n "$board" ] || usage
+  id=$(cmd_source_id "$board") || exit 1
+  printf '%s/%s.reply\n' "$REQUEST_DIR" "$id"
+}
+
 rebase_path() { printf '%s/%s.rebase\n' "$REQUEST_DIR" "$1"; }
 
 ensure_request_dir() {
@@ -137,7 +163,7 @@ registration_path() {  # <source-id>
 }
 
 cmd_serve() {
-  local board='' port=$DEFAULT_PORT host=127.0.0.1 real log id
+  local board='' port=$DEFAULT_PORT host=127.0.0.1 real log replies id
   while [ $# -gt 0 ]; do
     case "$1" in
       --port) [ $# -ge 2 ] || usage; port=$2; shift 2 ;;
@@ -153,9 +179,11 @@ cmd_serve() {
   real=$(real_path "$board") || die "cannot resolve the board path: $board"
   id=$(cmd_source_id "$real") || exit 1
   log=$(cmd_log_path "$real") || exit 1
+  replies=$(cmd_reply_log_path "$real") || exit 1
   ensure_request_dir
   printf 'home: %s\n' "$FM_HOME"
-  exec python3 "$SERVER" --board "$real" --requests "$log" --parser "$PARSER" \
+  exec python3 "$SERVER" --board "$real" --requests "$log" --replies "$replies" \
+    --parser "$PARSER" \
     --registration "$(registration_path "$id")" --port "$port" --host "$host"
 }
 
@@ -223,6 +251,95 @@ cmd_retire() {
   [ -n "$board" ] || usage
   id=$(cmd_source_id "$board") || exit 1
   "$SCRIPT_DIR/fm-procevent.sh" retire "$id"
+}
+
+# One firstmate reply onto one board thread. Validation and storage happen in the
+# same program over the same bytes, exactly as the receiver does for a captain
+# request, so what was checked is what is kept. The log is append-only and is
+# never read by `source`.
+cmd_say() {
+  local board=${1-} text=${2-} log
+  [ $# -eq 2 ] || usage
+  [ -n "$board" ] || usage
+  [ -f "$PARSER" ] || die "request validator not found: $PARSER"
+  log=$(cmd_reply_log_path "$board") || exit 1
+  ensure_request_dir
+  [ ! -L "$log" ] || die "the reply log is a symlink: $log"
+  if [ "$text" = "-" ]; then text=$(cat); fi
+  perl -e '
+use strict;
+use warnings;
+use Encode ();
+use Fcntl qw(O_WRONLY O_CREAT O_APPEND);
+use JSON::PP;
+use POSIX qw(strftime);
+
+my ($parser, $log, $raw) = @ARGV;
+
+sub refuse { print STDERR "error: $_[0]\n"; exit 1; }
+
+# Character semantics before anything measures or encodes the text, so a bound
+# and an escape both count what a reader would see rather than raw bytes.
+my $text = eval { Encode::decode("UTF-8", $raw, Encode::FB_CROAK()) };
+refuse("the reply text is not valid UTF-8") unless defined $text;
+$text =~ s/\A\s+//;
+$text =~ s/\s+\z//;
+refuse("the reply text is empty") unless length $text;
+
+my $json = JSON::PP->new->canonical->allow_nonref->ascii;
+my $wire = "FM-BOARD-REPLY " . $json->encode({v => 1, intent => "say", note => $text});
+my $id = sprintf("fm-reply:%x-%x-%x", time, $$, int(rand(0xffffffff)));
+my $line = sprintf("  %s,%s,%s\n", $json->encode(strftime("%Y-%m-%dT%H:%M:%SZ", gmtime())),
+  $json->encode($id), $json->encode($wire));
+
+my $dir = $log;
+$dir =~ s{/[^/]*\z}{};
+my $candidate = sprintf("%s/.say.%d.%d", $dir, $$, int(rand(1_000_000)));
+open(my $draft, ">", $candidate) or refuse("the reply could not be staged for validation");
+binmode($draft);
+my $staged = print {$draft} "prompts[1]{received,attempt,prompt}:\n", $line, "board-delta-end=0\n";
+$staged &&= close($draft);
+if (!$staged) { unlink $candidate; refuse("the reply could not be staged for validation"); }
+
+my (@records, $ran);
+if (open(my $out, "-|", $^X, $parser, $candidate)) {
+  @records = <$out>;
+  $ran = close($out) ? 1 : 0;
+}
+unlink $candidate;
+refuse("the reply could not be validated") unless $ran;
+
+my ($replies, $refusal) = (0, undef);
+for my $record (@records) {
+  next unless $record =~ /\S/;
+  my $parsed = eval { JSON::PP->new->utf8->decode($record) };
+  refuse("the reply could not be validated") unless ref($parsed) eq "HASH";
+  my $kind = $parsed->{kind} // "";
+  if    ($kind eq "reply")        { $replies++; }
+  elsif ($kind eq "unrecognized") { $refusal = $parsed->{reason} // "the reply was refused"; }
+  elsif ($kind eq "message")      { $refusal = "the reply carries no board reply marker"; }
+  elsif ($kind eq "request")      { $refusal = "that is a captain request, not a board reply"; }
+}
+refuse($refusal) if defined $refusal;
+refuse("the reply did not resolve to exactly one board reply") unless $replies == 1;
+
+# Append-only, like the receiver: one durable write onto the end of a private log
+# that nothing rewrites and nothing consumes.
+sysopen(my $fh, $log, O_WRONLY | O_CREAT | O_APPEND, 0600)
+  or refuse("the reply could not be recorded");
+binmode($fh);
+my $written = 0;
+while ($written < length($line)) {
+  my $count = syswrite($fh, $line, length($line) - $written, $written);
+  last unless defined $count && $count > 0;
+  $written += $count;
+}
+if ($written < length($line)) { close($fh); refuse("the reply could not be recorded"); }
+eval { require IO::Handle; $fh->sync; 1 };
+close($fh) or refuse("the reply could not be recorded");
+print "posted: $id\n";
+' "$PARSER" "$log" "$text" || exit 1
+  printf 'thread: %s\n' "$log"
 }
 
 # The registered blocking child. It reads and never writes: the cursor comes from
@@ -447,12 +564,14 @@ cmd_terminal() {
 case "${1-}" in
   serve)     shift; cmd_serve "$@" ;;
   arm)       shift; cmd_arm "$@" ;;
+  say)       shift; cmd_say "$@" ;;
   source)    shift; cmd_source "$@" ;;
   requests)  shift; cmd_requests "$@" ;;
   classify)  shift; cmd_classify "$@" ;;
   terminal)  shift; cmd_terminal "$@" ;;
   source-id) shift; cmd_source_id "$@" ;;
   log-path)  shift; cmd_log_path "$@" ;;
+  reply-log-path) shift; cmd_reply_log_path "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;
