@@ -61,7 +61,7 @@ cat > "$SNAP" <<'JSON'
  "backlog":{"present":true,"records":[
    {"state":"queued","id":"d1","captain_actionable":true,"title":"Choose the rollout window",
     "hold_reason":"Two valid windows compete","decision_question":"Which rollout window?",
-    "repo":"alpha"},
+    "decision_options":["Tuesday morning","Thursday evening"],"repo":"alpha"},
    {"state":"queued","id":"d2","captain_actionable":true,"title":"Choose the cache shape",
     "hold_reason":"Two shapes compete","repo":"alpha"},
    {"state":"queued","id":"d3","captain_actionable":true,"title":"Choose the fallback region",
@@ -567,6 +567,13 @@ function logLines() {
   try { return fs.readFileSync(logPath, "utf8").split("\n").filter((x) => x.length).length; }
   catch (e) { return 0; }
 }
+function requestWires() {
+  try { return fs.readFileSync(logPath, "utf8").split("\n").filter((x) => x.trim())
+    .flatMap((line) => { try { return [JSON.parse("[" + line.trim() + "]")[2]]; } catch (e) { return []; } })
+    .filter((wire) => typeof wire === "string" && wire.startsWith("FM-BOARD-REQUEST "))
+    .flatMap((wire) => { try { return [JSON.parse(wire.slice("FM-BOARD-REQUEST ".length))]; } catch (e) { return []; } }); }
+  catch (e) { return []; }
+}
 const revealState = `({body:document.body.className,
   visible:[...document.querySelectorAll('.rc')].filter(x=>getComputedStyle(x).display!=='none').length})`;
 (async () => {
@@ -590,9 +597,7 @@ const revealState = `({body:document.body.className,
 
   const sent = await evaluate(sid, `(async()=>{
     var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d1');
-    b.querySelector('[data-open=answer]').click();
-    b.querySelector('textarea').value='Go with the Tuesday window from the board.';
-    b.querySelector('form[data-intent=answer]').requestSubmit();
+    b.querySelector('[data-answer-choice="Tuesday morning"]').click();
     for (var i=0;i<200;i++){ if(!b.querySelector('[data-ok=answer]').hidden) break;
       await new Promise(r=>setTimeout(r,50)); }
     var panel=b.querySelector('[data-ok=answer]');
@@ -621,6 +626,9 @@ const revealState = `({body:document.body.className,
     "acknowledging one control removed a sibling the board can still resolve");
   assert(logLines() === before + 1,
     `one tap must record exactly one request, log went from ${before} to ${logLines()}`);
+  const quickAnswer = requestWires().find((request) => request.note === "Tuesday morning");
+  assert(quickAnswer && quickAnswer.intent === "answer" && quickAnswer.home === "main" && quickAnswer.id === "d1",
+    "the option button did not submit the existing Answer request: " + JSON.stringify(requestWires()));
 
   await reload(sid);
   const survived = await evaluate(sid, `(() => {
@@ -680,6 +688,9 @@ const revealState = `({body:document.body.className,
     "retrying the interrupted attempt did not confirm receipt: " + JSON.stringify(retried));
   assert(logLines() === before + 2,
     "retrying after response loss recorded the same captain answer twice");
+  const textAnswer = requestWires().find((request) => request.note === "Keep this attempt across response loss.");
+  assert(textAnswer && textAnswer.intent === "answer" && textAnswer.home === "main" && textAnswer.id === "d2",
+    "free text did not reach the same validated Answer path as the option button: " + JSON.stringify(requestWires()));
 
   // The service dies with the page already open. A tap must then say so and stay
   // retryable rather than showing a confirmation nothing recorded.
