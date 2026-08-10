@@ -1205,6 +1205,8 @@ test_structured_context_is_required_and_stored_separately() {
     > "$home/both-surface.out" 2> "$home/both-surface.err"; then
     fail "a decision claimed both a built surface and no built surface"
   fi
+  assert_grep "both a link to look at and a note that none applies" "$home/both-surface.err" \
+    "both supplied surfaces did not reach the shared readiness checklist"
 
   run_decisions "$home" "${base[@]}" \
     --group "sample-structure-review" \
@@ -1481,6 +1483,8 @@ Decision options: ["Same","Same"]'
 Recommendation: Take the compact shape.
 No decision surface: nothing built
 Decision kind: fact'
+  _readiness_fixture "$home" gap-expects-spaced \
+    $'Decision question: Which sample shape?\nRecommendation: Take the compact shape.\nNo decision surface: nothing built\nDecision kind: fact \t'
 
   if run_decisions "$home" doctor > "$home/sweep.out" 2>&1; then
     fail "the sweep reported every open captain decision as ready"
@@ -1499,6 +1503,8 @@ Decision kind: fact'
     "the sweep did not name a malformed option set, which the snapshot alone cannot show"
   assert_contains "$out" "answer shape it expects (--expects)" \
     "the sweep did not name a fact request with no expected-answer hint"
+  assert_contains "$out" "gap-expects-spaced: not ready" \
+    "the sweep did not normalize a fact marker with trailing whitespace"
 
   # Scope: the ready decision, the free-text hold, and the decision set aside are
   # all absent from the sweep's findings.

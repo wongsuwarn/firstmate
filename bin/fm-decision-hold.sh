@@ -429,10 +429,7 @@ validate_decision_context_flags() {  # <question> <why> <affects> <recommendatio
   [ -z "$6" ] || validate_context_field no-surface "$6"
 }
 
-# Prints the body with every supplied dimension merged in. It only writes; the
-# refusal above is what guarantees nothing is missing. The two surface fields are
-# one choice, so recording either clears the other and the item can never claim a
-# built surface and no built surface at the same time.
+# Prints the body with every supplied dimension merged in.
 write_decision_context() {  # <body> <question> <options-json> <decision-kind> <expects> <group> <why> <affects> <recommendation> <decision-url> <no-surface>
   local body=$1 question=$2 options_json=$3 decision_kind=$4 expects=$5 group=$6
   local why=$7 affects=$8 recommendation=$9 decision_url=${10} no_surface=${11}
@@ -444,7 +441,10 @@ write_decision_context() {  # <body> <question> <options-json> <decision-kind> <
   [ -z "$why" ] || body=$(set_body_field "$body" "Why now" "$why")
   [ -z "$affects" ] || body=$(set_body_field "$body" "What it affects" "$affects")
   [ -z "$recommendation" ] || body=$(set_body_field "$body" "Recommendation" "$recommendation")
-  if [ -n "$decision_url" ]; then
+  if [ -n "$decision_url" ] && [ -n "$no_surface" ]; then
+    body=$(set_body_field "$body" "Decision URL" "$decision_url")
+    body=$(set_body_field "$body" "No decision surface" "$no_surface")
+  elif [ -n "$decision_url" ]; then
     body=$(set_body_field "$body" "Decision URL" "$decision_url")
     body=$(clear_body_field "$body" "No decision surface")
   elif [ -n "$no_surface" ]; then

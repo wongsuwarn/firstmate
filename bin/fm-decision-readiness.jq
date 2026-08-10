@@ -26,7 +26,7 @@ def decision_body_field($label):
      | sub("^[[:space:]]*"; "")
      | select(startswith($label + ":"))
      | ltrimstr($label + ":")
-     | sub("^[[:space:]]*"; "") ] | last) // null;
+     | decision_trim ] | last) // null;
 
 def decision_field_present($label):
   decision_body_field($label) as $value
