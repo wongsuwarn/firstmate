@@ -409,7 +409,8 @@ sanitize_grok_quota() {
       state: {status: $provider.state.status, error: $provider.state.error},
       windows: [($provider.windows // [])[] | {
         key: ("grok:" + (.id | tostring)), provider: "grok", providerLabel: ($provider.label // "Grok"),
-        id, label, shortLabel: .label, percentUsed, percentRemaining, resetsAt,
+        id, label: (if .id == "credits" then "Credits" else .label end),
+        shortLabel: (if .id == "credits" then "Credits" else .label end), percentUsed, percentRemaining, resetsAt,
         windowSeconds: .pace.cycleSeconds,
         pace: {status: .pace.status, elapsedPercent: .pace.elapsedPercent,
                reservePercentPoints: .pace.reservePercentPoints,

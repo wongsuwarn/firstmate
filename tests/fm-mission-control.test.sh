@@ -2177,6 +2177,8 @@ test_grok_live_windows_fill_a_dashboard_gap() {
 
   cards=$(grep -o 'class="qwindow tone-' "$board" | wc -l | tr -d ' ')
   [ "$cards" = 6 ] || fail "the three existing and three Grok windows must render, got $cards"
+  assert_grep '>Credits</span>' "$board" "the Grok credits window title must be human-readable"
+  assert_no_grep '>credits</span>' "$board" "the raw Grok credits identifier must not leak into the card title"
   assert_grep '>Grok Build</span>' "$board" "the Grok Build product window must render"
   assert_grep '>Chat</span>' "$board" "the Chat product window must render"
   assert_grep '>Grok / SuperGrok</span>' "$board" "Grok cards must retain their provider label"
