@@ -86,7 +86,7 @@ The stage itself is derived by the snapshot rather than by the board; see `bin/f
   Recent automatic balancing is a quiet collapsed shelf under those cards, so its activity remains visible without becoming another monitoring feed.
   Mission Control consumes only normalized allowance windows, bounded history, pace thresholds, and the safe balancing summary from the Token Dashboard API.
   Session rows, credentials, action reasons, action details, and unknown payload fields are discarded before rendering.
-  An old successful reading is labelled stale, a failed latest collection is stated, and an absent Token Dashboard falls back to the original live `quota-axi` gauges with history, runway, and balancing explicitly unavailable.
+  An old successful Token Dashboard reading is labelled stale, a failed latest collection is stated, and an absent dashboard keeps existing providers on the original live `quota-axi` gauges while Grok uses compact cards with supplied pace, reset, and runway; saved history and balancing remain explicitly unavailable.
   When the dashboard has no Grok windows, its cards add only live Grok windows from `quota-axi` until the normalized source collects them.
   The renderer only reads the standalone service and never refreshes, changes, stops, or replaces it.
 

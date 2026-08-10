@@ -366,7 +366,9 @@ sanitize_token_dashboard() {
       latest: (if (.latest | type) == "object" then {
         capturedAt: .latest.capturedAt,
         windows: [(.latest.windows // [])[] | {
-          key, provider, providerLabel, id, label, shortLabel,
+          key, provider, providerLabel, id,
+          label: (if .provider == "grok" and .id == "credits" then "Credits" else .label end),
+          shortLabel: (if .provider == "grok" and .id == "credits" then "Credits" else .shortLabel end),
           percentUsed, percentRemaining, resetsAt, windowSeconds,
           pace: {status: .pace.status, elapsedPercent: .pace.elapsedPercent,
                  reservePercentPoints: .pace.reservePercentPoints,
@@ -525,9 +527,7 @@ if [ "$WITH_QUOTA" = 1 ]; then
     if [ -n "$quota_raw" ] && printf '%s' "$quota_raw" | jq -e 'type == "object"' >/dev/null 2>&1; then
       QUOTA=$quota_raw
       QUOTA_NOTE=""
-      if [ "$token_has_latest" = 1 ] && [ "$token_has_grok" = 0 ]; then
-        GROK_QUOTA=$(printf '%s' "$quota_raw" | sanitize_grok_quota 2>/dev/null) || GROK_QUOTA='null'
-      fi
+      GROK_QUOTA=$(printf '%s' "$quota_raw" | sanitize_grok_quota 2>/dev/null) || GROK_QUOTA='null'
     fi
   fi
 fi
@@ -1808,36 +1808,42 @@ def gauge($label; $pct; $note):
      <div class=\"gnote\">\($note)</div>
    </div>");
 
-def quota_fallback:
-  if $quota == null then
-    (([$token_dash_note, $quota_note] | map(select(. != "" and . != "not requested")) | unique | join("; ")) // "") as $reason |
-    (@html "<p class=\"quiet\">Allowance unavailable\(if $reason == "" then "." else " - \($reason)." end)</p>")
-  else
-    (($quota.providers // []) | map(. as $p |
-      $p + {wins: (($p.windows // []) | map(select((.percentRemaining // null) != null)))})) as $providers |
-    ($providers | map(select((.wins | length) > 0))) as $measured |
-    ($providers | map(select((.wins | length) == 0))) as $unmeasured |
-    (@html "<p class=\"qfallback\">Live allowance only. Pace history, projected runway, and balancing activity are unavailable - \(if $token_dash_note == "" then "local token history has no successful reading" else $token_dash_note end).</p>")
-    # A provider with no readable window is a sign-in or reporting gap, not an
-    # exhausted allowance, so it never renders as an empty zero gauge.
-    + (($measured | map(. as $p |
-      ($p.wins | map(gauge(("\($p.label // $p.provider) / \(.label // .id)");
-                           (.percentRemaining | floor);
-                           ("resets \(.resetsAt // "-")"))) | add)) | add) // "")
-    + (if ($unmeasured | length) == 0 then ""
-       else "<ul class=\"unmeasured\">"
-         + (($unmeasured | map(. as $p |
-             (@html "<li><span>\($p.label // $p.provider)</span><span class=\"gval\">\($p.state.error // $p.state.status // "no window reported")</span></li>")) | add) // "")
-         + "</ul>" end)
-    + (if ($providers | length) == 0 then "<p class=\"quiet\">No allowance providers reported.</p>" else "" end)
-  end;
-
 def grok_unmeasured:
   if ($grok_quota | type) != "object"
      or ([($grok_quota.windows // [])[]? | select((.percentRemaining // null) | type == "number")] | length) > 0 then ""
   else "<ul class=\"unmeasured\">"
     + (@html "<li><span>\($grok_quota.label // "Grok")</span><span class=\"gval\">\($grok_quota.state.error // $grok_quota.state.status // "no window reported")</span></li>")
     + "</ul>" end;
+
+def quota_fallback:
+  if $quota == null then
+    (([$token_dash_note, $quota_note] | map(select(. != "" and . != "not requested")) | unique | join("; ")) // "") as $reason |
+    (@html "<p class=\"quiet\">Allowance unavailable\(if $reason == "" then "." else " - \($reason)." end)</p>")
+  else
+    (($quota.providers // []) | map(select(.provider != "grok") | . as $p |
+      $p + {wins: (($p.windows // []) | map(select((.percentRemaining // null) != null)))})) as $providers |
+    ($providers | map(select((.wins | length) > 0))) as $measured |
+    ($providers | map(select((.wins | length) == 0))) as $unmeasured |
+    ([($grok_quota.windows // [])[]? |
+      select((.percentRemaining // null) | type == "number")]) as $grok_windows |
+    (@html "<p class=\"qfallback\">Live allowance only. Saved history and balancing activity are unavailable.\(if ($grok_windows | length) > 0 then " Grok pace and projected runway appear when supplied." else " Pace and projected runway are unavailable." end) - \(if $token_dash_note == "" then "local token history has no successful reading" else $token_dash_note end).</p>")
+    # A provider with no readable window is a sign-in or reporting gap, not an
+    # exhausted allowance, so it never renders as an empty zero gauge.
+    + (($measured | map(. as $p |
+      ($p.wins | map(gauge(("\($p.label // $p.provider) / \(.label // .id)");
+                           (.percentRemaining | floor);
+                           ("resets \(.resetsAt // "-")"))) | add)) | add) // "")
+    + (if ($grok_windows | length) == 0 then ""
+       else "<div class=\"quota-grid\">" + (($grok_windows | map(token_window) | add) // "") + "</div>" end)
+    + grok_unmeasured
+    + (if ($unmeasured | length) == 0 then ""
+       else "<ul class=\"unmeasured\">"
+         + (($unmeasured | map(. as $p |
+             (@html "<li><span>\($p.label // $p.provider)</span><span class=\"gval\">\($p.state.error // $p.state.status // "no window reported")</span></li>")) | add) // "")
+         + "</ul>" end)
+    + (if ($providers | length) == 0 and ($grok_quota | type) != "object"
+       then "<p class=\"quiet\">No allowance providers reported.</p>" else "" end)
+  end;
 
 def quota_block:
   if ($token_dash.latest | type) != "object" then quota_fallback
@@ -1853,7 +1859,7 @@ def quota_block:
     + (if $age == null then
          "<p class=\"qalert\">Allowance freshness is unavailable.</p>"
        elif token_is_stale then
-         "<p class=\"qalert\">Allowance data is stale - the last successful reading was "
+         "<p class=\"qalert\">Token Dashboard allowance data is stale - the last successful reading was "
          + (@html "\(age_copy($age))") + ".</p>"
        elif ($token_dash.lastError | type) == "object" then
          "<p class=\"qalert\">The latest local collection failed; showing the last successful reading.</p>"

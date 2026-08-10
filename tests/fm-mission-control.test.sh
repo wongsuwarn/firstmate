@@ -2099,17 +2099,21 @@ EOF
 }
 
 test_stale_token_history_is_labelled_without_hiding_it() {
-  local snap token board
+  local snap token quota board
   snap=$TMP_ROOT/stale-token-snapshot.json
   token=$TMP_ROOT/stale-token.json
+  quota=$TMP_ROOT/stale-token-quota.json
   board=$TMP_ROOT/stale-token.html
   snapshot_json '[]' '[]' > "$snap"
   write_token_payload "$token"
+  write_grok_quota_payload "$quota"
 
-  FM_MISSION_CONTROL_TOKEN_JSON="$token" FM_MISSION_CONTROL_NOW_EPOCH="$((NOW_EPOCH + 7200))" \
+  FM_MISSION_CONTROL_TOKEN_JSON="$token" FM_MISSION_CONTROL_QUOTA_JSON="$quota" \
+    FM_MISSION_CONTROL_NOW_EPOCH="$((NOW_EPOCH + 7200))" \
     "$BOARD" --snapshot "$snap" --out "$board" >/dev/null \
     || fail "a stale saved token reading must still render"
-  assert_grep 'Allowance data is stale' "$board" "an old successful reading must be labelled stale"
+  assert_grep 'Token Dashboard allowance data is stale' "$board" \
+    "the stale warning must identify the historical source rather than the live Grok cards"
   assert_grep '2h ago' "$board" "staleness must be judged against the board clock"
   assert_grep '<strong>70%</strong><span>remaining</span>' "$board" \
     "stale data must remain inspectable rather than disappearing"
@@ -2193,7 +2197,7 @@ test_grok_live_windows_fill_a_dashboard_gap() {
 }
 
 test_grok_quota_fallback_keeps_live_windows() {
-  local snap token quota board
+  local snap token quota board cards
   snap=$TMP_ROOT/grok-quota-fallback-snapshot.json
   token=$TMP_ROOT/grok-quota-fallback-token.json
   quota=$TMP_ROOT/grok-quota-fallback-quota.json
@@ -2201,14 +2205,23 @@ test_grok_quota_fallback_keeps_live_windows() {
   snapshot_json '[]' '[]' > "$snap"
   printf '%s\n' '{"latest":null,"history":[],"balancing":{"actions":[]}}' > "$token"
   write_grok_quota_payload "$quota"
+  jq '.providers += [{"provider":"claude","label":"Claude Max","windows":[{"id":"five_hour","label":"5-hour","percentRemaining":68,"resetsAt":"2026-01-09T15:00:00Z"}],"state":{"status":"fresh"}}]' \
+    "$quota" > "$quota.tmp" && mv "$quota.tmp" "$quota"
 
   FM_MISSION_CONTROL_TOKEN_JSON="$token" FM_MISSION_CONTROL_QUOTA_JSON="$quota" \
     "$BOARD" --snapshot "$snap" --out "$board" >/dev/null \
     || fail "a Grok-only quota fallback must render"
 
-  assert_grep 'Grok / SuperGrok / Grok Build' "$board" \
-    "the quota fallback must retain Grok product windows"
-  assert_grep '>98%<' "$board" "the quota fallback must retain Grok window percentages"
+  cards=$(grep -o 'class="qwindow tone-' "$board" | wc -l | tr -d ' ')
+  [ "$cards" = 3 ] || fail "the three Grok fallback windows must use compact cards, got $cards"
+  assert_grep '>Grok Build</span>' "$board" "the compact fallback must retain Grok product windows"
+  assert_grep '<strong>98%</strong><span>remaining</span>' "$board" \
+    "the compact fallback must retain Grok window percentages"
+  assert_grep '60% through cycle' "$board" "the compact fallback must retain supplied Grok pace"
+  assert_grep 'Projected runway reaches reset' "$board" \
+    "the compact fallback must retain supplied Grok runway"
+  assert_grep 'Claude Max / 5-hour' "$board" \
+    "an existing provider must retain its legacy fallback gauge"
   assert_no_grep '1234' "$board" "the quota fallback must not render prepaid credits as allowance"
   pass "the raw quota fallback carries Grok windows through unchanged"
 }
@@ -2221,7 +2234,7 @@ test_token_dashboard_grok_data_stays_preferred() {
   board=$TMP_ROOT/grok-dashboard-preferred.html
   snapshot_json '[]' '[]' > "$snap"
   write_token_payload "$token"
-  jq '.latest.windows += [{"key":"grok:product:grok_build","provider":"grok","providerLabel":"Grok / SuperGrok","id":"product:grok_build","label":"Dashboard Grok Build","shortLabel":"Dashboard Grok Build","percentUsed":23,"percentRemaining":77,"resetsAt":"2026-01-09T15:00:00Z","windowSeconds":604800,"pace":{"status":"behind","elapsedPercent":60,"reservePercentPoints":17,"burnMultiple":0.6,"projectedExhaustedAt":"2026-01-10T15:00:00Z"}}]' \
+  jq '.latest.windows += [{"key":"grok:product:grok_build","provider":"grok","providerLabel":"Grok / SuperGrok","id":"product:grok_build","label":"Dashboard Grok Build","shortLabel":"Dashboard Grok Build","percentUsed":23,"percentRemaining":77,"resetsAt":"2026-01-09T15:00:00Z","windowSeconds":604800,"pace":{"status":"behind","elapsedPercent":60,"reservePercentPoints":17,"burnMultiple":0.6,"projectedExhaustedAt":"2026-01-10T15:00:00Z"}},{"key":"grok:credits","provider":"grok","providerLabel":"Grok / SuperGrok","id":"credits","label":"credits","shortLabel":"credits","percentUsed":9,"percentRemaining":91,"resetsAt":"2026-01-09T15:00:00Z","windowSeconds":604800,"pace":{"status":"behind","elapsedPercent":60,"reservePercentPoints":31,"burnMultiple":0.2,"projectedExhaustedAt":"2026-01-10T15:00:00Z"}}]' \
     "$token" > "$token.tmp" && mv "$token.tmp" "$token"
   write_grok_quota_payload "$quota" 12
 
@@ -2231,6 +2244,10 @@ test_token_dashboard_grok_data_stays_preferred() {
 
   assert_grep '>Dashboard Grok Build</span>' "$board" \
     "the normalized Token Dashboard Grok window must render"
+  assert_grep '>Credits</span>' "$board" \
+    "the normalized Token Dashboard credits title must be human-readable"
+  assert_no_grep '>credits</span>' "$board" \
+    "the normalized Token Dashboard credits title must not remain lowercase"
   assert_grep '<strong>77%</strong><span>remaining</span>' "$board" \
     "the normalized Token Dashboard reading must remain authoritative"
   assert_no_grep '<strong>12%</strong><span>remaining</span>' "$board" \
