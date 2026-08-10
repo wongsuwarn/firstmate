@@ -97,7 +97,7 @@
 #   check refuses a copy any other live task record still claims rather than
 #   publishing a second owner.
 #   firstmate acquires the pooled copy itself with `treehouse get --lease
-#   --lease-holder <id>` and hands the pane `cd <path>`, so the reservation lives
+#   --lease-holder <id>` and moves the pane into it, so the reservation lives
 #   in treehouse's pool-global state for as long as the task record does, instead
 #   of only for the life of the pane's shell. Ending a pane without ending the task
 #   (session restart, crash, provider handoff) therefore no longer frees a copy a
@@ -2161,7 +2161,7 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # them.
   #
   # A resume re-enters the copy this task already owns instead of allocating a
-  # second one. Both entries then hand the pane the identical `cd <path>` and share
+  # second one. Both entries then send the pane the identical entry command and share
   # every later step - the settle poll, the isolation assertion, hook installation,
   # the recorded worktree=, and the proof that the pane settled on that EXACT copy.
   if [ "$RESUME_WT_SET" -eq 1 ]; then
@@ -2201,7 +2201,24 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     WT=""
   fi
   ENTER_WT_REAL=$(real_path_or_raw "$ENTER_WT")
-  spawn_send_text_line "$WT_TARGET" "cd $(shell_quote "$ENTER_WT")"
+  # Enter the copy in a NESTED shell, never with a bare `cd` in the pane's own
+  # top-level shell. `treehouse get` opened that nested shell itself, and
+  # teardown depends on the topology it produced: teardown selects the task's
+  # leftover processes by cwd under the worktree (fm-teardown.sh's
+  # pids_with_cwd_under) and terminates them before returning the copy to the
+  # pool. A top-level shell sitting inside the copy is selected along with the
+  # agent, so reaping ends the pane itself - and the pane has to outlive that
+  # step, because the exact focus-preserving close and the presentation-journal
+  # retirement that follow it both confirm the pane by reading it.
+  #
+  # `exec` keeps the nesting one deep. If it fails, the subshell exits and the
+  # pane stays in the project directory, so the settle poll below times out into
+  # an explicit refusal rather than launching an agent in the primary checkout.
+  # fish parses `( ... )` as command substitution rather than a subshell, which
+  # is not a new constraint: firstmate already sends this pane POSIX `export
+  # NAME=value` lines that fish rejects the same way.
+  spawn_send_text_line "$WT_TARGET" \
+    "( cd $(shell_quote "$ENTER_WT") && exec \"\${SHELL:-/bin/sh}\" )"
 
   # Wait for the pane's cwd to move from the project to the worktree.
   # Target the stable window id, not the name: if the name is ever lost (e.g. an

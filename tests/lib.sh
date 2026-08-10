@@ -173,7 +173,7 @@ SH
 # fm_fake_treehouse_lease <fakebin> [worktree]: a treehouse stub that answers
 # `get` with <worktree>, or with FM_FAKE_PANE_PATH read at call time when no
 # worktree is given, and exits 0 for everything else. fm-spawn.sh leases the
-# pooled copy itself and then sends the pane a `cd <path>`, so a stub that prints
+# pooled copy itself and then moves the pane into it, so a stub that prints
 # nothing would leave the spawn with no copy to enter at all.
 fm_fake_treehouse_lease() {
   local fakebin=$1 worktree=${2:-}

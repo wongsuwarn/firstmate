@@ -50,7 +50,9 @@ The repository rule derived from this evidence is owned by [`firstmate-coding-gu
 
 This section is backend-independent: every spawn-capable backend takes its task worktree from the same Treehouse pool.
 
-`bin/fm-spawn.sh` acquires each task's pooled copy itself with `treehouse get --lease --lease-holder <task-id>` and then sends the pane a plain `cd <path>`.
+`bin/fm-spawn.sh` acquires each task's pooled copy itself with `treehouse get --lease --lease-holder <task-id>` and then sends the pane a nested shell that enters it, never a bare `cd`.
+That nesting is what `treehouse get` used to supply implicitly: teardown selects a task's leftover processes by cwd under the worktree, so a pane whose own top-level shell sat inside the copy would be killed by its own teardown, before the exact focus-preserving close and the presentation-journal retirement that follow it can read the pane.
+`tests/fm-spawn-worktree-settle.test.sh` pins that topology with real processes, independently of any harness.
 The guarantee resting on this record is that a live task's copy is never handed to another task, including a task in another firstmate home, for as long as that task's record exists.
 Verified 2026-08-11 on macOS 26.5.2 arm64 against v2.1.0 (installed) and v2.0.1, the pin `bin/fm-install-treehouse.sh` installs for the required real-Herdr CI lane.
 

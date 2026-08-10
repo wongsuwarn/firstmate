@@ -49,7 +49,10 @@ case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
   has-session|new-session|new-window|kill-window) exit 0 ;;
-  send-keys) exit 0 ;;
+  send-keys)
+    [ -n "${FM_FAKE_SEND_LOG:-}" ] && printf '%s\n' "${4:-}" >> "$FM_FAKE_SEND_LOG"
+    exit 0
+    ;;
 esac
 exit 0
 SH
@@ -96,9 +99,33 @@ run_settle_spawn() {
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
     FM_FAKE_PANE_PATH="$WT_DIR" FM_FAKE_PANE_STALE="$STALE_DIR" \
     FM_FAKE_PANE_STALE_READS="$STALE_READS" FM_FAKE_PANE_COUNTFILE="$COUNTFILE" \
+    FM_FAKE_SEND_LOG="${FM_FAKE_SEND_LOG:-}" \
     PATH="$FAKEBIN_DIR:$PATH" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
 }
+
+# proc_cwd <pid>: that process's own working directory, however this platform
+# exposes it. fm-teardown.sh reads the same fact through lsof to decide which
+# processes belong to a worktree, so a test that wants to prove a shell is NOT
+# selected by that scan has to read the identical property.
+proc_cwd() {
+  local pid=$1 out
+  if [ -r "/proc/$pid/cwd" ] && out=$(readlink "/proc/$pid/cwd" 2>/dev/null) \
+     && [ -n "$out" ]; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    out=$(lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+    if [ -n "$out" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+physical() { ( cd "$1" 2>/dev/null && pwd -P ); }
 
 # A single stale first read (the exact incident) must not be accepted: the
 # loop should keep polling until two consecutive reads agree, landing on the
@@ -139,6 +166,66 @@ test_already_settled_pane_costs_one_confirm_sleep() {
     "meta did not record the already-settled worktree"
   [ "$elapsed" -le 5 ] || fail "already-settled pane took ${elapsed}s to confirm - expected close to the single inter-poll sleep"
   pass "an already-settled pane confirms via the existing inter-poll sleep, not an extra full cycle"
+}
+
+# The command that enters the copy must leave the pane's OWN top-level shell
+# outside it, with real processes rather than by inspecting the text.
+#
+# fm-teardown.sh selects a task's leftover processes by cwd under the worktree
+# and terminates them before returning the copy to the pool. A pane whose
+# top-level shell sits inside the copy is therefore selected by its own
+# teardown and killed along with the agent, which ends the pane before the
+# steps that follow - the exact focus-preserving close and the presentation
+# journal retirement - can confirm it. `treehouse get`, run in the pane, used
+# to supply that topology implicitly by opening its own subshell; now that
+# firstmate leases the copy and enters the pane itself, the entry command has
+# to supply it. This case takes the exact line fm-spawn sends, runs it in a
+# real shell started in the project directory, and proves the parent stayed
+# put while a child moved into the copy.
+test_entry_command_keeps_the_pane_shell_out_of_the_copy() {
+  local rec id case_dir sendlog line fifo pane_pid waited inner parent
+  id=settle-topology-z9
+  case_dir="$TMP_ROOT/settle-topology"
+  rec=$(make_settle_case settle-topology "$id" 0)
+  read_settle_record "$rec"
+
+  sendlog="$case_dir/send.log"
+  : > "$sendlog"
+  FM_FAKE_SEND_LOG="$sendlog" run_settle_spawn "$id" >/dev/null 2>&1 \
+    || fail "spawn should succeed with an already-settled pane"
+
+  line=$(grep -F -- "$WT_DIR" "$sendlog" | head -1)
+  [ -n "$line" ] || fail "fm-spawn sent the pane nothing naming the leased copy"
+
+  # Drive the real line through a real shell. SHELL is unset deliberately so the
+  # command takes its documented /bin/sh fallback, which exists everywhere.
+  fifo="$case_dir/pane-in"
+  mkfifo "$fifo" || fail "could not create the pane fifo"
+  ( cd "$PROJ_DIR" && exec env -u SHELL bash --norc -s ) \
+    < "$fifo" > "$case_dir/pane.out" 2>&1 &
+  pane_pid=$!
+  exec 9> "$fifo"
+
+  printf '%s\n' "$line" >&9
+  printf 'pwd -P > %s\n' "$case_dir/inner-pwd" >&9
+
+  waited=0
+  while [ ! -s "$case_dir/inner-pwd" ] && [ "$waited" -lt 50 ]; do
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  inner=$(cat "$case_dir/inner-pwd" 2>/dev/null || true)
+  parent=$(proc_cwd "$pane_pid") \
+    || { exec 9>&-; fail "cannot read a process's cwd on this platform (no /proc, no lsof), so the topology is unverifiable"; }
+
+  exec 9>&-
+  wait "$pane_pid" 2>/dev/null || true
+
+  [ "$inner" = "$(physical "$WT_DIR")" ] \
+    || fail "the entry command did not put a shell inside the leased copy (landed on '$inner', expected $(physical "$WT_DIR"))"
+  [ "$(physical "$parent")" = "$(physical "$PROJ_DIR")" ] \
+    || fail "the pane's own shell moved into the leased copy ('$parent'), where teardown's leftover-process scan would kill it and take the pane with it"
+  pass "the copy is entered by a child shell; the pane's own shell stays outside it"
 }
 
 test_claimed_pooled_worktree_is_not_reallocated() {
@@ -201,9 +288,14 @@ case "$*" in
 esac
 if [ "${1:-}" = send-keys ]; then
   text=${4:-}
+  # Follow only the nested-shell entry form. A bare `cd` would move the pane's
+  # own shell into the copy, which teardown then kills along with the agent, so
+  # the fake refuses to model a topology firstmate must never send.
   case "$text" in
-    "cd "*)
-      eval "set -- ${text#cd }"
+    "( cd "*" && exec "*)
+      inner=${text#( cd }
+      inner=${inner%% && exec *}
+      eval "set -- $inner"
       printf '%s\n' "$1" > "$cwdfile"
       ;;
   esac
@@ -330,6 +422,7 @@ test_superseded_copy_with_unlanded_work_is_kept() {
 
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_sleep
+test_entry_command_keeps_the_pane_shell_out_of_the_copy
 test_claimed_pooled_worktree_is_not_reallocated
 if command -v treehouse >/dev/null 2>&1; then
   test_live_task_copy_is_never_reoffered_across_homes
