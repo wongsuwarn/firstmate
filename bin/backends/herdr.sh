@@ -643,7 +643,7 @@ fm_backend_herdr_projection_focus_restore() {  # <session> <snapshot> <operation
 # exactly as before this hardening.
 fm_backend_herdr_projection_close_pane_focus_preserving() {  # <session> <pane-id> [required-agent-state]
   local session=$1 pane_id=$2 required_agent_state=${3:-}
-  local before active_tab info target_pane target_tab target_ws close_status state plan plan_shell_pid plan_move_record pane_presence workspace_presence
+  local before active_tab info target_pane target_tab target_ws close_status state plan plan_shell_pid plan_move_record workspace_presence
   FM_BACKEND_HERDR_PROJECTION_CLOSE_AGENT_STATE=""
   [ -n "$pane_id" ] || return 0
   before=$(fm_backend_herdr_projection_focus_snapshot "$session") || {
@@ -652,11 +652,6 @@ fm_backend_herdr_projection_close_pane_focus_preserving() {  # <session> <pane-i
   }
   active_tab=${before#*$'\t'}
   info=$(fm_backend_herdr_cli "$session" pane get "$pane_id" 2>/dev/null) || {
-    pane_presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane_id")
-    if [ "$pane_presence" = dead ]; then
-      fm_backend_herdr_projection_focus_restore "$session" "$before" "pane close" || return 2
-      return 0
-    fi
     echo "warning: herdr presentation cleanup could not verify the exact pane; refusing focus-unsafe pane close" >&2
     return 1
   }
@@ -1635,23 +1630,13 @@ fm_backend_herdr_workspace_presence_state() {  # <session> <workspace_id>
   esac
 }
 
-# fm_backend_herdr_explicit_close_pane_confirmed: issue bounded explicit close
-# attempts and succeed only when a structured follow-up proves the exact pane
-# is gone.
+# fm_backend_herdr_explicit_close_pane_confirmed: issue one explicit close and
+# succeed only when a structured follow-up proves the exact pane is gone.
 fm_backend_herdr_explicit_close_pane_confirmed() {  # <session> <pane_id>
-  local session=$1 pane_id=$2 presence attempt=0
-  while [ "$attempt" -lt 5 ]; do
-    fm_backend_herdr_cli "$session" pane close "$pane_id" >/dev/null 2>&1 || true
-    presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane_id")
-    case "$presence" in
-      dead) return 0 ;;
-      present) ;;
-      *) return 1 ;;
-    esac
-    attempt=$((attempt + 1))
-    [ "$attempt" -ge 5 ] || sleep 0.1
-  done
-  return 1
+  local session=$1 pane_id=$2 presence
+  fm_backend_herdr_cli "$session" pane close "$pane_id" >/dev/null 2>&1 || return 1
+  presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane_id")
+  [ "$presence" = dead ]
 }
 
 # fm_backend_herdr_pane_agent_state: classify <pane_id> in <session> as one of
