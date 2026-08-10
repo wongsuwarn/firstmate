@@ -114,7 +114,14 @@ test_predicate_secondmate_pending_reply_evidence_fails_closed() {
     fail "an unreadable pending-replies directory must need supervision"
   }
   chmod 700 "$state/pending-replies"
-  pass "fm_supervision_needed: unreadable pending-reply evidence fails closed"
+
+  printf 'task_id=mate\ntask_id=other\nphase=resolved\n' > "$state/pending-replies/duplicate-task"
+  fm_supervision_needed "$state" 300 || fail "a duplicate pending-reply task_id must need supervision"
+
+  rm -f "$state/pending-replies/duplicate-task"
+  printf 'task_id=mate\nphase=awaiting_report\nphase=resolved\n' > "$state/pending-replies/duplicate-phase"
+  fm_supervision_needed "$state" 300 || fail "a duplicate pending-reply phase must need supervision"
+  pass "fm_supervision_needed: unreadable and ambiguous pending-reply evidence fails closed"
 }
 
 test_predicate_secondmate_status_evidence_fails_closed() {
@@ -134,7 +141,13 @@ test_predicate_secondmate_status_evidence_fails_closed() {
 
   printf 'idle: waiting\n' > "$state/mate.status"
   fm_supervision_needed "$state" 300 || fail "an unparseable secondmate status log must need supervision"
-  pass "fm_supervision_needed: missing, unreadable, and unparseable secondmate status evidence fails closed"
+
+  printf 'done [key=route: waiting\n' > "$state/mate.status"
+  fm_supervision_needed "$state" 300 || fail "an unterminated status key must need supervision"
+
+  printf 'done [key=route] trailing: waiting\n' > "$state/mate.status"
+  fm_supervision_needed "$state" 300 || fail "a noncanonical keyed status prefix must need supervision"
+  pass "fm_supervision_needed: missing, unreadable, and malformed secondmate status evidence fails closed"
 }
 
 test_predicate_queue_pending_flag() {

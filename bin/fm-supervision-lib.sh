@@ -48,7 +48,7 @@ fm_sup_stat_mtime() {
 # ambiguous evidence returns true from fm_sup_secondmate_needs_supervision, so
 # the caller keeps a watcher rather than guessing from a quiet endpoint.
 fm_sup_pending_reply_task_has_open() {  # <state-dir> <task-id>
-  local state=$1 task_id=$2 dir rec line rec_task phase
+  local state=$1 task_id=$2 dir rec line rec_task phase task_fields phase_fields
   dir="$state/pending-replies"
   [ -e "$dir" ] || return 1
   [ -d "$dir" ] && [ ! -L "$dir" ] && [ -r "$dir" ] && [ -x "$dir" ] || return 0
@@ -57,12 +57,21 @@ fm_sup_pending_reply_task_has_open() {  # <state-dir> <task-id>
     [ -f "$rec" ] && [ ! -L "$rec" ] && [ -r "$rec" ] || return 0
     rec_task=
     phase=
+    task_fields=0
+    phase_fields=0
     while IFS= read -r line || [ -n "$line" ]; do
       case "$line" in
-        task_id=*) rec_task=${line#task_id=} ;;
-        phase=*) phase=${line#phase=} ;;
+        task_id=*)
+          task_fields=$((task_fields + 1))
+          rec_task=${line#task_id=}
+          ;;
+        phase=*)
+          phase_fields=$((phase_fields + 1))
+          phase=${line#phase=}
+          ;;
       esac
     done < "$rec" || return 0
+    [ "$task_fields" -eq 1 ] && [ "$phase_fields" -eq 1 ] || return 0
     [ -n "$rec_task" ] && [ -n "$phase" ] || return 0
     [ "$rec_task" = "$task_id" ] || continue
     [ "$phase" = resolved ] || return 0
@@ -71,12 +80,15 @@ fm_sup_pending_reply_task_has_open() {  # <state-dir> <task-id>
 }
 
 fm_sup_secondmate_needs_supervision() {  # <state-dir> <task-id>
-  local state=$1 task_id=$2 status line verb key saw=0 decisions activities last
+  local state=$1 task_id=$2 status line prefix rest verb key saw=0 decisions activities last
   status="$state/$task_id.status"
   [ -f "$status" ] && [ ! -L "$status" ] && [ -r "$status" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "${line//[[:space:]]/}" ] || continue
     case "$line" in *:*) ;; *) return 0 ;; esac
+    prefix=${line%%:*}
+    prefix=${prefix#"${prefix%%[![:space:]]*}"}
+    prefix=${prefix%"${prefix##*[![:space:]]}"}
     verb=$(status_line_verb "$line")
     case "$verb" in
       working|done|needs-decision|blocked|failed|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
@@ -85,6 +97,15 @@ fm_sup_secondmate_needs_supervision() {  # <state-dir> <task-id>
     esac
     key=$(_fm_decision_key "$line") || return 0
     [ -n "$key" ] || return 0
+    case "$prefix" in
+      "$verb") ;;
+      "$verb"[[:space:]]*)
+        rest=${prefix#"$verb"}
+        rest=${rest#"${rest%%[![:space:]]*}"}
+        [ "$rest" = "[key=$key]" ] || return 0
+        ;;
+      *) return 0 ;;
+    esac
     saw=1
   done < "$status" || return 0
   [ "$saw" = 1 ] || return 0
