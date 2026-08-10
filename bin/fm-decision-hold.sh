@@ -1013,8 +1013,8 @@ EOF
   printf 'retracted: %s superseded by %s\n' "$id" "$surviving_id"
 }
 
-board_answer_valid_for_hold() {  # <hold-body> <answer-file>
-  local body=$1 answer_file=$2 fact_kind fact_fields
+board_answer_valid_for_hold() {  # <answer-file> <decision-kind> <fact-fields>
+  local answer_file=$1 fact_kind=$2 fact_fields=$3
   [ -f "$answer_file" ] && [ ! -L "$answer_file" ] \
     || fail "board answer file does not exist or is unsafe: $answer_file"
   command -v jq >/dev/null 2>&1 || fail "jq is required"
@@ -1031,8 +1031,6 @@ board_answer_valid_for_hold() {  # <hold-body> <answer-file>
       end)
   ' "$answer_file" >/dev/null 2>&1 \
     || fail "board answer is not the validated structured answer shape"
-  fact_kind=$(get_body_field "$body" "Decision kind")
-  fact_fields=$(get_body_field "$body" "Decision fact fields")
   if [ "$fact_kind" = fact ] && [ -n "$fact_fields" ]; then
     printf '%s' "$fact_fields" | jq -R -s -e -L "$SCRIPT_DIR" \
       'include "fm-decision-readiness"; decision_fact_fields_valid' >/dev/null 2>&1 \
@@ -1081,7 +1079,7 @@ board_answer_routes() {  # <hold-id> <hold-body>
 }
 
 command_resolve_board() {
-  local id=${1:-} answer_file='' show body origin key expected_id routes route decision_file
+  local id=${1:-} answer_file='' show body archived_record origin key expected_id routes route decision_file fact_kind fact_fields
   local -a route_args=()
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
@@ -1095,17 +1093,30 @@ command_resolve_board() {
   validate_slug hold-id "$id"
   [ -n "$answer_file" ] || fail "--answer-file is required"
   require_tasks_axi
-  show=$(task_show "$id") || fail "captain hold $id disappeared before its board answer was applied"
-  body=$(show_body "$show") || fail "could not read captain hold $id body"
-  origin=$(get_body_field "$body" "Origin")
-  key=$(get_body_field "$body" "Decision key")
+  if show=$(task_show "$id"); then
+    body=$(show_body "$show") || fail "could not read captain hold $id body"
+    origin=$(get_body_field "$body" "Origin")
+    key=$(get_body_field "$body" "Decision key")
+    fact_kind=$(get_body_field "$body" "Decision kind")
+    fact_fields=$(get_body_field "$body" "Decision fact fields")
+    routes=$(board_answer_routes "$id" "$body")
+  else
+    [ "$(archive_hold_status "$id")" = resolved ] \
+      || fail "captain hold $id disappeared before its board answer was applied"
+    archived_record=$(archive_record "$id") \
+      || fail "could not read archived captain hold $id"
+    origin=$(archive_record_field "$archived_record" "Origin")
+    key=$(archive_record_field "$archived_record" "Decision key")
+    fact_kind=$(archive_record_field "$archived_record" "Decision kind")
+    fact_fields=$(archive_record_field "$archived_record" "Decision fact fields")
+    routes=$(archive_record_field "$archived_record" "Routed identities" | tr ',' '\n')
+  fi
   validate_slug origin-id "$origin"
   validate_slug decision-key "$key"
   expected_id=$(hold_id "$origin" "$key")
   [ "$id" = "$expected_id" ] \
     || fail "board answer target $id does not match its recorded decision identity"
-  board_answer_valid_for_hold "$body" "$answer_file"
-  routes=$(board_answer_routes "$id" "$body")
+  board_answer_valid_for_hold "$answer_file" "$fact_kind" "$fact_fields"
   while IFS= read -r route; do
     [ -n "$route" ] || continue
     route_args+=(--routed-to "$route")
@@ -1128,7 +1139,7 @@ EOF
 }
 
 command_resolve() {
-  local origin=${1:-} key=${2:-} decision_file='' id='' decision='' decision_digest='' body='' routed='' routed_csv='' dep show blocked state hold_show hold_body archived_record resolution_recorded=0
+  local origin=${1:-} key=${2:-} decision_file='' id='' decision='' decision_digest='' body='' routed='' routed_csv='' dep show blocked state hold_show hold_body hold_schema_body archived_record resolution_recorded=0 decision_kind fact_fields
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -1175,6 +1186,7 @@ command_resolve() {
   verify_hold_active "$id"
   hold_show=$(task_show "$id")
   hold_body=$(show_field "$hold_show" body)
+  hold_schema_body=$(show_body "$hold_show") || fail "could not read captain hold $id body"
   case "$hold_body" in
     *"Resolution recorded by fm-decision-hold."*)
       verify_resolution_identity "$id" "$hold_body" "$decision_digest" "$routed_csv"
@@ -1209,6 +1221,10 @@ command_resolve() {
   # Preserve the established hold identity beside the durable resolution record
   # so a replayed external answer can re-enter this same idempotent resolve path.
   body="${body}Origin: ${origin}"$'\n'"Decision key: ${key}"
+  decision_kind=$(get_body_field "$hold_schema_body" "Decision kind")
+  fact_fields=$(get_body_field "$hold_schema_body" "Decision fact fields")
+  [ -z "$decision_kind" ] || body="${body}"$'\n'"Decision kind: ${decision_kind}"
+  [ -z "$fact_fields" ] || body="${body}"$'\n'"Decision fact fields: ${fact_fields}"
   tasks_axi update "$id" --body "$body" >/dev/null \
     || fail "could not record the captain decision on $id"
   for dep in $routed; do

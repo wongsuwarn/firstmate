@@ -1366,7 +1366,7 @@ pass "the 50-message bound is applied after filtering and merging the conversati
 # request survives before application, then the existing decision lifecycle
 # records it, clears the dependency, and closes the hold in its usual order.
 test_answer_collection_uses_the_decision_lifecycle() {
-  local home origin route_hold fact_one fact_two malformed_hold result before show
+  local home origin route_hold fact_one fact_two malformed_hold result route_result fact_result before show
   home="$TMP_ROOT/answer-home"
   origin='answer-origin'
   mkdir -p "$home/data" "$home/state" "$home/config" "$home/projects"
@@ -1405,6 +1405,7 @@ EOF
   task add route-dependent "Apply the selected route" --kind ship --repo sample --blocked-by "$route_hold" >/dev/null \
     || fail "could not create the choice dependent"
   result="$home/state/procevent-inbox/board-answer-fixture.1.result"
+  route_result=$result
   mkdir -p "${result%/*}"
   captured "$result" 'FM-BOARD-REQUEST {"v":"1","intent":"answer","home":"main","id":"answer-origin-decision-route","note":"Tuesday morning"}'
   before=$(shasum -a 256 "$result" | awk '{print $1}')
@@ -1429,6 +1430,7 @@ EOF
   task add fact-two-dependent "Apply second account facts" --kind ship --repo sample --blocked-by "$fact_two" >/dev/null \
     || fail "could not create the second fact dependent"
   result="$home/state/procevent-inbox/board-answer-fixture.2.result"
+  fact_result=$result
   captured "$result" 'FM-BOARD-REQUEST {"v":"1","intent":"answer","home":"main","id":"answer-origin-decision-fact-one","facts":{"account":"Harbour Fund","statement_date":"2026-08-10"},"required_keys":["account","statement_date"],"note":"Renamed last quarter."}'
   apply "$result" >/dev/null || fail "a structured fact answer did not apply"
   show=$(task show "$fact_one" --full)
@@ -1436,6 +1438,12 @@ EOF
     "the fact values did not round-trip as structured data"
   assert_contains "$show" '\"note\":\"Renamed last quarter.\"' \
     "the fact overflow note did not round-trip"
+  apply "$fact_result" >/dev/null || fail "an exact structured fact replay was not idempotent"
+  task prune --keep 0 --state done >/dev/null || fail "could not apply Done retention to resolved board decisions"
+  apply "$route_result" >/dev/null || fail "a retained choice answer could not replay from the archive"
+  apply "$fact_result" >/dev/null || fail "a retained structured fact answer could not replay from the archive"
+  assert_contains "$(cat "$home/data/done-archive.md")" "Decision fact fields:" \
+    "Done retention lost the structured fact schema needed for exact replay"
   assert_contains "$(task show "$fact_two" --full)" 'state: queued' \
     "a partial fact group closed an unanswered sibling"
   assert_contains "$(task show fact-two-dependent --full)" 'blocked: yes' \
