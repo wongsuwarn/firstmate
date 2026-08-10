@@ -200,7 +200,8 @@ The direct request log is the source of truth for recorded Answer requests; brow
 Its captain-to-firstmate intents are `merge`, `reply`, `answer`, `defer`, `ask`, and `file`.
 A legacy `answer` carries its free-text `note` unchanged.
 A fielded fact `answer` keeps that same intent and carries a `facts` object keyed by the stable field keys, the form's `required_keys`, and an optional overflow `note`.
-The shared parser is the only required-key validator, rejects an incomplete structured answer with the missing keys named, and emits the values as structure so firstmate does not re-parse prose.
+The shared parser is the only required-key validator and rejects an incomplete structured answer by its stable keys, while the fielded form translates that refusal back to the recorded human labels before showing it to the captain.
+It emits the accepted values as structure so firstmate does not re-parse prose.
 The `file` intent carries only the captain's free-text `note` plus the common home and envelope fields, because it originates work with no existing item or decision target.
 
 The legacy Lavish-bridged surface in [`bin/fm-procevent-mission-control.sh`](../bin/fm-procevent-mission-control.sh) remains supported for the shared captain-request vocabulary but gains no new transport behavior.

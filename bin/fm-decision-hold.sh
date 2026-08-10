@@ -28,9 +28,10 @@
 # already record it, so a first filing can never omit one while an idempotent retry
 # never has to retype what is already stored. Repeating --option supplies the
 # complete ordered set: two to four distinct labels of at most 80 bytes each.
-# --kind accepts only `fact`; --expects describes the expected free-text shape,
-# is valid only for that kind, and is REQUIRED once that kind is set, because a
-# fact request the captain cannot answer in the expected shape is not answerable.
+# --kind accepts only `fact`; --expects describes the expected answer shape and
+# free-text fallback, is valid only for that kind, and is REQUIRED once that kind
+# is set, because a fact request the captain cannot answer in the expected shape
+# is not answerable.
 # --fact-fields accepts an optional compact JSON array for that kind. The schema
 # shape is owned by bin/fm-decision-readiness.jq; use roughly three to eight
 # fields for one sub-question, and file separate grouped decisions rather than a

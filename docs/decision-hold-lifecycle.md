@@ -20,7 +20,7 @@ A captain decision records its context as separate structured body fields rather
 `Decision options` is an explicit ordered set of two to four distinct labels, each at most 80 bytes, for a decision whose useful answers are already a clean small pick.
 It is absent rather than inferred when the decision needs free text or when no options were filed.
 `Decision kind` currently accepts only `fact`, which marks a decision that asks the captain to supply a specific fact or classification rather than choose a course.
-`Decision expects` is a 160-byte hint for the useful free-text answer shape, is valid only with that explicit kind, and is required once that kind is set.
+`Decision expects` is a 160-byte hint for the useful answer shape and the free-text fallback, is valid only with that explicit kind, and is required once that kind is set.
 A fact request the captain cannot answer in the expected shape is not answerable, so the hint travels with the kind rather than being optional beside it.
 `Decision fact fields` is an optional ordered JSON array supplied with `--fact-fields` for a fact request that is better answered as discrete values than as prose.
 Each entry has a display `label`, stable `key`, `type` from `text`, `number`, `date`, `money`, `enum`, or `longtext`, and boolean `required`, plus optional `hint`, `example`, and `unit` strings.
@@ -43,7 +43,7 @@ The two surface fields are one choice, so recording either clears the other and 
 The schema is additive: an old-style hold that carries only a plain hold reason keeps that reason and renders unchanged, while a hold that already records the earlier optional question or URL keeps those fields too.
 Supplying options on a later idempotent filing replaces that one structured set, while a retry that supplies none preserves whatever was already recorded.
 Supplying `fact`, its expected-answer hint, or its fact-field schema on a later filing likewise replaces that field, while omission preserves it; a hint-only or schema-only retry is valid once the stored kind is already `fact`.
-Options, fact intake, field schemas, and grouping are independent, so any can be present without the others and none changes a decision that carries none.
+Options and grouping remain optional independently, while a field schema always requires explicit fact intake and none of these additions changes a decision that carries none.
 `resolve`, `complete`, `verify`, `retract`, and `link` are untouched on such a hold.
 Re-arming one with `hold` does require the full bar, because the presence check reads the stored body and finds nothing there; that is the going-forward contract rather than a compatibility gap, and it converts an old hold into a complete one at the moment it is next touched.
 Structured context currently reaches the captain through Mission Control only.

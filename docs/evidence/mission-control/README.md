@@ -31,7 +31,7 @@ The after view keeps fleet health distinct, presents each primary allowance wind
 The after images keep the new-work intake visually separate from the continuing Ask-firstmate conversation through its labelled slate treatment, larger heading, explanatory copy, and deliberate space between the two cards.
 
 `after-fact-form-desktop.png` and `after-fact-form-mobile.png` show the schema-driven portfolio fact form at 1280px and 390px.
-`after-fact-validation-desktop.png` and `after-fact-validation-mobile.png` show the shared validator naming every missing required key beside the still-reachable submit control.
+`after-fact-validation-desktop.png` and `after-fact-validation-mobile.png` show every missing required field by its human label beside the still-reachable submit control.
 `after-fact-group-partial-desktop.png` and `after-fact-group-partial-mobile.png` show one grouped fact answered and one still open with `1 of 2 facts provided` remaining visible.
 `after-fact-legacy-desktop.png` and `after-fact-legacy-mobile.png` show a fact decision with no schema retaining the expected-answer textarea.
 
