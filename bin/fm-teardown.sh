@@ -381,16 +381,20 @@ else
 fi
 [ "$remote_teardown_rc" -eq 3 ] || exit "$remote_teardown_rc"
 
-WORKTREE_OWNERSHIP_LOCK=
-WORKTREE_OWNERSHIP_LOCK_HELD=0
+WORKTREE_OWNERSHIP_LOCK_RECORDS=
 teardown_release_locks() {
+  local ownership_lock
   if declare -F teardown_release_herdr_locks >/dev/null 2>&1; then
     teardown_release_herdr_locks
   fi
-  if [ "$WORKTREE_OWNERSHIP_LOCK_HELD" = 1 ]; then
-    WORKTREE_OWNERSHIP_LOCK_HELD=0
-    fm_lock_release "$WORKTREE_OWNERSHIP_LOCK" || true
-  fi
+  [ -n "$WORKTREE_OWNERSHIP_LOCK_RECORDS" ] || return 0
+  while IFS= read -r ownership_lock; do
+    [ -n "$ownership_lock" ] || continue
+    fm_lock_release "$ownership_lock" || true
+  done <<FMEOF
+$WORKTREE_OWNERSHIP_LOCK_RECORDS
+FMEOF
+  WORKTREE_OWNERSHIP_LOCK_RECORDS=
 }
 teardown_lock_cleanup_on_exit() {
   local status=$?
@@ -399,6 +403,27 @@ teardown_lock_cleanup_on_exit() {
   exit "$status"
 }
 trap teardown_lock_cleanup_on_exit EXIT
+
+teardown_acquire_worktree_ownership_lock() {
+  local state=$1 lock="$1/.worktree-ownership.lock" held_lock
+  if [ -n "$WORKTREE_OWNERSHIP_LOCK_RECORDS" ]; then
+    while IFS= read -r held_lock; do
+      [ "$held_lock" != "$lock" ] || return 0
+    done <<FMEOF
+$WORKTREE_OWNERSHIP_LOCK_RECORDS
+FMEOF
+  fi
+  if ! fm_lock_acquire_wait "$lock"; then
+    echo "REFUSED: could not acquire the worktree ownership lock for $state; preserving every task record and worktree." >&2
+    return 1
+  fi
+  if [ -n "$WORKTREE_OWNERSHIP_LOCK_RECORDS" ]; then
+    WORKTREE_OWNERSHIP_LOCK_RECORDS="$WORKTREE_OWNERSHIP_LOCK_RECORDS
+$lock"
+  else
+    WORKTREE_OWNERSHIP_LOCK_RECORDS=$lock
+  fi
+}
 
 # This is the first cleanup authorization check. It is metadata-only and must
 # complete before fm-guard, a backend command, file removal, branch deletion,
@@ -428,12 +453,7 @@ ORCA_PATH_MATCH_VERIFIED=0
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  WORKTREE_OWNERSHIP_LOCK="$STATE/.worktree-ownership.lock"
-  if ! fm_lock_acquire_wait "$WORKTREE_OWNERSHIP_LOCK"; then
-    echo "REFUSED: could not acquire the worktree ownership lock; preserving task $ID." >&2
-    exit 1
-  fi
-  WORKTREE_OWNERSHIP_LOCK_HELD=1
+  teardown_acquire_worktree_ownership_lock "$STATE" || exit 1
   if fm_worktree_claimed_by_other_task "$STATE" "$ID" "$WT"; then
     echo "REFUSED: worktree $WT is also claimed by task $FM_WORKTREE_OWNERSHIP_OWNER; preserving both task records and worktrees until ownership is reconciled." >&2
     exit 1
@@ -1889,6 +1909,37 @@ preflight_firstmate_home_process_event_tree() {
   preflight_firstmate_home_process_events "$home" "$label"
 }
 
+preflight_firstmate_home_worktree_ownership() {
+  local home=$1 sub_state child_meta child_id child_wt child_kind child_home ownership_rc
+  sub_state="$home/state"
+  [ -d "$sub_state" ] && [ ! -L "$sub_state" ] || return 0
+  teardown_acquire_worktree_ownership_lock "$sub_state" || return 1
+  for child_meta in "$sub_state"/*.meta; do
+    [ -e "$child_meta" ] || [ -L "$child_meta" ] || continue
+    child_id=$(basename "$child_meta" .meta)
+    child_wt=$(meta_value "$child_meta" worktree)
+    if [ -n "$child_wt" ]; then
+      if fm_worktree_claimed_by_other_task "$sub_state" "$child_id" "$child_wt"; then
+        echo "REFUSED: child worktree $child_wt for $child_id is also claimed by task $FM_WORKTREE_OWNERSHIP_OWNER; preserving every child record, branch, and worktree." >&2
+        return 1
+      else
+        ownership_rc=$?
+        if [ "$ownership_rc" -ne 1 ]; then
+          echo "REFUSED: cannot prove child worktree $child_wt is owned only by task $child_id: $FM_WORKTREE_OWNERSHIP_REASON" >&2
+          return 1
+        fi
+      fi
+    fi
+    child_kind=$(meta_value "$child_meta" kind)
+    [ -n "$child_kind" ] || child_kind=ship
+    if [ "$child_kind" = secondmate ]; then
+      child_home=$(meta_value "$child_meta" home)
+      [ -n "$child_home" ] || child_home=$child_wt
+      preflight_firstmate_home_worktree_ownership "$child_home" || return 1
+    fi
+  done
+}
+
 validate_firstmate_home_children_removal() {
   local home=$1 sub_state child_meta child_id child_wt child_proj child_kind child_home child_backend child_orca_worktree_id
   sub_state="$home/state"
@@ -2170,6 +2221,7 @@ if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
   validate_firstmate_home_for_removal "$HOME_PATH" "secondmate home" "$ID" >/dev/null || exit 1
   if [ "$FORCE" = "--force" ]; then
+    preflight_firstmate_home_worktree_ownership "$HOME_PATH" || exit 1
     validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
     if [ "$BACKEND" = herdr ]; then
       teardown_herdr_preflight_target "$T" "$ID" || exit 1

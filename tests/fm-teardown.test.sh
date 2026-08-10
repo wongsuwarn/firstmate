@@ -1754,6 +1754,55 @@ SH
   pass "forced secondmate teardown preflights every Herdr child before cleanup mutation"
 }
 
+test_forced_secondmate_child_collision_refuses_before_changes() {
+  local case_dir home rc
+  case_dir=$(make_case secondmate-child-worktree-collision)
+  write_meta "$case_dir" local-only secondmate
+  home="$case_dir/secondmate-home"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects"
+  printf '%s\n' task-x1 > "$home/.fm-secondmate-home"
+  printf '%s\n' "home=$home" >> "$case_dir/state/task-x1.meta"
+  fm_write_meta "$home/state/child-a.meta" \
+    "window=firstmate:fm-child-a" \
+    "endpoint_task_id=child-a" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=local-only"
+  fm_write_meta "$home/state/child-b.meta" \
+    "window=firstmate:fm-child-b" \
+    "endpoint_task_id=child-b" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=local-only"
+  printf '%s\n' 'unlanded child work remains intact' > "$case_dir/wt/keep-child.txt"
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+exit 0
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "secondmate-child-worktree-collision: teardown must refuse ambiguous child ownership"
+  assert_grep 'for child-a is also claimed by task child-b' "$case_dir/stderr" \
+    "secondmate-child-worktree-collision: refusal did not identify the competing child record"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "secondmate-child-worktree-collision: teardown removed the secondmate record"
+  assert_present "$home/state/child-a.meta" \
+    "secondmate-child-worktree-collision: teardown removed the first child record"
+  assert_present "$home/state/child-b.meta" \
+    "secondmate-child-worktree-collision: teardown removed the competing child record"
+  assert_present "$case_dir/wt/keep-child.txt" \
+    "secondmate-child-worktree-collision: teardown discarded unlanded child work"
+  assert_absent "$case_dir/treehouse.log" \
+    "secondmate-child-worktree-collision: teardown returned a contested child worktree"
+  pass "forced secondmate teardown preserves all child records and work on ownership collision"
+}
+
 test_forced_secondmate_herdr_child_retains_records_when_close_unconfirmed() {
   local case_dir home log closed rc
   case_dir=$(make_case herdr-child-unconfirmed-close)
@@ -2579,6 +2628,7 @@ test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence
 test_herdr_flat_teardown_preflight_refuses_before_changes
 test_forced_secondmate_herdr_child_preflight_refuses_before_changes
+test_forced_secondmate_child_collision_refuses_before_changes
 test_forced_secondmate_herdr_child_retains_records_when_close_unconfirmed
 test_forced_teardown_retains_nested_secondmate_home_when_grandchild_close_unconfirmed
 test_herdr_projection_teardown_retires_journal_only_after_confirmed_close
