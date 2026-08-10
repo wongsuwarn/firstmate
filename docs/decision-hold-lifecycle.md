@@ -110,6 +110,7 @@ It reads them for any row whose hold kind is `captain` or `parked`, not only a r
 `bin/fm-mission-control.sh` renders the context fields it finds on the decision card and falls back to the plain hold reason for a decision that carries none.
 Each such row also carries `decision_readiness`, the structural verdict as `{structured, ready, gaps}`, where every gap names its failed check and the flag that fixes it, so no reader restates the checklist.
 A record from a home that predates the field carries no verdict, which reads as unrecorded rather than as ready.
+The verdict is scoped to the home whose backlog the snapshot reads, so a decision owned by a secondmate home carries none and never reaches this home's fleet health; that home runs its own sweep over its own backlog.
 Once the direct board-reply service proves it is available, a valid option set becomes quick-answer buttons without replacing the free-text Answer path; the legacy Lavish transport remains Answer-only.
 An explicit `fact` kind labels that same free-text Answer form as fact intake and shows its expected-answer hint when present; it adds no structured or multi-field input widget.
 [`docs/mission-control.md`](mission-control.md#sections) owns when the visual wrapper appears, how grouped answered ordering works, and which sections remain unchanged.
@@ -328,6 +329,16 @@ Two pre-existing contracts tightened, and the existing cases were updated to mat
 `Decision question` is now required, so the suite's one shared synthetic context set gained a question, as did the three places that write a decision body directly.
 `Decision expects` is now required whenever `Decision kind` is `fact`, so the fact-intake case files its hint from the start and still proves that a later hint-only retry replaces it.
 The state that case previously asserted, a fact decision carrying no hint, is no longer reachable through the filing flags and is covered instead by the new sweep fixture.
+
+The sweep was also run read-only against the live main home, which is the no-regression evidence the synthetic fixtures cannot give.
+Six open captain decisions were present.
+The two carrying structured context both passed every check, and the four filed under the older plain-reason shape were skipped entirely rather than reported, so nothing already landed is newly flagged and the board's fleet health count is unchanged by this work.
+
+```text
+$ FM_HOME=<main home> bin/fm-decision-hold.sh doctor
+checked 2 structured captain decisions; all ready for the captain
+exit status 0
+```
 
 ```text
 $ FM_HOME=<fixture> bin/fm-decision-hold.sh doctor

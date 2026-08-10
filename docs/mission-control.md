@@ -79,7 +79,8 @@ The stage itself is derived by the snapshot rather than by the board; see `bin/f
   An empty feed means no qualifying action has been recorded in that window; it does not reconstruct earlier chat or status prose.
 - **Fleet health** lists blocked or failed tasks, backlog items waiting on an unresolved blocker, non-decision secondmate work whose own state or blocker linkage says it is held, and open captain decisions the structural readiness checklist reports as incomplete.
   An incomplete decision reads `incomplete` with the specific gaps as its hint, because a decision that reaches Captain's Call unanswerable is a fleet health problem rather than a decision waiting on the captain; [`docs/decision-hold-lifecycle.md`](decision-hold-lifecycle.md) owns the checklist.
-  It sits in the closing strip, so anything blocked or failed is also announced in a bar above the primary sections rather than left for the captain to scroll to.
+  It sits in the closing strip, so every fleet health item is also announced in a bar above the primary sections rather than left for the captain to scroll to.
+  That bar names the count as blocked or failed while those are the only kind present, and widens to fleet health items once a held secondmate item or an incomplete decision joins them.
 - **Allowance & pace** integrates the local Token Dashboard into the System view rather than repeating its numbers in a separate dashboard-shaped panel.
   Each primary allowance window leads with current remaining allowance, then keeps pace against the reset, observed cycle history, and projected runway or exhaustion in one compact card.
   Recent automatic balancing is a quiet collapsed shelf under those cards, so its activity remains visible without becoming another monitoring feed.

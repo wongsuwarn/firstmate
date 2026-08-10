@@ -31,6 +31,8 @@
 #     checklist: {structured, ready, gaps} where each gap names its failed check
 #     and the flag that fixes it. A hold predating the structured schema reports
 #     structured false and ready true, because the checklist does not cover it.
+#     The verdict is scoped to this home's own backlog rows, so a decision owned
+#     by a secondmate home carries none and is that home's own to check.
 #     They also carry normalized current_role,
 #     requires_child_metadata, blocked_by_ids, unresolved_blocker_ids, blocks_ids,
 #     captain_actionable, and captain_deferred fields. Repeated blocker tokens
