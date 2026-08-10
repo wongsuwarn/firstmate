@@ -168,6 +168,43 @@ test_already_settled_pane_costs_one_confirm_sleep() {
   pass "an already-settled pane confirms via the existing inter-poll sleep, not an extra full cycle"
 }
 
+# A pool with nothing left to hand out must refuse the launch carrying
+# treehouse's OWN reason.
+#
+# Under leases this stopped being a theoretical branch: every live task holds a
+# slot until it is torn down, so "all N worktrees are in use" is a real
+# operating condition rather than a corrupt-tool signal, and the number and the
+# remedy live only in treehouse's stderr. Swallowing it leaves a bare "the pool
+# returned no path" that no operator can act on.
+test_exhausted_pool_refuses_with_the_vendor_reason() {
+  local rec id out status reason
+  id=settle-exhausted-z8
+  reason="all 3 worktrees are in use or dirty (max_trees = 3). Run 'treehouse status' to see details, or increase max_trees in treehouse.toml"
+  rec=$(make_settle_case settle-exhausted "$id" 0)
+  read_settle_record "$rec"
+  cat > "$FAKEBIN_DIR/treehouse" <<SH
+#!/usr/bin/env bash
+set -u
+if [ "\${1:-}" = get ]; then
+  # The vendor writes progress and the refusal to stderr and nothing to stdout.
+  echo "setting up worktree..." >&2
+  echo "$reason" >&2
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$FAKEBIN_DIR/treehouse"
+
+  out=$(run_settle_spawn "$id")
+  status=$?
+  expect_code 1 "$status" "an exhausted pool must refuse the launch"
+  assert_contains "$out" "$reason" \
+    "the refusal dropped treehouse's own reason, leaving no way to tell an exhausted pool from a broken one"
+  assert_absent "$HOME_DIR/state/$id.meta" \
+    "a refused launch must publish no task record"
+  pass "an exhausted pool refuses the launch and carries treehouse's own reason"
+}
+
 # The command that enters the copy must leave the pane's OWN top-level shell
 # outside it, with real processes rather than by inspecting the text.
 #
@@ -422,6 +459,7 @@ test_superseded_copy_with_unlanded_work_is_kept() {
 
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_sleep
+test_exhausted_pool_refuses_with_the_vendor_reason
 test_entry_command_keeps_the_pane_shell_out_of_the_copy
 test_claimed_pooled_worktree_is_not_reallocated
 if command -v treehouse >/dev/null 2>&1; then

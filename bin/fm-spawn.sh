@@ -2171,15 +2171,25 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   else
     ENTER_WT_SOURCE="treehouse get --lease"
     ENTER_WT_LABEL="leased isolated copy"
-    LEASE_OUT=$( ( cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID" ) </dev/null 2>/dev/null ) \
-      || LEASE_OUT=
+    # treehouse says WHY it refused on stderr and prints only the path on stdout,
+    # so keep the two apart: the reason is the whole value of the refusal below
+    # (an exhausted pool names its own max_trees), and mixing the streams would
+    # feed a diagnostic line to the path parser.
+    LEASE_ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-lease.XXXXXX") || LEASE_ERR_FILE=
+    LEASE_OUT=$( ( cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID" ) \
+      </dev/null 2>"${LEASE_ERR_FILE:-/dev/null}" ) || LEASE_OUT=
+    LEASE_ERR=
+    if [ -n "$LEASE_ERR_FILE" ]; then
+      LEASE_ERR=$(grep -v '^[[:space:]]*$' "$LEASE_ERR_FILE" 2>/dev/null | tail -1)
+      rm -f "$LEASE_ERR_FILE"
+    fi
     # --lease prints only the path on stdout; take the last line so a future
     # banner leaking onto stdout cannot be mistaken for the worktree.
     ENTER_WT=$(printf '%s\n' "$LEASE_OUT" | sed -n '$p')
     if [ -z "$ENTER_WT" ]; then
       # An empty path must refuse here and not fall through: `cd ""` succeeds and
       # stays put, so a later check would silently inspect firstmate's own cwd.
-      echo "error: $ENTER_WT_SOURCE did not yield an isolated worktree (the pool returned no path); refusing to launch to avoid tangling the primary checkout. Inspect target $T" >&2
+      echo "error: $ENTER_WT_SOURCE did not yield an isolated worktree (the pool returned no path${LEASE_ERR:+; treehouse said: $LEASE_ERR}); refusing to launch to avoid tangling the primary checkout. Inspect target $T" >&2
       exit 1
     fi
     case "$ENTER_WT" in
