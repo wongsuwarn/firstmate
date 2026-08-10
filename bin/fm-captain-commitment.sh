@@ -6,7 +6,7 @@
 #   fm-captain-commitment.sh defer [<kind>] Mark the open record as left behind.
 #   fm-captain-commitment.sh done           Clear the open record; nothing outstanding.
 #   fm-captain-commitment.sh track <id>...  Clear it by pointing at backlog work.
-#   fm-captain-commitment.sh reconcile      Drop links whose work finished or vanished.
+#   fm-captain-commitment.sh reconcile      Drop links whose work is verified Done.
 #   fm-captain-commitment.sh pending        Print the bounded informational surface.
 #   fm-captain-commitment.sh check          Exit 2 with a reminder while outstanding.
 #   fm-captain-commitment.sh --help
@@ -52,7 +52,8 @@
 #             non-empty body. The body is where the next action and completion
 #             criterion live, so an item without one cannot discharge the
 #             commitment. On success the record is removed and each id is linked.
-#   reconcile Removes a link whose item is Done or absent, so nothing goes stale.
+#   reconcile Removes a link only when its item is verified Done. An unreadable or
+#             absent item remains linked and surfaces as broken until repaired.
 #
 # OUTSTANDING PREDICATE (`check`)
 #
@@ -258,11 +259,8 @@ cmd_reconcile() {
   command -v tasks-axi >/dev/null 2>&1 || return 0
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    show=$(task_show "$id") || show=''
-    if [ -z "$show" ]; then
-      rm -f "$LINKS/$id"
-      continue
-    fi
+    show=$(task_show "$id") || continue
+    [ -n "$show" ] || continue
     state=$(show_field "$show" state)
     [ "$state" = "done" ] && rm -f "$LINKS/$id"
   done <<EOF
@@ -274,16 +272,23 @@ EOF
 # A linked item is actionable when it is queued, unheld, and unblocked. Anything
 # else is either already moving or waiting on something this mechanism must not
 # push against.
-link_is_actionable() {  # <id>
+link_outstanding_line() {  # <id>
   local show state held blocked
-  show=$(task_show "$1") || return 1
-  [ -n "$show" ] || return 1
+  show=$(task_show "$1") || {
+    printf 'Backlog item %s carries a captain request but cannot be read or no longer exists; repair or relink it.\n' "$1"
+    return 0
+  }
+  if [ -z "$show" ]; then
+    printf 'Backlog item %s carries a captain request but cannot be read or no longer exists; repair or relink it.\n' "$1"
+    return 0
+  fi
   state=$(show_field "$show" state)
   [ "$state" = queued ] || return 1
   held=$(show_field "$show" held)
   [ "$held" != yes ] || return 1
   blocked=$(show_field "$show" blocked)
   [ "$blocked" != yes ] || return 1
+  printf 'Backlog item %s carries a captain request and is dispatchable now, not under way.\n' "$1"
   return 0
 }
 
@@ -308,8 +313,7 @@ outstanding_lines() {
   fi
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    link_is_actionable "$id" || continue
-    line="Backlog item $id carries a captain request and is dispatchable now, not under way."
+    line=$(link_outstanding_line "$id") || continue
     if [ "${#line}" -gt "$ITEM_BYTES" ]; then
       line="${line:0:$((ITEM_BYTES - 13))} [truncated]"
     fi

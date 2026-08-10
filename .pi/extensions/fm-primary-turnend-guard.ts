@@ -178,35 +178,32 @@ export default function (pi: ExtensionAPI) {
     return { block: true, reason: result.stderr.trim() || "denied by the watcher-arm PreToolUse seatbelt" };
   });
 
-  // Both latches are consumed before the predicates run, so a generated follow-up's
-  // own settle never re-runs a predicate: the guard still executes exactly once per
-  // logical agent run. Supervision keeps precedence, because a blind turn end has to
-  // be repaired before anything else is worth surfacing.
+  // A generated commitment follow-up's own settle ends the logical run. A generated
+  // supervision follow-up's settle continues to the commitment predicate without
+  // re-running supervision, which keeps precedence without losing the deferred check.
   pi.on("agent_settled", async () => {
     if (guardFollowupActive) {
       guardFollowupActive = false;
-      return;
-    }
-    if (commitmentFollowupActive) {
+    } else if (commitmentFollowupActive) {
       commitmentFollowupActive = false;
       return;
-    }
-
-    const result = await runGuard();
-    if (result.code === 2) {
-      guardFollowupActive = true;
-      try {
-        const content = encodeFirstmateOperationalInput(
-          "turn-end-guard",
-          "TURN WOULD END BLIND - supervision is off. " +
-            "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n" +
-            result.stderr,
-        );
-        await pi.sendUserMessage(content, { deliverAs: "followUp" });
-      } catch {
-        guardFollowupActive = false;
+    } else {
+      const result = await runGuard();
+      if (result.code === 2) {
+        guardFollowupActive = true;
+        try {
+          const content = encodeFirstmateOperationalInput(
+            "turn-end-guard",
+            "TURN WOULD END BLIND - supervision is off. " +
+              "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n" +
+              result.stderr,
+          );
+          await pi.sendUserMessage(content, { deliverAs: "followUp" });
+        } catch {
+          guardFollowupActive = false;
+        }
+        return;
       }
-      return;
     }
 
     const commitment = await runCommitment("check");

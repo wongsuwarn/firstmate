@@ -316,9 +316,9 @@ test_restart_retains_one_commitment_without_duplicating() {
   pass "restart and compaction recovery retain exactly one commitment and do not duplicate it"
 }
 
-test_reconcile_drops_finished_and_missing_links() {
-  needs_tasks_axi test_reconcile_drops_finished_and_missing_links || return 0
-  local home out
+test_reconcile_clears_only_verified_done_links() {
+  needs_tasks_axi test_reconcile_clears_only_verified_done_links || return 0
+  local home fakebin out rc
   home=$(make_home reconcile)
   task "$home" add cc-gone "will vanish" --kind ship --body "Next: do it."
   task "$home" add cc-finished2 "will finish" --kind ship --body "Next: do it."
@@ -329,10 +329,25 @@ test_reconcile_drops_finished_and_missing_links() {
   task "$home" rm cc-gone
   fm "$home" reconcile
   [ -f "$home/state/captain-commitment/linked/cc-finished2" ] && fail "a finished link was kept"
-  [ -f "$home/state/captain-commitment/linked/cc-gone" ] && fail "a vanished link was kept"
+  [ -f "$home/state/captain-commitment/linked/cc-gone" ] || fail "a vanished link was discarded"
   out=$(fm "$home" pending)
-  [ -z "$out" ] || fail "reconciled links still printed a reminder: $out"
-  pass "reconcile drops links whose work finished or vanished"
+  assert_contains "$out" "cc-gone" "a vanished linked item must remain visible"
+  assert_contains "$out" "repair or relink it" "a vanished linked item must surface as broken"
+  fm "$home" check >/dev/null 2>&1
+  rc=$?
+  expect_code 2 "$rc" "a vanished linked item must refuse an ordinary turn end"
+
+  fakebin="$home/fakebin"
+  mkdir -p "$fakebin"
+  cat > "$fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+exit 75
+SH
+  chmod +x "$fakebin/tasks-axi"
+  out=$(PATH="$fakebin:$PATH" fm "$home" pending)
+  assert_contains "$out" "cc-gone" "a transient task read failure must preserve the linked item"
+  [ -f "$home/state/captain-commitment/linked/cc-gone" ] || fail "a transient read failure discarded the link"
+  pass "reconcile clears only verified Done links and surfaces broken links"
 }
 
 # --- inertness --------------------------------------------------------------
@@ -584,8 +599,8 @@ JS
   pass ".pi primary extension: an outstanding captain request injects exactly one bounded follow-up per logical run"
 }
 
-# A blind turn end has to be repaired first, so the second predicate must not run
-# at all while supervision is down.
+# A blind turn end has to be repaired first. When that follow-up settles, the
+# commitment predicate must run without checking supervision a second time.
 test_pi_extension_keeps_supervision_precedence() {
   local repo home driver out status
   [ "$HAVE_NODE" -eq 1 ] || { echo "skip: node not found for the Pi integration"; return 0; }
@@ -602,8 +617,11 @@ const pi = {
   on(event, handler) { handlers.set(event, handler); },
   async sendUserMessage(message) {
     prompts += 1;
-    if (!message.includes("TURN WOULD END BLIND")) {
-      throw new Error("supervision did not take precedence: " + message);
+    if (prompts === 1 && !message.includes("TURN WOULD END BLIND")) {
+      throw new Error("supervision was not surfaced first: " + message);
+    }
+    if (prompts === 2 && !message.includes("TURN WOULD LEAVE A CAPTAIN REQUEST UNFINISHED")) {
+      throw new Error("commitment was not surfaced after supervision recovery: " + message);
     }
     await handlers.get("agent_settled")?.({ type: "agent_settled" }, {});
   },
@@ -611,17 +629,19 @@ const pi = {
 const mod = await import(pathToFileURL(process.env.PLUGIN).href);
 mod.default(pi);
 await handlers.get("agent_settled")({ type: "agent_settled" }, {});
-if (prompts !== 1) throw new Error("expected one supervision follow-up, saw " + prompts);
+if (prompts !== 2) throw new Error("expected supervision then commitment follow-ups, saw " + prompts);
 const log = process.env.FM_COMMITMENT_LOG;
-if (existsSync(log) && readFileSync(log, "utf8").trim() !== "") {
-  throw new Error("the follow-through predicate ran while supervision was down");
+if (!existsSync(log) || readFileSync(log, "utf8").trim() !== "check") {
+  throw new Error("the follow-through predicate did not run exactly once after supervision recovery");
 }
+const guards = readFileSync(process.env.FM_GUARD_LOG, "utf8").trim().split("\n");
+if (guards.length !== 1) throw new Error("supervision predicate ran " + guards.length + " times");
 JS
   out=$(run_pi_driver "$repo" "$home" "$driver")
   status=$?
   expect_code 0 "$status" "supervision must keep precedence over the follow-through check"
   [ -z "$out" ] || fail "Pi precedence test printed output: $out"
-  pass ".pi primary extension: a blind turn end takes precedence and the follow-through check does not run"
+  pass ".pi primary extension: supervision precedes follow-through without suppressing it"
 }
 
 test_deferred_request_becomes_one_actionable_item
@@ -636,7 +656,7 @@ test_work_under_way_is_quiet
 test_declared_external_wait_stays_quiet_across_turns
 test_blocked_work_is_quiet
 test_restart_retains_one_commitment_without_duplicating
-test_reconcile_drops_finished_and_missing_links
+test_reconcile_clears_only_verified_done_links
 test_silent_while_away_mode_is_active
 test_inert_outside_a_primary_home
 test_wake_drain_surfaces_the_outstanding_request
