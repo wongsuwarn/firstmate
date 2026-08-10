@@ -6,6 +6,7 @@
 #   fm-captain-commitment.sh defer [<kind>] Mark the open record as left behind.
 #   fm-captain-commitment.sh done           Clear the open record; nothing outstanding.
 #   fm-captain-commitment.sh track <id>...  Clear it by pointing at backlog work.
+#   fm-captain-commitment.sh untrack <id>... Remove links to confirmed-absent work.
 #   fm-captain-commitment.sh reconcile      Drop links whose work is verified Done.
 #   fm-captain-commitment.sh pending        Print the bounded informational surface.
 #   fm-captain-commitment.sh check          Exit 2 with a reminder while outstanding.
@@ -52,6 +53,8 @@
 #             non-empty body. The body is where the next action and completion
 #             criterion live, so an item without one cannot discharge the
 #             commitment. On success the record is removed and each id is linked.
+#   untrack   Refuses unless every named link exists and tasks-axi confirms its
+#             item is absent. Read failures preserve every link without mutation.
 #   reconcile Removes a link only when its item is verified Done. An unreadable or
 #             absent item remains linked and surfaces as broken until repaired.
 #
@@ -245,6 +248,32 @@ cmd_track() {
   return 0
 }
 
+task_is_confirmed_absent() {  # <id>
+  local result rc
+  result=$(tasks_axi show "$1" --full 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || return 1
+  printf '%s\n' "$result" | grep -Fqx 'code: NOT_FOUND'
+}
+
+cmd_untrack() {
+  local id
+  [ "$#" -gt 0 ] || fail "untrack needs at least one backlog item id"
+  command -v tasks-axi >/dev/null 2>&1 || fail "tasks-axi is required to confirm linked work is absent"
+
+  for id in "$@"; do
+    validate_id "$id" || fail "invalid backlog item id: $id"
+    [ -f "$LINKS/$id" ] || fail "backlog item $id is not linked to a captain request"
+    task_is_confirmed_absent "$id" \
+      || fail "cannot confirm backlog item $id is absent; link preserved"
+  done
+
+  for id in "$@"; do
+    rm -f "$LINKS/$id" || fail "cannot unlink $id"
+  done
+  return 0
+}
+
 link_ids() {
   local path
   [ -d "$LINKS" ] || return 0
@@ -275,11 +304,11 @@ EOF
 link_outstanding_line() {  # <id>
   local show state held blocked
   show=$(task_show "$1") || {
-    printf 'Backlog item %s carries a captain request but cannot be read or no longer exists; repair or relink it.\n' "$1"
+    printf 'Backlog item %s carries a captain request but cannot be read or no longer exists; repair it, or if absent run bin/fm-captain-commitment.sh untrack %s.\n' "$1" "$1"
     return 0
   }
   if [ -z "$show" ]; then
-    printf 'Backlog item %s carries a captain request but cannot be read or no longer exists; repair or relink it.\n' "$1"
+    printf 'Backlog item %s carries a captain request but cannot be read or no longer exists; repair it, or if absent run bin/fm-captain-commitment.sh untrack %s.\n' "$1" "$1"
     return 0
   fi
   state=$(show_field "$show" state)
@@ -288,7 +317,7 @@ link_outstanding_line() {  # <id>
   [ "$held" != yes ] || return 1
   blocked=$(show_field "$show" blocked)
   [ "$blocked" != yes ] || return 1
-  printf 'Backlog item %s carries a captain request and is dispatchable now, not under way.\n' "$1"
+  printf 'Backlog item %s carries a captain request and is dispatchable now, not under way; complete it with tasks-axi done %s.\n' "$1" "$1"
   return 0
 }
 
@@ -330,7 +359,9 @@ EOF
 
 recovery_lines() {
   printf 'The request text is not stored anywhere; recover it from the visible session.\n'
-  printf 'Finish it and run bin/fm-captain-commitment.sh done, or file it as backlog work with a next action and completion criterion and run bin/fm-captain-commitment.sh track <id>.\n'
+  if open_is_deferred; then
+    printf 'Finish it and run bin/fm-captain-commitment.sh done, or file it as backlog work with a next action and completion criterion and run bin/fm-captain-commitment.sh track <id>.\n'
+  fi
 }
 
 cmd_pending() {
@@ -371,6 +402,7 @@ main() {
     defer) cmd_defer "$@" ;;
     done) cmd_done ;;
     track) cmd_track "$@" ;;
+    untrack) cmd_untrack "$@" ;;
     reconcile) cmd_reconcile ;;
     pending) cmd_pending ;;
     check) cmd_check ;;

@@ -209,7 +209,7 @@ test_track_refuses_work_that_cannot_carry_the_request() {
 
 test_track_discharges_the_open_record() {
   needs_tasks_axi test_track_discharges_the_open_record || return 0
-  local home rc
+  local home out rc
   home=$(make_home track-ok)
   fm "$home" open
   fm "$home" defer
@@ -222,10 +222,16 @@ test_track_discharges_the_open_record() {
 
   # Still outstanding: the work is filed but dispatchable and not under way, which
   # is loss #2 - the request that was filed and then never resumed.
-  fm "$home" check >/dev/null 2>&1
+  out=$(fm "$home" check 2>&1)
   rc=$?
   expect_code 2 "$rc" "filed-but-not-under-way work must still refuse the turn end"
-  pass "track discharges the open record and keeps filed-but-idle work outstanding"
+  assert_contains "$out" "tasks-axi done cc-real" "linked work must surface its actual completion command"
+
+  task "$home" "done" cc-real
+  out=$(fm "$home" pending)
+  [ -z "$out" ] || fail "completed linked work still printed a reminder: $out"
+  [ -f "$home/state/captain-commitment/linked/cc-real" ] && fail "completed linked work left a stale marker"
+  pass "track keeps idle work outstanding until its surfaced completion command clears it"
 }
 
 test_work_under_way_is_quiet() {
@@ -332,7 +338,7 @@ test_reconcile_clears_only_verified_done_links() {
   [ -f "$home/state/captain-commitment/linked/cc-gone" ] || fail "a vanished link was discarded"
   out=$(fm "$home" pending)
   assert_contains "$out" "cc-gone" "a vanished linked item must remain visible"
-  assert_contains "$out" "repair or relink it" "a vanished linked item must surface as broken"
+  assert_contains "$out" "fm-captain-commitment.sh untrack cc-gone" "a vanished link must surface its disposal command"
   fm "$home" check >/dev/null 2>&1
   rc=$?
   expect_code 2 "$rc" "a vanished linked item must refuse an ordinary turn end"
@@ -347,7 +353,16 @@ SH
   out=$(PATH="$fakebin:$PATH" fm "$home" pending)
   assert_contains "$out" "cc-gone" "a transient task read failure must preserve the linked item"
   [ -f "$home/state/captain-commitment/linked/cc-gone" ] || fail "a transient read failure discarded the link"
-  pass "reconcile clears only verified Done links and surfaces broken links"
+  PATH="$fakebin:$PATH" fm "$home" untrack cc-gone >/dev/null 2>&1
+  rc=$?
+  expect_code 1 "$rc" "untrack must refuse when absence cannot be confirmed"
+  [ -f "$home/state/captain-commitment/linked/cc-gone" ] || fail "refused untrack discarded the link"
+
+  fm "$home" untrack cc-gone || fail "untrack refused a confirmed-absent linked item"
+  [ -f "$home/state/captain-commitment/linked/cc-gone" ] && fail "untrack kept a confirmed-absent link"
+  out=$(fm "$home" pending)
+  [ -z "$out" ] || fail "untracked absent work still printed a reminder: $out"
+  pass "reconcile and untrack clear only verified terminal links"
 }
 
 # --- inertness --------------------------------------------------------------
