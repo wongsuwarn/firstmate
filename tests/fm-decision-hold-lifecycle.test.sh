@@ -1256,7 +1256,7 @@ test_structured_context_is_required_and_stored_separately() {
     > "$home/stored-surface-conflict.out" 2> "$home/stored-surface-conflict.err"; then
     fail "contradictory stored surface choices were accepted without settlement"
   fi
-  assert_grep "both Decision URL and No decision surface" "$home/stored-surface-conflict.err" \
+  assert_grep "both a link to look at and a note that none applies" "$home/stored-surface-conflict.err" \
     "the stored surface conflict was not named"
   assert_grep "--decision-url or --no-surface" "$home/stored-surface-conflict.err" \
     "the stored surface conflict did not explain how to settle it"
@@ -1388,15 +1388,18 @@ test_structural_readiness_is_checked_at_filing_and_swept() {
   if run_decisions "$home" "${base[@]}" \
     --why "The sample build stops until the shape is chosen." \
     --affects "The sample header and every sample card under it." \
-    --recommendation "Take the compact shape." \
-    --no-surface "Both shapes are text-only, so there is nothing built to compare." \
     > "$home/unready-filing.out" 2> "$home/unready-filing.err"; then
-    fail "a decision with no question was filed"
+    fail "a decision with no question, recommendation, or surface choice was filed"
   fi
   assert_grep "the decision question is missing" "$home/unready-filing.err" \
     "the readiness refusal did not name the failed check"
   assert_grep "--question" "$home/unready-filing.err" \
     "the readiness refusal did not name the flag that fixes it"
+  assert_grep "the recommendation is missing" "$home/unready-filing.err" \
+    "the readiness refusal did not collect the missing recommendation"
+  assert_grep "neither a link to look at nor a note that none applies is recorded" \
+    "$home/unready-filing.err" \
+    "the readiness refusal did not collect the missing surface choice"
   assert_no_grep "$origin-decision-shape" "$home/data/backlog.md" \
     "a filing refused for readiness left a partial backlog identity behind"
 

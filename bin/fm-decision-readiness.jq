@@ -16,15 +16,17 @@ def decision_structured_labels:
    "Decision group", "Why now", "What it affects", "Recommendation",
    "Decision URL", "No decision surface"];
 
-# Lines are trimmed before matching so a caller may pass a body however it
-# reads it: rendered backlog lines arrive indented, and an in-memory body does
-# not. Leading whitespace never carries meaning in a `Label: value` line.
+# Leading whitespace is removed before matching so a caller may pass a body
+# however it reads it: rendered backlog lines arrive indented, and an in-memory
+# body does not. The label marker is recognized independently of its value so an
+# explicitly empty structured field still brings the decision into scope.
 def decision_body_field($label):
   ([ .[]?
      | select(type == "string")
-     | decision_trim
-     | select(startswith($label + ": "))
-     | ltrimstr($label + ": ") ] | last) // null;
+     | sub("^[[:space:]]*"; "")
+     | select(startswith($label + ":"))
+     | ltrimstr($label + ":")
+     | sub("^[[:space:]]*"; "") ] | last) // null;
 
 def decision_field_present($label):
   decision_body_field($label) as $value
@@ -44,13 +46,14 @@ def decision_structured:
 # stored value so a malformed set stays visible instead of reading as absent.
 def decision_options_valid:
   (try fromjson catch null) as $parsed
-  | $parsed != null
-    and ($parsed | type) == "array"
-    and ($parsed | length) >= 2
-    and ($parsed | length) <= 4
-    and ($parsed | all(.[];
-          type == "string" and length > 0 and utf8bytelength <= 80 and . == decision_trim))
-    and ($parsed | (unique | length) == length);
+  | if ($parsed | type) != "array" then false
+    elif ($parsed | length) < 2 or ($parsed | length) > 4 then false
+    elif ($parsed | all(.[]; type == "string") | not) then false
+    else
+      ($parsed | all(.[];
+        length > 0 and utf8bytelength <= 80 and . == decision_trim))
+      and ($parsed | (unique | length) == length)
+    end;
 
 def decision_readiness:
   . as $lines

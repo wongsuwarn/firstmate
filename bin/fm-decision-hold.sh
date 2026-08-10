@@ -370,33 +370,18 @@ clear_body_field() {  # <body> <label>
   '
 }
 
-# The due-diligence bar, enforced in the CALLING shell so a refusal stops the
-# command before anything is created or held. A dimension counts as addressed when
-# it is supplied now or already recorded on the item, which is what makes a first
-# filing unable to skip one and an idempotent retry able to supply none.
-require_decision_context() {  # <id> <body> <why> <affects> <recommendation> <decision-url> <no-surface>
-  local id=$1 body=$2 why=$3 affects=$4 recommendation=$5 decision_url=$6 no_surface=$7
-  local stored_why stored_affects stored_recommendation stored_decision_url stored_no_surface
+# The legacy context bar owns Why now and What it affects, which are outside the
+# structural readiness checklist. A dimension counts as addressed when it is
+# supplied now or already recorded on the item.
+require_decision_context() {  # <id> <body> <why> <affects>
+  local id=$1 body=$2 why=$3 affects=$4
+  local stored_why stored_affects
   stored_why=$(get_body_field "$body" "Why now")
   stored_affects=$(get_body_field "$body" "What it affects")
-  stored_recommendation=$(get_body_field "$body" "Recommendation")
-  stored_decision_url=$(get_body_field "$body" "Decision URL")
-  stored_no_surface=$(get_body_field "$body" "No decision surface")
   has_non_whitespace "$why" || has_non_whitespace "$stored_why" \
     || fail "captain decision $id needs --why: state plainly why this decision is needed now"
   has_non_whitespace "$affects" || has_non_whitespace "$stored_affects" \
     || fail "captain decision $id needs --affects: state what it affects and what led to it"
-  has_non_whitespace "$recommendation" || has_non_whitespace "$stored_recommendation" \
-    || fail "captain decision $id needs --recommendation: state which way you would go and why"
-  if [ -z "$decision_url" ] && [ -z "$no_surface" ] \
-    && has_non_whitespace "$stored_decision_url" && has_non_whitespace "$stored_no_surface"; then
-    fail "captain decision $id records both Decision URL and No decision surface: pass --decision-url or --no-surface to settle the conflict"
-  fi
-  [ -z "$decision_url" ] || [ -z "$no_surface" ] \
-    || fail "captain decision $id cannot claim both a decision surface and none: pass --decision-url or --no-surface, not both"
-  has_non_whitespace "$decision_url" || has_non_whitespace "$no_surface" \
-    || has_non_whitespace "$stored_decision_url" || has_non_whitespace "$stored_no_surface" \
-    || fail "captain decision $id needs a conscious surface choice: pass --decision-url with the built surface the captain should look at, or --no-surface stating why no built surface applies"
 }
 
 # The structural readiness checklist is owned once by bin/fm-decision-readiness.jq
@@ -718,8 +703,7 @@ command_hold() {
   fi
   # Refuse before anything is created or held, so an incomplete filing leaves no
   # half-made backlog identity behind for the next attempt to trip over.
-  require_decision_context "$id" "$body" \
-    "$why" "$affects" "$recommendation" "$decision_url" "$no_surface"
+  require_decision_context "$id" "$body" "$why" "$affects"
   require_decision_intake_kind "$body" "$decision_kind" "$expects"
   updated=$(write_decision_context "$body" "$question" "$options_json" \
     "$decision_kind" "$expects" "$group" "$why" "$affects" "$recommendation" "$decision_url" "$no_surface")
@@ -782,8 +766,7 @@ command_hold_item() {
   [ "$state" = queued ] \
     || fail "backlog item $id is $state, and a captain hold leaves it there; only a queued captain hold is classified as an actionable decision, so gate work already under way with the hold subcommand under its own decision identity"
   body=$(show_body "$show") || fail "could not read backlog item $id body"
-  require_decision_context "$id" "$body" \
-    "$why" "$affects" "$recommendation" "$decision_url" "$no_surface"
+  require_decision_context "$id" "$body" "$why" "$affects"
   require_decision_intake_kind "$body" "$decision_kind" "$expects"
   updated=$(write_decision_context "$body" "$question" "$options_json" \
     "$decision_kind" "$expects" "$group" "$why" "$affects" "$recommendation" "$decision_url" "$no_surface")

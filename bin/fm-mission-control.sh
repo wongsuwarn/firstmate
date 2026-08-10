@@ -905,16 +905,6 @@ def valid_group_key($w):
   | add // 0) as $deferred_bounded |
 
 # ----------------------------------------------------------- fleet health --
-($work_tasks | map(select(
-  ((.current_state.state // "") | test("block|fail|error|cancel"; "i"))
-  or (.hints.blocked_event == true)))) as $unhealthy_raw |
-($records | map(select(.state != "done" and ((.unresolved_blocker_ids // []) | length) > 0))) as $blocked_items_raw |
-($unhealthy_raw | map(.id)) as $unhealthy_ids |
-($unhealthy_raw | map(. as $task |
-  ($blocked_items_raw | map(select(.id == $task.id)) | first) as $row |
-  $task + {health_blocker_ids: ($row.unresolved_blocker_ids // [])})) as $unhealthy |
-($blocked_items_raw | map(. as $row |
-  select(($unhealthy_ids | index($row.id)) == null))) as $blocked_items |
 # A decision the captain cannot answer is a fleet health problem, not a decision
 # waiting on them. The verdict is carried on the snapshot record from
 # bin/fm-decision-readiness.jq, so the board never restates the checklist. A
@@ -925,6 +915,19 @@ def valid_group_key($w):
   and (.hold_kind // "") == "captain"
   and ((.decision_readiness // {}) | (.structured == true and .ready == false)))))
   as $unready_decisions |
+($unready_decisions | map(.id)) as $unready_decision_ids |
+($work_tasks | map(. as $task | select((($unready_decision_ids | index($task.id)) == null) and (
+  ((.current_state.state // "") | test("block|fail|error|cancel"; "i"))
+  or (.hints.blocked_event == true))))) as $unhealthy_raw |
+($records | map(. as $row | select(.state != "done"
+  and (($unready_decision_ids | index($row.id)) == null)
+  and ((.unresolved_blocker_ids // []) | length) > 0))) as $blocked_items_raw |
+($unhealthy_raw | map(.id)) as $unhealthy_ids |
+($unhealthy_raw | map(. as $task |
+  ($blocked_items_raw | map(select(.id == $task.id)) | first) as $row |
+  $task + {health_blocker_ids: ($row.unresolved_blocker_ids // [])})) as $unhealthy |
+($blocked_items_raw | map(. as $row |
+  select(($unhealthy_ids | index($row.id)) == null))) as $blocked_items |
 ($sm_records | map(. as $sm |
   (($sm.decisions_open // []) | map(.id // .key) | map(select(. != null))) as $decision_ids |
   (($sm.holds // []) | map(. as $hold |

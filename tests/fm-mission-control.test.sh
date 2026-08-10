@@ -3303,6 +3303,7 @@ test_incomplete_decision_reaches_fleet_health() {
     {"id": "unready-decision", "structured": true, "state": "queued", "kind": "captain",
      "title": "Choose the palette", "repo": "sample",
      "hold_reason": "captain palette choice pending", "hold_kind": "captain",
+     "unresolved_blocker_ids": ["palette-source"],
      "decision_readiness": {"structured": true, "ready": false, "gaps": [
        {"check": "question", "flag": "--question", "detail": "the decision question is missing"},
        {"check": "recommendation", "flag": "--recommendation", "detail": "the recommendation is missing"}]}},
@@ -3323,7 +3324,9 @@ test_incomplete_decision_reaches_fleet_health() {
   assert_grep '<li><span class="hstate">incomplete</span><span class="hwhat">Choose the palette<span class="hint">the decision question is missing; the recommendation is missing</span></span></li>' \
     "$board" "an incomplete decision must reach fleet health naming every gap"
   assert_grep '<h3>Fleet health<span class="count">1 item</span></h3>' "$board" \
-    "an incomplete decision must be counted in fleet health"
+    "an incomplete blocked decision must be counted once in fleet health"
+  assert_no_grep 'blocked by palette-source' "$board" \
+    "an incomplete decision must retain its readiness details instead of a duplicate blocker row"
   assert_no_grep 'Nothing blocked or failed.' "$board" \
     "fleet health must not read as all clear while a decision is unanswerable"
 

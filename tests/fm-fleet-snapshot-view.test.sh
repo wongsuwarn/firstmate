@@ -1115,6 +1115,18 @@ test_decision_readiness_reaches_the_snapshot() {
   Recommendation: Keep the current vendor.
   No decision surface: Nothing is built to compare.
   Decision options: ["Same","Same"]
+- [ ] scalar-options-decision - Choose the mode (repo: sample) (kind: captain) (hold: captain mode choice pending) (hold-kind: captain)
+  Decision question: Which mode should the sample use?
+  Recommendation: Keep the current mode.
+  No decision surface: Nothing is built to compare.
+  Decision options: 1
+- [ ] mixed-options-decision - Choose the format (repo: sample) (kind: captain) (hold: captain format choice pending) (hold-kind: captain)
+  Decision question: Which format should the sample use?
+  Recommendation: Keep the current format.
+  No decision surface: Nothing is built to compare.
+  Decision options: ["Keep",1]
+- [ ] empty-label-decision - Choose the empty shape (repo: sample) (kind: captain) (hold: captain empty choice pending) (hold-kind: captain)
+  Decision question:
 - [ ] free-text-decision - Choose the schedule (repo: sample) (kind: captain) (hold: captain schedule choice pending) (hold-kind: captain)
 EOF
   fakebin=$(make_fakebin "$home")
@@ -1138,6 +1150,18 @@ EOF
       and .decision_readiness.ready == false
       and [.decision_readiness.gaps[].check] == ["options"]
   ' >/dev/null || fail "a malformed option set read as absent instead of incomplete: $out"
+  printf '%s' "$out" | jq -e '
+    [.backlog.records[] | select(.id == "scalar-options-decision" or .id == "mixed-options-decision")]
+    | length == 2
+      and all(.[]; .decision_readiness.ready == false
+        and [.decision_readiness.gaps[].check] == ["options"])
+  ' >/dev/null || fail "non-array or mixed-type options aborted or escaped readiness validation: $out"
+  printf '%s' "$out" | jq -e '
+    .backlog.records[] | select(.id == "empty-label-decision")
+    | .decision_readiness.structured == true
+      and .decision_readiness.ready == false
+      and ([.decision_readiness.gaps[].check] | sort) == ["question", "recommendation", "surface"]
+  ' >/dev/null || fail "an empty structured label was mistaken for a free-text decision: $out"
   printf '%s' "$out" | jq -e '
     .backlog.records[] | select(.id == "free-text-decision")
     | .decision_readiness.structured == false
