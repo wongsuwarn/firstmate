@@ -1080,6 +1080,38 @@ test_projection_close_restores_exact_prior_focus() {
   pass "herdr presentation focus: exact pane close restores the exact prior workspace and tab"
 }
 
+test_projection_close_accepts_a_pane_that_dies_before_inspection() {
+  local dir log out status
+  dir="$TMP_ROOT/projection-close-pre-inspection-death"; mkdir -p "$dir"
+  log="$dir/log"; : > "$log"
+  out=$(ROOT="$ROOT" LOG="$log" bash -c '
+    . "$ROOT/bin/backends/herdr.sh"
+    fm_backend_herdr_projection_focus_snapshot() { printf "w1\tw1:t1"; }
+    fm_backend_herdr_cli() { printf "%s\n" "$*" >> "$LOG"; return 1; }
+    fm_backend_herdr_pane_presence_state() { printf dead; }
+    fm_backend_herdr_projection_focus_restore() { printf "restore %s\n" "$2" >> "$LOG"; }
+    fm_backend_herdr_projection_close_pane_focus_preserving fmtest w9:p2
+  ' 2>&1)
+  status=$?
+  [ "$status" -eq 0 ] || fail "a pane that died before exact inspection should be accepted after structured confirmation: $out"
+  assert_contains "$(cat "$log")" "restore w1" \
+    "a pre-inspection pane death did not run the exact-focus restoration backstop"
+  pass "herdr presentation cleanup: a concurrent pre-inspection pane death is accepted only after structured confirmation"
+}
+
+test_explicit_close_accepts_a_concurrently_gone_pane() {
+  local out status
+  out=$(ROOT="$ROOT" bash -c '
+    . "$ROOT/bin/backends/herdr.sh"
+    fm_backend_herdr_cli() { return 1; }
+    fm_backend_herdr_pane_presence_state() { printf dead; }
+    fm_backend_herdr_explicit_close_pane_confirmed fmtest w9:p2
+  ' 2>&1)
+  status=$?
+  [ "$status" -eq 0 ] || fail "a failed close of an already-gone pane should succeed after structured confirmation: $out"
+  pass "herdr presentation cleanup: explicit close accepts a concurrent pane death only after structured confirmation"
+}
+
 test_projection_close_refuses_active_tab() {
   local dir log resp fb out status
   dir="$TMP_ROOT/projection-focus-active-refusal"; mkdir -p "$dir/responses"
@@ -3971,6 +4003,8 @@ test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane
 test_projection_create_never_closes_a_concurrent_same_label_tab
 test_projection_focus_snapshot_requires_exact_workspace_and_tab
 test_projection_close_restores_exact_prior_focus
+test_projection_close_accepts_a_pane_that_dies_before_inspection
+test_explicit_close_accepts_a_concurrently_gone_pane
 test_projection_close_refuses_active_tab
 test_projection_close_reports_focus_restore_failure
 test_projection_close_rechecks_required_agent_state_at_boundary
