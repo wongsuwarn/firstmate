@@ -1439,7 +1439,7 @@ EOF
   assert_contains "$show" '\"note\":\"Renamed last quarter.\"' \
     "the fact overflow note did not round-trip"
   apply "$fact_result" >/dev/null || fail "an exact structured fact replay was not idempotent"
-  task prune --keep 0 --state done >/dev/null || fail "could not apply Done retention to resolved board decisions"
+  task prune --keep 0 --state 'done' >/dev/null || fail "could not apply Done retention to resolved board decisions"
   apply "$route_result" >/dev/null || fail "a retained choice answer could not replay from the archive"
   apply "$fact_result" >/dev/null || fail "a retained structured fact answer could not replay from the archive"
   assert_contains "$(cat "$home/data/done-archive.md")" "Decision fact fields:" \
