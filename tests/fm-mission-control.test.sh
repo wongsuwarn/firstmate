@@ -3062,16 +3062,16 @@ test_recorded_answers_persist_across_devices_and_sink() {
   mkdir -p "$state"
   snapshot_json '[
     {"state":"queued","id":"alpha","captain_actionable":true,"captain_deferred":false,
-     "title":"Choose alpha path","hold_reason":"Alpha is still open","repo":"sample",
+     "title":"Choose alpha path","hold_reason":"Alpha was answered","repo":"sample",
      "decision_group":"portfolio-data-trust-scope","decision_options":["Keep alpha","Replace alpha"],
      "decision_why":"The alpha source is incomplete.","decision_affects":"The alpha dashboard.",
      "decision_recommendation":"Replace alpha.","blocks_ids":["alpha-build"]},
-    {"state":"queued","id":"beta","captain_actionable":true,"captain_deferred":false,
-     "title":"Choose beta path","hold_reason":"Beta was answered","repo":"sample",
-     "decision_group":"portfolio-data-trust-scope","decision_kind":"fact",
-     "decision_expects":"one beta source name","blocks_ids":["beta-build"]},
     {"state":"queued","id":"delta","captain_actionable":true,"captain_deferred":false,
      "title":"Choose delta path","hold_reason":"Delta is still open","repo":"sample"},
+    {"state":"queued","id":"beta","captain_actionable":true,"captain_deferred":false,
+     "title":"Choose beta path","hold_reason":"Beta is still open","repo":"sample",
+     "decision_group":"portfolio-data-trust-scope","decision_kind":"fact",
+     "decision_expects":"one beta source name","blocks_ids":["beta-build"]},
     {"state":"queued","id":"gamma","captain_actionable":true,"captain_deferred":false,
      "title":"Choose gamma path","hold_reason":"Gamma was answered","repo":"sample",
      "decision_group":"release-readiness"},
@@ -3108,7 +3108,7 @@ test_recorded_answers_persist_across_devices_and_sink() {
     || fail "the board request log path must resolve"
   mkdir -p "$(dirname "$log")"
   cat > "$log" <<'EOF'
-  "2026-01-04T00:00:01Z","fm-board:beta","FM-BOARD-REQUEST {\"v\":1,\"intent\":\"answer\",\"home\":\"main\",\"id\":\"beta\",\"note\":\"Use beta.\"}"
+  "2026-01-04T00:00:01Z","fm-board:alpha","FM-BOARD-REQUEST {\"v\":1,\"intent\":\"answer\",\"home\":\"main\",\"id\":\"alpha\",\"note\":\"Use alpha.\"}"
   "2026-01-04T00:00:02Z","fm-board:gamma","FM-BOARD-REQUEST {\"v\":1,\"intent\":\"answer\",\"home\":\"main\",\"id\":\"gamma\",\"note\":\"Use gamma.\"}"
   "2026-01-04T00:00:03Z","fm-board:epsilon","FM-BOARD-REQUEST {\"v\":1,\"intent\":\"answer\",\"home\":\"main\",\"id\":\"epsilon\",\"note\":\"Use epsilon.\"}"
   "2026-01-04T00:00:04Z","fm-board:ios","FM-BOARD-REQUEST {\"v\":1,\"intent\":\"answer\",\"home\":\"ios\",\"id\":\"shared\",\"key\":\"route\",\"note\":\"Use the iOS route.\"}"
@@ -3226,9 +3226,9 @@ async function inspect(path,width,mobile){
   return seen;
 }
 (async()=>{
-  const expected=["Choose alpha path","Choose beta path","Choose delta path","Choose zeta path",
+  const expected=["Choose delta path","Choose alpha path","Choose beta path","Choose zeta path",
     "Choose Android shared route","Choose gamma path","Choose epsilon path","Choose iOS shared route"];
-  const topExpected=["group:portfolio-data-trust-scope","Choose delta path","Choose zeta path",
+  const topExpected=["Choose delta path","group:portfolio-data-trust-scope","Choose zeta path",
     "Choose Android shared route","group:release-readiness","Choose iOS shared route"];
   for(const path of boards){for(const [width,mobile] of [[1280,false],[390,true]]){
     const seen=await inspect(path,width,mobile);

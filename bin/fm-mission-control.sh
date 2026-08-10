@@ -850,6 +850,9 @@ def valid_group_key($w):
   ($w.group_key // "") as $group |
   if $group != "" and ($group_counts[$group] // 0) >= 2 then
     if .seen[$group] == true then .
+    elif $w.answered == true
+      and any($waiting_calls_all[] | select(.group_key == $group); .answered != true)
+    then .
     else .seen[$group] = true
       | .units += [{kind:"decision-group",group:$group,
           answered:all($waiting_calls_all[] | select(.group_key == $group); .answered == true),
