@@ -170,6 +170,35 @@ SH
   done
 }
 
+# fm_fake_treehouse_lease <fakebin> [worktree]: a treehouse stub that answers
+# `get` with <worktree>, or with FM_FAKE_PANE_PATH read at call time when no
+# worktree is given, and exits 0 for everything else. fm-spawn.sh leases the
+# pooled copy itself and then sends the pane a `cd <path>`, so a stub that prints
+# nothing would leave the spawn with no copy to enter at all.
+fm_fake_treehouse_lease() {
+  local fakebin=$1 worktree=${2:-}
+  if [ -n "$worktree" ]; then
+    cat > "$fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+set -u
+if [ "\${1:-}" = get ]; then
+  printf '%s\n' "$worktree"
+fi
+exit 0
+SH
+  else
+    cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = get ]; then
+  printf '%s\n' "${FM_FAKE_PANE_PATH:-}"
+fi
+exit 0
+SH
+  fi
+  chmod +x "$fakebin/treehouse"
+}
+
 # fm_fake_version_tool <fakebin> <tool> <override-env-var> <default-version>
 # The stub answers `--version` with <override-env-var> when that variable is set
 # and non-empty, and with <default-version> otherwise; every other invocation

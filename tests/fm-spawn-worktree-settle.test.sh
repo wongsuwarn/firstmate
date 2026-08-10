@@ -54,7 +54,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse
+  fm_fake_treehouse_lease "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
@@ -170,8 +170,172 @@ test_claimed_pooled_worktree_is_not_reallocated() {
   pass "a pooled worktree claimed by another live task is refused before a new task record is published"
 }
 
+# --- real Treehouse pool: the copy a live task owns is durably reserved -------
+#
+# The settle cases above answer the pool with a fixed path, so they cannot say
+# anything about WHICH copy the pool hands out next. These do, against the real
+# treehouse binary and a pane that actually follows the `cd` it is sent.
+#
+# The mechanism they pin: a pooled copy used to be reserved only for the life of
+# the shell that ran `treehouse get`, while the claim recorded in
+# state/<id>.meta is durable. With no live shell in a copy - which is exactly
+# what a pane-less fake, a session restart, or a crashed worker leaves behind -
+# the pool considered it free and handed it to the next task. The home-scoped
+# ownership check cannot catch that across homes, because the pool is shared by
+# every home while that check can only read one home's state/.
+
+# make_pool_fakebin <dir> <cwdfile>: a fake tmux whose pane really follows the
+# `cd <path>` it is sent, so the real pool - not the fake - chooses every path.
+make_pool_fakebin() {
+  local dir=$1 fakebin
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+cwdfile="${FM_FAKE_PANE_CWD_FILE:?FM_FAKE_PANE_CWD_FILE unset}"
+case "$*" in
+  *"#{pane_current_path}"*)
+    [ -f "$cwdfile" ] && cat "$cwdfile"
+    exit 0
+    ;;
+esac
+if [ "${1:-}" = send-keys ]; then
+  text=${4:-}
+  case "$text" in
+    "cd "*)
+      eval "set -- ${text#cd }"
+      printf '%s\n' "$1" > "$cwdfile"
+      ;;
+  esac
+  exit 0
+fi
+case "${1:-}" in
+  display-message) printf 'firstmate\n'; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  printf '%s\n' "$fakebin"
+}
+
+# make_pool_home <case-dir> <name>: one isolated firstmate home.
+make_pool_home() {
+  local case_dir=$1 name=$2 home="$1/$2"
+  mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
+  printf 'codex\n' > "$home/config/crew-harness"
+  touch "$home/state/.last-watcher-beat"
+  printf '%s\n' "$home"
+}
+
+# run_pool_spawn <home> <project> <id> <case-dir>: spawn <id> in <home> with a
+# pane that follows its `cd`, and print the spawn's own output.
+run_pool_spawn() {
+  local home=$1 proj=$2 id=$3 case_dir=$4 fakebin cwdfile
+  cwdfile="$case_dir/pane-cwd-$id"
+  printf '%s\n' "$proj" > "$cwdfile"
+  fakebin=$(make_pool_fakebin "$case_dir/fake-$id")
+  mkdir -p "$home/data/$id"
+  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    FM_FAKE_PANE_CWD_FILE="$cwdfile" \
+    PATH="$fakebin:$PATH" \
+    "$SPAWN" "$id" "$proj" --mode no-mistakes --yolo off 2>&1
+}
+
+pool_meta_worktree() {  # <home> <id>
+  sed -n 's/^worktree=//p' "$1/state/$2.meta" | head -1
+}
+
+# make_pool_case <name> <max-trees>: a real repo whose pool is capped and rooted
+# inside the fixture, so a slot only frees up when it is genuinely returned.
+make_pool_case() {
+  local name=$1 max_trees=$2 case_dir proj
+  case_dir="$TMP_ROOT/$name"
+  proj="$case_dir/project"
+  mkdir -p "$case_dir/pool-root"
+  fm_git_init_commit "$proj"
+  printf 'max_trees = %s\nroot = "%s"\n' "$max_trees" "$case_dir/pool-root" > "$proj/treehouse.toml"
+  git -C "$proj" add treehouse.toml
+  git -C "$proj" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+    commit -qm 'pool config'
+  printf '%s\n' "$case_dir"
+}
+
+test_live_task_copy_is_never_reoffered_across_homes() {
+  local case_dir proj home_a home_b out wt_a wt_b wt_c wt_reused
+  case_dir=$(make_pool_case pool-cross-home 3)
+  proj="$case_dir/project"
+  home_a=$(make_pool_home "$case_dir" home-a)
+  home_b=$(make_pool_home "$case_dir" home-b)
+
+  out=$(run_pool_spawn "$home_a" "$proj" pool-a-z4 "$case_dir")
+  assert_contains "$out" "spawned pool-a-z4" "pool: first spawn failed: $out"
+  wt_a=$(pool_meta_worktree "$home_a" pool-a-z4)
+  [ -n "$wt_a" ] || fail "pool: first spawn recorded no worktree"
+
+  # No process is left in wt_a - the only thing keeping it out of the pool is
+  # the durable reservation firstmate took. A second home cannot see home-a's
+  # records at all, so nothing else can stop it being handed the same copy.
+  out=$(run_pool_spawn "$home_b" "$proj" pool-b-z4 "$case_dir")
+  assert_contains "$out" "spawned pool-b-z4" "pool: cross-home spawn failed: $out"
+  wt_b=$(pool_meta_worktree "$home_b" pool-b-z4)
+  [ "$wt_b" != "$wt_a" ] \
+    || fail "pool: a second home was handed the copy task pool-a-z4 still owns ($wt_a)"
+  pass "a copy a live task owns is never re-offered, including to a task in another home"
+
+  # Relaunching the same id without naming a copy allocates a fresh one, so the
+  # superseded copy has to go back to the pool - otherwise it is reserved with
+  # no record left that would ever return it.
+  out=$(run_pool_spawn "$home_a" "$proj" pool-a-z4 "$case_dir")
+  assert_contains "$out" "spawned pool-a-z4" "pool: relaunch failed: $out"
+  wt_c=$(pool_meta_worktree "$home_a" pool-a-z4)
+  [ "$wt_c" != "$wt_a" ] && [ "$wt_c" != "$wt_b" ] \
+    || fail "pool: relaunch did not take a fresh copy (got $wt_c)"
+
+  # The cap is 3 and two are held, so the only copy left to hand out is the one
+  # the relaunch gave up. Getting it back is the proof it was really released.
+  out=$(run_pool_spawn "$home_b" "$proj" pool-d-z4 "$case_dir")
+  assert_contains "$out" "spawned pool-d-z4" "pool: fourth spawn failed: $out"
+  wt_reused=$(pool_meta_worktree "$home_b" pool-d-z4)
+  [ "$wt_reused" = "$wt_a" ] \
+    || fail "pool: the superseded copy $wt_a was not returned (next allocation got $wt_reused)"
+  pass "a relaunch that allocates a fresh copy returns the superseded one to the pool"
+}
+
+test_superseded_copy_with_unlanded_work_is_kept() {
+  local case_dir proj home out wt_first wt_second
+  case_dir=$(make_pool_case pool-unlanded 3)
+  proj="$case_dir/project"
+  home=$(make_pool_home "$case_dir" home-a)
+
+  out=$(run_pool_spawn "$home" "$proj" pool-keep-z5 "$case_dir")
+  assert_contains "$out" "spawned pool-keep-z5" "pool: first spawn failed: $out"
+  wt_first=$(pool_meta_worktree "$home" pool-keep-z5)
+  [ -n "$wt_first" ] || fail "pool: first spawn recorded no worktree"
+  printf 'unlanded work\n' > "$wt_first/unlanded.txt"
+
+  out=$(run_pool_spawn "$home" "$proj" pool-keep-z5 "$case_dir")
+  assert_contains "$out" "spawned pool-keep-z5" "pool: relaunch failed: $out"
+  wt_second=$(pool_meta_worktree "$home" pool-keep-z5)
+  [ "$wt_second" != "$wt_first" ] || fail "pool: relaunch reused the superseded copy"
+  assert_contains "$out" "$wt_first stays leased" \
+    "pool: relaunch did not report keeping the superseded copy with unlanded work"
+  assert_present "$wt_first/unlanded.txt" \
+    "pool: relaunch discarded unlanded work in the superseded copy"
+  pass "a superseded copy holding unlanded work stays reserved and is reported, never cleaned"
+}
+
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_sleep
 test_claimed_pooled_worktree_is_not_reallocated
+if command -v treehouse >/dev/null 2>&1; then
+  test_live_task_copy_is_never_reoffered_across_homes
+  test_superseded_copy_with_unlanded_work_is_kept
+else
+  echo "# skip: treehouse not found; real pool reservation cases not run"
+fi
 
 echo "# all fm-spawn-worktree-settle tests passed"
