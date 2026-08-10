@@ -1909,17 +1909,38 @@ preflight_firstmate_home_process_event_tree() {
   preflight_firstmate_home_process_events "$home" "$label"
 }
 
+PREFLIGHT_WORKTREE_OWNERSHIP_STATES=
 preflight_firstmate_home_worktree_ownership() {
-  local home=$1 sub_state child_meta child_id child_wt child_kind child_home ownership_rc
+  local home=$1 sub_state canonical_home canonical_state seen_state child_meta child_id child_wt child_kind child_home ownership_rc
   sub_state="$home/state"
-  [ -d "$sub_state" ] && [ ! -L "$sub_state" ] || return 0
-  teardown_acquire_worktree_ownership_lock "$sub_state" || return 1
-  for child_meta in "$sub_state"/*.meta; do
+  [ -e "$sub_state" ] || [ -L "$sub_state" ] || return 0
+  if ! canonical_home=$(CDPATH='' cd -- "$home" 2>/dev/null && pwd -P) \
+    || ! canonical_state=$(CDPATH='' cd -- "$sub_state" 2>/dev/null && pwd -P) \
+    || ! path_is_ancestor_of "$canonical_home" "$canonical_state"; then
+    echo "REFUSED: cannot resolve a safe in-home child state directory for $home; preserving every task record and worktree." >&2
+    return 1
+  fi
+  if [ -n "$PREFLIGHT_WORKTREE_OWNERSHIP_STATES" ]; then
+    while IFS= read -r seen_state; do
+      if [ "$seen_state" = "$canonical_state" ]; then
+        echo "REFUSED: recursive child state directory $canonical_state; preserving every task record and worktree." >&2
+        return 1
+      fi
+    done <<FMEOF
+$PREFLIGHT_WORKTREE_OWNERSHIP_STATES
+FMEOF
+    PREFLIGHT_WORKTREE_OWNERSHIP_STATES="$PREFLIGHT_WORKTREE_OWNERSHIP_STATES
+$canonical_state"
+  else
+    PREFLIGHT_WORKTREE_OWNERSHIP_STATES=$canonical_state
+  fi
+  teardown_acquire_worktree_ownership_lock "$canonical_state" || return 1
+  for child_meta in "$canonical_state"/*.meta; do
     [ -e "$child_meta" ] || [ -L "$child_meta" ] || continue
     child_id=$(basename "$child_meta" .meta)
     child_wt=$(meta_value "$child_meta" worktree)
     if [ -n "$child_wt" ]; then
-      if fm_worktree_claimed_by_other_task "$sub_state" "$child_id" "$child_wt"; then
+      if fm_worktree_claimed_by_other_task "$canonical_state" "$child_id" "$child_wt"; then
         echo "REFUSED: child worktree $child_wt for $child_id is also claimed by task $FM_WORKTREE_OWNERSHIP_OWNER; preserving every child record, branch, and worktree." >&2
         return 1
       else
