@@ -16,7 +16,7 @@ It rejects an identity collision, a changed title, attempts to reopen an already
 
 ## Structured decision context
 
-A captain decision records its context as separate structured body fields rather than as one free-text hold reason: an optional `Decision question`, optional `Decision options`, optional `Decision kind` and `Decision expects`, optional `Decision group`, a required `Why now`, `What it affects`, and `Recommendation`, and exactly one of `Decision URL` or `No decision surface`.
+A captain decision records its context as separate structured body fields rather than as one free-text hold reason: a required `Decision question`, optional `Decision options`, optional `Decision kind` with a required `Decision expects` when that kind is `fact`, optional `Decision group`, required `Why now`, `What it affects`, and `Recommendation`, and exactly one of `Decision URL` or `No decision surface`.
 `Decision options` is an explicit ordered set of two to four distinct labels, each at most 80 bytes, for a decision whose useful answers are already a clean small pick.
 It is absent rather than inferred when the decision needs free text or when no options were filed.
 `Decision kind` currently accepts only `fact`, which marks a decision that asks the captain to supply a specific fact or classification rather than choose a course.
@@ -30,7 +30,7 @@ The structure makes the required context dimensions and conscious surface choice
 A single reason string lets a dimension be skipped silently, and an optional link flag lets the surface question be forgotten, which is what produced decisions that could not be acted on without re-reading their investigation.
 Prose quality is deliberately not machine-checked, because clarity and jargon-freeness are semantic judgements a script cannot make; the skill owns them, and `data/captain-shared.md` states the bar they are judged against.
 
-Each dimension is required only when the item does not already record it.
+Each required dimension is supplied on the first filing and may be omitted from a retry when the item already records it.
 A first filing therefore cannot omit one, while the idempotent retry that `hold` is designed for supplies none and preserves what is stored.
 The two surface fields are one choice, so recording either clears the other and an item can never claim a built surface and no built surface at once; `link` clears a recorded `No decision surface` for the same reason.
 The schema is additive: an old-style hold that carries only a plain hold reason keeps that reason and renders unchanged, while a hold that already records the earlier optional question or URL keeps those fields too.
