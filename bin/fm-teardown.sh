@@ -22,6 +22,10 @@
 # A gh lookup error falls back to the content check; if that is also inconclusive,
 # teardown refuses rather than risk discarding unlanded work.
 # Uncommitted changes are never landed.
+# Before cleanup, treehouse-backed tasks take the home-scoped worktree-ownership
+# lock and refuse when another live task record claims the same canonical copy.
+# This preserves every record, branch, and unlanded change until the collision
+# is reconciled explicitly.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
@@ -156,6 +160,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-worktree-ownership-lib.sh
+. "$SCRIPT_DIR/fm-worktree-ownership-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -375,6 +381,25 @@ else
 fi
 [ "$remote_teardown_rc" -eq 3 ] || exit "$remote_teardown_rc"
 
+WORKTREE_OWNERSHIP_LOCK=
+WORKTREE_OWNERSHIP_LOCK_HELD=0
+teardown_release_locks() {
+  if declare -F teardown_release_herdr_locks >/dev/null 2>&1; then
+    teardown_release_herdr_locks
+  fi
+  if [ "$WORKTREE_OWNERSHIP_LOCK_HELD" = 1 ]; then
+    WORKTREE_OWNERSHIP_LOCK_HELD=0
+    fm_lock_release "$WORKTREE_OWNERSHIP_LOCK" || true
+  fi
+}
+teardown_lock_cleanup_on_exit() {
+  local status=$?
+  teardown_release_locks
+  trap - EXIT
+  exit "$status"
+}
+trap teardown_lock_cleanup_on_exit EXIT
+
 # This is the first cleanup authorization check. It is metadata-only and must
 # complete before fm-guard, a backend command, file removal, branch deletion,
 # worktree return, registry change, or process termination can run.
@@ -402,6 +427,24 @@ ORCA_PATH_MATCH_VERIFIED=0
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
+if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  WORKTREE_OWNERSHIP_LOCK="$STATE/.worktree-ownership.lock"
+  if ! fm_lock_acquire_wait "$WORKTREE_OWNERSHIP_LOCK"; then
+    echo "REFUSED: could not acquire the worktree ownership lock; preserving task $ID." >&2
+    exit 1
+  fi
+  WORKTREE_OWNERSHIP_LOCK_HELD=1
+  if fm_worktree_claimed_by_other_task "$STATE" "$ID" "$WT"; then
+    echo "REFUSED: worktree $WT is also claimed by task $FM_WORKTREE_OWNERSHIP_OWNER; preserving both task records and worktrees until ownership is reconciled." >&2
+    exit 1
+  else
+    worktree_ownership_rc=$?
+    if [ "$worktree_ownership_rc" -ne 1 ]; then
+      echo "REFUSED: cannot prove worktree $WT is owned only by task $ID: $FM_WORKTREE_OWNERSHIP_REASON" >&2
+      exit 1
+    fi
+  fi
+fi
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
 PUBLIC_FOLLOWUP_HOME=$FM_HOME
@@ -1904,6 +1947,10 @@ FMEOF
 
 teardown_herdr_require_prerequisites() {  # <task-id>
   local task_id=$1 prerequisite
+  if [ ! -f "$FM_BACKEND_LIB_DIR/backends/herdr.sh" ]; then
+    echo "error: herdr teardown prerequisites are unavailable for $task_id; nothing was changed - restore the adapter and rerun teardown" >&2
+    return 1
+  fi
   if ! fm_backend_source herdr; then
     echo "error: herdr teardown prerequisites are unavailable for $task_id; nothing was changed - restore the adapter and rerun teardown" >&2
     return 1
@@ -1980,7 +2027,7 @@ $session	$lock_path"
       else
         TEARDOWN_HERDR_LOCK_RECORDS="$session	$lock_path"
       fi
-      trap teardown_release_herdr_locks EXIT
+      trap teardown_lock_cleanup_on_exit EXIT
       return 0
     fi
     sleep 0.1

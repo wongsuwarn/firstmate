@@ -674,6 +674,71 @@ test_no_mistakes_origin_remote_allows() {
   pass "no-mistakes worktree with HEAD on origin is torn down (no regression)"
 }
 
+test_worktree_claim_collision_refuses_cleanup() {
+  local case_dir rc
+  case_dir=$(make_case worktree-claim-collision)
+  write_meta "$case_dir" no-mistakes ship
+  fm_write_meta "$case_dir/state/task-y2.meta" \
+    "window=firstmate:fm-task-y2" \
+    "endpoint_task_id=task-y2" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=no-mistakes"
+  printf '%s\n' 'unlanded work remains intact' > "$case_dir/wt/keep-me.txt"
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return\n' > "$case_dir/treehouse.log"
+exit 0
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "worktree-claim-collision: teardown must refuse ambiguous ownership"
+  assert_grep 'also claimed by task task-y2' "$case_dir/stderr" \
+    "worktree-claim-collision: refusal did not identify the competing task record"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "worktree-claim-collision: teardown removed the original task record"
+  assert_present "$case_dir/state/task-y2.meta" \
+    "worktree-claim-collision: teardown removed the competing task record"
+  assert_present "$case_dir/wt/keep-me.txt" \
+    "worktree-claim-collision: teardown discarded unlanded work"
+  assert_absent "$case_dir/treehouse.log" \
+    "worktree-claim-collision: teardown returned the contested worktree"
+  pass "cleanup preserves both task records and unlanded work when a worktree has two claimants"
+}
+
+test_uncontested_worktree_cleanup_still_returns() {
+  local case_dir rc
+  case_dir=$(make_case worktree-claim-safe-cleanup)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return %s\n' "\$*" > "$case_dir/treehouse.log"
+exit 0
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "worktree-claim-safe-cleanup: uncontested cleanup should succeed"
+  assert_present "$case_dir/treehouse.log" \
+    "worktree-claim-safe-cleanup: teardown did not return the uncontested worktree"
+  assert_absent "$case_dir/state/task-x1.meta" \
+    "worktree-claim-safe-cleanup: teardown retained the completed task record"
+  pass "ordinary uncontested cleanup still returns the worktree and removes its task record"
+}
+
 test_no_mistakes_truly_unpushed_refuses() {
   local case_dir rc
   case_dir=$(make_case nm-unpushed)
@@ -2503,6 +2568,8 @@ test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
+test_worktree_claim_collision_refuses_cleanup
+test_uncontested_worktree_cleanup_still_returns
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_teardown_missing_busy_sidecar_completes
