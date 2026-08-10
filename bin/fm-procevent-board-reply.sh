@@ -59,8 +59,9 @@
 #            invokes fm-decision-hold.sh resolve-board for the named captain
 #            hold. The board service never calls this command. A malformed,
 #            stale, remotely-owned, or unapplyable answer returns a clear failure
-#            without acknowledging its process-event result, so it remains
-#            available for firstmate to report and retry.
+#            without acknowledging its process-event result or changing the
+#            decision state, so it remains available for firstmate to report and
+#            retry.
 #
 # AUTHORITY: none. A board control performs no action; it records a request.
 # Every record this adapter emits is captain INTENT for firstmate to adjudicate

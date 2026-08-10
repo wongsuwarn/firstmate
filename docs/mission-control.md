@@ -234,7 +234,7 @@ A request recorded by the service becomes an ordinary durable `check` wake throu
 At that wake, a validated `file` record surfaces its `note` unchanged for firstmate's ordinary `AGENTS.md` intake process.
 For an `answer`, firstmate runs `bin/fm-procevent-board-reply.sh apply <result-file>` before acknowledging the captured generation.
 The collector preserves the parser's field values and overflow note as compact JSON, validates them against the filed decision, and delegates closure to `bin/fm-decision-hold.sh resolve-board` and its existing `resolve` ordering.
-A refusal leaves both the captured request and its decision open, so firstmate can report the reason and retry without losing the answer.
+A refusal leaves the captured request available and does not change the decision state, so firstmate can report the reason and retry without losing the answer.
 The transport does no automatic backlog filing, project matching, task classification, or dispatch.
 
 `bin/fm-procevent-board-reply.sh say-source <source-id> <text>|-` is how firstmate answers a board-reply wake into its originating board's conversation, while `say <board.html> <text>|-` is the board-path form and `reply-log-path <board.html>` prints where that conversation is kept.
@@ -334,6 +334,8 @@ It also proves that a quick answer and a typed answer emit the same validated `a
 
 `tests/fm-board-reply.test.sh` covers the direct transport with no Lavish anywhere.
 It re-proves every fail-closed rule at the service door and again at wake time, refuses a cross-site write and a non-loopback bind, holds captain text that looks like the wire format inside its own field, and pins the properties the cursor design rests on: a delta discarded before capture is re-derived byte for byte, a capture truncated before its end sentinel records no cursor and loses nothing, a captured delta advances the cursor so nothing is announced twice, a request accepted before arming survives to the next arm, one retried attempt is recorded once, and a broken cursor escalates exactly once with rebase as the recovery.
+It applies captured choice and structured fact answers through the decision lifecycle, proves exact replays remain idempotent before and after Done retention, and keeps grouped siblings independently blocked until their own answers arrive.
+It also proves a malformed fact answer leaves both its captured result and decision open, and that a fresh adapter process can apply a request captured before it started.
 It also pins that the service reports an unarmed board as uncollected, at its probe, in the answer to a recorded request, and in its own startup output.
 Its real-browser case serves the board through the service itself and drives a genuine Answer and Start something new request through to their confirmations, checks that each confirmation is a full-width banner rather than a label, that persistent presentation survives a reload and fits a 390 by 844 viewport, and that killing the service leaves the next control open, editable, retryable, and unacknowledged.
 A second browser case retires the wake and proves that a request recorded while nothing is collecting is confirmed as recorded with the amber needs-you treatment and explicitly not collected.

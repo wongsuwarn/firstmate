@@ -158,8 +158,8 @@
 # structured answer shape, validates fact keys against the filed decision schema,
 # derives the hold's recorded origin, key, and dependent routes, then delegates
 # to `resolve`. It never reads prose to recover facts and never changes the
-# resolution ordering. A refusal leaves the captured board request available for
-# firstmate to report and retry rather than closing the decision.
+# resolution ordering. A refusal leaves the captured board request available and
+# does not change the decision state, so firstmate can report and retry it.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
