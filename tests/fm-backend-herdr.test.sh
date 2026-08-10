@@ -1112,6 +1112,31 @@ test_explicit_close_accepts_a_concurrently_gone_pane() {
   pass "herdr presentation cleanup: explicit close accepts a concurrent pane death only after structured confirmation"
 }
 
+test_explicit_close_retries_a_still_present_pane() {
+  local dir attempts out status
+  dir="$TMP_ROOT/explicit-close-retry"; mkdir -p "$dir"
+  attempts="$dir/attempts"; printf '0\n' > "$attempts"
+  out=$(ROOT="$ROOT" ATTEMPTS="$attempts" bash -c '
+    . "$ROOT/bin/backends/herdr.sh"
+    sleep() { :; }
+    fm_backend_herdr_cli() {
+      local count
+      count=$(cat "$ATTEMPTS")
+      printf "%s\n" "$((count + 1))" > "$ATTEMPTS"
+      return 1
+    }
+    fm_backend_herdr_pane_presence_state() {
+      [ "$(cat "$ATTEMPTS")" -ge 2 ] && printf dead || printf present
+    }
+    fm_backend_herdr_explicit_close_pane_confirmed fmtest w9:p2
+  ' 2>&1)
+  status=$?
+  [ "$status" -eq 0 ] || fail "a transient close failure should retry while the pane remains present: $out"
+  [ "$(cat "$attempts")" -eq 2 ] \
+    || fail "explicit close did not stop immediately after structured absence confirmation"
+  pass "herdr presentation cleanup: explicit close retries a transient failure only while the exact pane remains present"
+}
+
 test_projection_close_refuses_active_tab() {
   local dir log resp fb out status
   dir="$TMP_ROOT/projection-focus-active-refusal"; mkdir -p "$dir/responses"
@@ -4005,6 +4030,7 @@ test_projection_focus_snapshot_requires_exact_workspace_and_tab
 test_projection_close_restores_exact_prior_focus
 test_projection_close_accepts_a_pane_that_dies_before_inspection
 test_explicit_close_accepts_a_concurrently_gone_pane
+test_explicit_close_retries_a_still_present_pane
 test_projection_close_refuses_active_tab
 test_projection_close_reports_focus_restore_failure
 test_projection_close_rechecks_required_agent_state_at_boundary

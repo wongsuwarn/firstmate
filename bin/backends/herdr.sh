@@ -1635,13 +1635,23 @@ fm_backend_herdr_workspace_presence_state() {  # <session> <workspace_id>
   esac
 }
 
-# fm_backend_herdr_explicit_close_pane_confirmed: issue one explicit close and
-# succeed only when a structured follow-up proves the exact pane is gone.
+# fm_backend_herdr_explicit_close_pane_confirmed: issue bounded explicit close
+# attempts and succeed only when a structured follow-up proves the exact pane
+# is gone.
 fm_backend_herdr_explicit_close_pane_confirmed() {  # <session> <pane_id>
-  local session=$1 pane_id=$2 presence
-  fm_backend_herdr_cli "$session" pane close "$pane_id" >/dev/null 2>&1 || true
-  presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane_id")
-  [ "$presence" = dead ]
+  local session=$1 pane_id=$2 presence attempt=0
+  while [ "$attempt" -lt 5 ]; do
+    fm_backend_herdr_cli "$session" pane close "$pane_id" >/dev/null 2>&1 || true
+    presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane_id")
+    case "$presence" in
+      dead) return 0 ;;
+      present) ;;
+      *) return 1 ;;
+    esac
+    attempt=$((attempt + 1))
+    [ "$attempt" -ge 5 ] || sleep 0.1
+  done
+  return 1
 }
 
 # fm_backend_herdr_pane_agent_state: classify <pane_id> in <session> as one of
