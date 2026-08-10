@@ -87,6 +87,7 @@ The stage itself is derived by the snapshot rather than by the board; see `bin/f
   Mission Control consumes only normalized allowance windows, bounded history, pace thresholds, and the safe balancing summary from the Token Dashboard API.
   Session rows, credentials, action reasons, action details, and unknown payload fields are discarded before rendering.
   An old successful reading is labelled stale, a failed latest collection is stated, and an absent Token Dashboard falls back to the original live `quota-axi` gauges with history, runway, and balancing explicitly unavailable.
+  When the dashboard has no Grok windows, its cards add only live Grok windows from `quota-axi` until the normalized source collects them.
   The renderer only reads the standalone service and never refreshes, changes, stops, or replaces it.
 
 An idle second mate is healthy and is rendered as such, never as an alarm.
