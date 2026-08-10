@@ -95,14 +95,14 @@ A second, independent turn-boundary predicate answers a different question: whet
 It deliberately shares no state with the supervision predicate above, so neither one can corrupt the other's budget or latch, and `bin/fm-turnend-guard.sh` is unchanged by it.
 
 The core script is harness-neutral, stores no captain message text, and keeps `tasks-axi` as the only owner of actual work.
-Every primary gets its durable surface, because `bin/fm-wake-drain.sh` prints `fm-captain-commitment.sh pending` on both the drained and the empty-queue path, which puts it in the session-start digest, on every wake-handling turn, and on the away-mode return path through `bin/fm-afk-return.sh`.
+When a record exists, every primary gets its durable surface, because `bin/fm-wake-drain.sh` prints `fm-captain-commitment.sh pending` on both the drained and the empty-queue path, which puts it in the session-start digest, on every wake-handling turn, and on the away-mode return path through `bin/fm-afk-return.sh`.
 `bin/fm-session-start.sh` marks a surviving record deferred before that drain, because a session that ended without dispositioning its record is itself the interruption.
 
 Automatic detection at the turn boundary is currently a Pi-only integration, and this is the whole of that boundary.
 `.pi/extensions/fm-primary-turnend-guard.ts` opens a record from `before_agent_start` when `bin/fm-operational-input.sh classify` does not recognise the raw submitted prompt, passes the classified kind to `defer` when it does or defers unconditionally when `session_compact` fires, and injects one bounded `turn-end-guard` follow-up from `agent_settled` when `fm-captain-commitment.sh check` returns 2.
 The extension classifies but never decides: which kinds actually displace a captain request is policy the owner script holds, so a startup nudge and the guard's own follow-up leave the record alone while everything else defers.
 Supervision keeps precedence in that handler, and the commitment check carries its own latch so the guard predicate still runs exactly once per logical agent run.
-Every other verified primary remains safe rather than unsupported: nothing regresses, the durable record and all its surfaces still work, and only the automatic open, defer, and turn-boundary refusal are absent.
+Every other verified primary remains behaviorally unchanged and is explicitly unsupported for automatic detection: the durable record and its informational surfaces work when a record exists, but automatic open, operational defer, compaction defer, and turn-boundary refusal are absent.
 Extending one means adding the same two structural signals from that harness's own submitted-prompt hook and turn-end hook, for example Claude's `UserPromptSubmit`, and never inferring a captain message from body prose.
 
 ## Compatibility limits
@@ -119,7 +119,7 @@ Extending one means adding the same two structural signals from that harness's o
 - If `jq` is removed after installation, the hook remains silent and exits 0, turn-end wakes stop, and Kimi crews fall back to idle detection.
 - Unreadable hook input remains fail-open.
 - No harness adapter uses a shell ampersand to manufacture supervision.
-- Automatic captain-request follow-through detection is Pi-only; every other primary keeps the durable record and all its surfaces without the turn-boundary refusal.
+- Automatic captain-request follow-through detection is Pi-only; every other primary can surface an existing record but does not automatically create, defer, or refuse on one.
 - `fm-captain-commitment.sh` is inert outside a genuine primary home and silent while away mode is active.
 
 ## Regression coverage
