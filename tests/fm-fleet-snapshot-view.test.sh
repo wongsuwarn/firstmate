@@ -1088,6 +1088,65 @@ test_parked_scout_decision_stays_pending() {
   pass "a scout still parked at a decision stays pending (terminal clear does not over-fire)"
 }
 
+# The snapshot is where the readiness verdict reaches every reader, so it must
+# carry the structural checklist's own answer rather than leave each consumer to
+# reimplement it. A malformed option set is the case that proves the verdict
+# reads the raw body: decision_options parses it to null, which is
+# indistinguishable from an option set that was never supplied.
+test_decision_readiness_reaches_the_snapshot() {
+  local home data fakebin out
+  home=$(make_home readiness)
+  data=$TMP_ROOT/readiness-data
+  mkdir -p "$data"
+  cat > "$data/backlog.md" <<'EOF'
+## Queued
+- [ ] ready-decision - Choose the route (repo: sample) (kind: captain) (hold: captain route choice pending) (hold-kind: captain)
+  Decision question: Which route should the sample take?
+  Why now: The sample build stops until this is chosen.
+  What it affects: The sample router.
+  Recommendation: Take the north route.
+  No decision surface: Both routes are text-only.
+- [ ] unready-decision - Choose the palette (repo: sample) (kind: captain) (hold: captain palette choice pending) (hold-kind: captain)
+  Why now: The sample theme is blocked.
+  What it affects: The sample theme.
+  No decision surface: Nothing is built to compare.
+- [ ] bad-options-decision - Choose the vendor (repo: sample) (kind: captain) (hold: captain vendor choice pending) (hold-kind: captain)
+  Decision question: Which vendor should the sample use?
+  Recommendation: Keep the current vendor.
+  No decision surface: Nothing is built to compare.
+  Decision options: ["Same","Same"]
+- [ ] free-text-decision - Choose the schedule (repo: sample) (kind: captain) (hold: captain schedule choice pending) (hold-kind: captain)
+EOF
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$data" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .backlog.records[] | select(.id == "ready-decision")
+    | .decision_readiness.structured == true
+      and .decision_readiness.ready == true
+      and (.decision_readiness.gaps | length) == 0
+  ' >/dev/null || fail "a complete structured decision was not reported ready: $out"
+  printf '%s' "$out" | jq -e '
+    .backlog.records[] | select(.id == "unready-decision")
+    | .decision_readiness.structured == true
+      and .decision_readiness.ready == false
+      and ([.decision_readiness.gaps[].check] | sort) == ["question", "recommendation"]
+      and (.decision_readiness.gaps | all(.[]; (.detail | length) > 0 and (.flag | length) > 0))
+  ' >/dev/null || fail "missing dimensions did not reach the snapshot as named checks: $out"
+  printf '%s' "$out" | jq -e '
+    .backlog.records[] | select(.id == "bad-options-decision")
+    | .decision_options == null
+      and .decision_readiness.ready == false
+      and [.decision_readiness.gaps[].check] == ["options"]
+  ' >/dev/null || fail "a malformed option set read as absent instead of incomplete: $out"
+  printf '%s' "$out" | jq -e '
+    .backlog.records[] | select(.id == "free-text-decision")
+    | .decision_readiness.structured == false
+      and .decision_readiness.ready == true
+      and (.decision_readiness.gaps | length) == 0
+  ' >/dev/null || fail "an older free-text captain hold was drawn into the checklist: $out"
+  pass "the structural readiness verdict travels on the snapshot record"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_main_inventory_orphan_and_unstructured_disclosure
@@ -1107,3 +1166,4 @@ test_setup_stage_uses_existing_secondmate_liveness
 test_recorded_model_reaches_the_task_row
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
+test_decision_readiness_reaches_the_snapshot
