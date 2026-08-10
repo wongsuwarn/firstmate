@@ -826,6 +826,26 @@ const revealState = `({body:document.body.className,
     "a required-fact refusal exposed internal field keys: " + JSON.stringify(factRefusal));
   assert(logLines() === before + 3, "a refused fact answer was recorded");
 
+  const singleFactRefusal = await evaluate(sid, `(async()=>{
+    var b=[...document.querySelectorAll('.rc')].find(x=>x.dataset.id==='d4');
+    var f=b.querySelector('.rc-fact-form');
+    f.querySelector('[data-fact-key=account_name]').value='Primary account';
+    f.querySelector('[data-fact-key=statement_date]').value='2026-08-10';
+    f.requestSubmit();
+    for(var i=0;i<200;i++){
+      if(f.querySelector('.rc-form-error').textContent.includes('required fact: Market value'))break;
+      await new Promise(r=>setTimeout(r,25));
+    }
+    return {message:f.querySelector('.rc-form-error').textContent,open:!f.hidden,
+      editable:[...f.querySelectorAll('[data-fact-key]')].every(x=>!x.disabled)};
+  })()`);
+  assert(singleFactRefusal.message === "Not sent - answer needs required fact: Market value. Try again."
+    && singleFactRefusal.open && singleFactRefusal.editable,
+    "a single required-fact refusal did not use its human label: " + JSON.stringify(singleFactRefusal));
+  assert(!singleFactRefusal.message.includes("market_value"),
+    "a single required-fact refusal exposed its internal field key: " + JSON.stringify(singleFactRefusal));
+  assert(logLines() === before + 3, "a refused single-fact answer was recorded");
+
   // The service dies with the page already open. A tap must then say so and stay
   // retryable rather than showing a confirmation nothing recorded.
   process.kill(Number(servicePid), "SIGTERM");

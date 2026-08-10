@@ -3207,8 +3207,10 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       function (field) { return field.getAttribute(\"data-fact-key\"); });
   }
   function labelFactRefusal(form, message) {
-    var prefix = \"answer needs required facts: \";
-    if (!form || typeof message !== \"string\" || message.indexOf(prefix) !== 0) { return message; }
+    var prefix = [\"answer needs required fact: \", \"answer needs required facts: \"].find(function (candidate) {
+      return typeof message === \"string\" && message.indexOf(candidate) === 0;
+    });
+    if (!form || !prefix) { return message; }
     var labels = {};
     Array.prototype.forEach.call(form.querySelectorAll(\"[data-fact-key]\"), function (field) {
       var key = field.getAttribute(\"data-fact-key\");
