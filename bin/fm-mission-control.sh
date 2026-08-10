@@ -3206,6 +3206,20 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     return Array.prototype.map.call(form.querySelectorAll('[data-fact-required=\"true\"]'),
       function (field) { return field.getAttribute(\"data-fact-key\"); });
   }
+  function labelFactRefusal(form, message) {
+    var prefix = \"answer needs required facts: \";
+    if (!form || typeof message !== \"string\" || message.indexOf(prefix) !== 0) { return message; }
+    var labels = {};
+    Array.prototype.forEach.call(form.querySelectorAll(\"[data-fact-key]\"), function (field) {
+      var key = field.getAttribute(\"data-fact-key\");
+      var label = field.closest(\".rc-field\");
+      label = label && label.querySelector(\".rc-field-label\");
+      if (key && label) { labels[key] = label.textContent.replace(/^\\s+|\\s+$/g, \"\"); }
+    });
+    return prefix + message.slice(prefix.length).split(/,\\s*/).map(function (key) {
+      return labels[key] || \"a required field\";
+    }).join(\", \");
+  }
   function restoreFactValues(form, values) {
     if (!values || typeof values !== \"object\" || Array.isArray(values)) { return; }
     Array.prototype.forEach.call(form.querySelectorAll(\"[data-fact-key]\"), function (field) {
@@ -3605,6 +3619,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       if (!recorded) {
         if (definiteRefusal) { rememberRetry(requestIdentity, null); }
         releasePayload(form);
+        refused = labelFactRefusal(form, refused);
         say(block, \"Not sent - \" + (refused || \"the board could not reach firstmate\")
           + \". Try again.\", true);
         saveDrafts();

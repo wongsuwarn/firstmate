@@ -69,7 +69,7 @@ The 390px inspection returned `{"w":390,"h":844,"overflow":false}`, and the real
 The fact-intake evidence was verified on 2026-08-10 with Chrome and `chrome-devtools-axi 0.1.27` against a synthetic grouped portfolio reconciliation.
 The browser inspection used `chrome-devtools-axi emulate --viewport '1280x900x1'` and `chrome-devtools-axi emulate --viewport '390x844x3,mobile,touch'`.
 The 390px inspection returned five aligned field controls from 47px to 343px, a full-width 320px by 44px submit control, the grouped progress label, and `overflow: false`.
-Submitting the blank form returned `answer needs required facts: account_name, statement_date, market_value` from the direct reply service and displayed it immediately above that submit control.
+Submitting the blank form returned a required-facts refusal from the direct reply service and displayed `answer needs required facts: Account name, Statement date, Market value` immediately above that submit control; stable field keys remain internal.
 
 `bin/fm-evidence-check.sh --local docs/evidence/mission-control` returned `fm-evidence-check: ok pairs_checked=14 identical_opted_out=0`.
 
