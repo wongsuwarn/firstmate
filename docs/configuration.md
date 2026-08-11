@@ -318,6 +318,7 @@ Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstr
 Malformed JSON, missing, malformed, or duplicate stable ids, an empty or malformed rule, default, fallback, or default-fallback array, a non-boolean `independent`, an empty `provider`, an unverified harness anywhere in the file, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
+Mission Control edits and Firstmate's configuration-push writer hold the same lock for each destination `config/crew-dispatch.json` across read, comparison, and atomic publication, preventing those Firstmate-owned writers from overwriting one another; a hand edit in a text editor does not take that lock and therefore cannot receive the same collision guarantee.
 Mission Control's System view renders this schema and offers its bounded existing-profile model and effort edit path as described in [`docs/mission-control.md`](mission-control.md#replying-from-the-board); it does not own another copy of the schema.
 
 ## Provider outage continuity (state/provider-continuity)

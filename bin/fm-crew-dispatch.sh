@@ -181,7 +181,7 @@ status_file() {  # <path>
   fi
 }
 
-apply_request() {  # <path> <request-json>
+apply_request_locked() {  # <path> <request-json>
   local file=$1 request_file=$2 scope rule_id profile_id model effort
   local expected_rule_revision expected_profile_revision current_rule_revision current_profile_revision
   local revisions dir base source tmp reason assignment
@@ -285,6 +285,24 @@ apply_request() {  # <path> <request-json>
   mv -f -- "$tmp" "$file" || { rm -f -- "$source" "$tmp"; die "could not publish dispatch edit"; }
   rm -f -- "$source"
   printf '%s\n' "$assignment"
+}
+
+apply_request() {  # <path> <request-json>
+  local file=$1 request_file=$2 dir base lock lock_dir
+  dir=${file%/*}; base=${file##*/}
+  [ "$dir" != "$file" ] || dir=.
+  [ "$base" = crew-dispatch.json ] || die "dispatch config path must end in crew-dispatch.json"
+  [ -d "$dir" ] && [ ! -L "$dir" ] || die "dispatch config directory is unsafe"
+  lock_dir=$(cd "$dir" 2>/dev/null && pwd -P) || die "dispatch config directory is unsafe"
+  FM_STATE_OVERRIDE=${FM_STATE_OVERRIDE:-$lock_dir}
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-wake-lib.sh"
+  lock="$lock_dir/.fm-inherit-crew-dispatch.json.lock"
+  (
+    fm_lock_acquire_wait "$lock" || die "could not lock dispatch config"
+    trap 'fm_lock_release "$lock" || true' EXIT
+    apply_request_locked "$file" "$request_file"
+  )
 }
 
 case "${1-}" in

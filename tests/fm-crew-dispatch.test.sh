@@ -291,6 +291,49 @@ jq '.rules |= reverse' "$CONFIG" > "$TMP_ROOT/restored-race-order.json" \
 mv "$TMP_ROOT/restored-race-order.json" "$CONFIG"
 pass "a concurrent live reorder cannot cross the stable-id apply boundary"
 
+lock_status=$($DISPATCH status "$CONFIG") || fail "could not read revisions before lock coverage"
+lock_request=$(printf '%s' "$lock_status" | jq -c \
+  '{intent:"dispatch",scope:"rule",rule_id:.config.rules[0].id,
+    profile_id:.config.rules[0].use[0].id,model:"gpt-5.8",effort:"high",
+    expected_rule_revision:.revisions.rules[0].revision,
+    expected_profile_revision:.revisions.rules[0].profiles[0].revision}') \
+  || fail "could not build a lock-bound request"
+LOCK_REQUEST="$TMP_ROOT/lock-request.json"
+printf '%s\n' "$lock_request" > "$LOCK_REQUEST"
+LOCK_PATH="$HOME_DIR/config/.fm-inherit-crew-dispatch.json.lock"
+LOCK_READY="$TMP_ROOT/dispatch-lock.ready"
+LOCK_RELEASE="$TMP_ROOT/dispatch-lock.release"
+(
+  FM_HOME="$HOME_DIR"
+  FM_STATE_OVERRIDE="$HOME_DIR/state"
+  export FM_HOME FM_STATE_OVERRIDE
+  . "$ROOT/bin/fm-wake-lib.sh"
+  fm_lock_acquire_wait "$LOCK_PATH"
+  : > "$LOCK_READY"
+  while [ ! -e "$LOCK_RELEASE" ]; do sleep 0.05; done
+  fm_lock_release "$LOCK_PATH"
+) &
+LOCK_HOLDER=$!
+LOCK_POLLS=0
+while [ ! -e "$LOCK_READY" ] && [ "$LOCK_POLLS" -lt 100 ]; do
+  sleep 0.05
+  LOCK_POLLS=$((LOCK_POLLS + 1))
+done
+[ -e "$LOCK_READY" ] || fail "dispatch lock holder did not become ready"
+cp "$CONFIG" "$TMP_ROOT/before-locked-apply.json"
+"$DISPATCH" apply "$CONFIG" "$LOCK_REQUEST" > "$TMP_ROOT/lock.out" 2> "$TMP_ROOT/lock.err" &
+LOCK_APPLY_PID=$!
+sleep 0.2
+kill -0 "$LOCK_APPLY_PID" 2>/dev/null || fail "dispatch apply did not wait for the shared lock"
+cmp -s "$TMP_ROOT/before-locked-apply.json" "$CONFIG" \
+  || fail "dispatch apply changed the config while another writer held its lock"
+: > "$LOCK_RELEASE"
+wait "$LOCK_HOLDER" || fail "dispatch lock holder failed"
+wait "$LOCK_APPLY_PID" || fail "dispatch apply failed after the shared lock was released"
+[ "$(jq -r '.rules[0].use[0].model' "$CONFIG")" = gpt-5.8 ] \
+  || fail "dispatch apply did not publish after the shared lock was released"
+pass "dispatch apply serializes publication through the shared crew-dispatch lock"
+
 stale_status=$($DISPATCH status "$CONFIG") || fail "could not read revisions before stale-edit coverage"
 stale_request=$(printf '%s' "$stale_status" | jq -c \
   '{v:1,intent:"dispatch",home:"main",scope:"rule",rule_id:.config.rules[0].id,
