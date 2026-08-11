@@ -92,7 +92,8 @@ make_case() {
 # fetch stays hermetic while the real owner/repo match logic still runs
 # against a real GitHub-style remote string. Echoes the tracked clone path.
 make_primary_fixture() {
-  local label=$1 slug=$2 origin_url=${3:-https://github.com/$2.git}
+  local label=$1 slug=$2
+  local origin_url=${3:-https://github.com/$slug.git}
   local seed bare tracked origin_work
   seed="$TMP_ROOT/$label-seed"
   git init -q -b main "$seed"
