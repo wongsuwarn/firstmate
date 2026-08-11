@@ -300,12 +300,13 @@ This section is the single owner of the canonical schema and its per-field seman
 Per rule, `id`, `when`, and `use` are required, and every profile object also requires `id`.
 Rule ids must be unique among rules, profile ids must be unique across the file, and each id must match `[A-Za-z0-9][A-Za-z0-9._-]{0,119}`.
 These ids are stable object identities: reordering rules or profiles never changes them, and changing an id means replacing the addressed object rather than renaming a display label.
+An existing file created before stable ids were required must add unique rule and profile ids before bootstrap or Mission Control will accept it; there is no positional or automatic id migration.
 Both `use` and the optional top-level `default` accept either one profile object or a non-empty array of profile objects.
 The single-object form remains accepted alongside the array form, and every profile needs `harness`.
 Profile `model`, `effort`, and `provider` fields and rule `why` are optional.
 An omitted model or effort means the selected harness uses its own default for that axis.
 `provider` is an opaque lowercase `[a-z0-9._-]` token naming the model provider that profile bills against; firstmate establishes that relation itself from the harness's own catalog, and no script infers a provider from a harness or model name.
-A profile with no `provider` is never excluded by provider-outage state, so an existing configuration keeps its current behavior exactly.
+A profile with no `provider` is never excluded by provider-outage state, so adding the required stable ids to an older configuration does not change that profile's provider-outage behavior.
 The optional rule-level `fallback` and top-level `default_fallback` take the same profile object or non-empty array and are the outage alternative for that rule or default; `independent` is an optional rule-level boolean marking a review or audit that must not share a provider with the work under review.
 See "Provider outage continuity" below for how those three fields are consumed.
 Every profile array is an implicit quota-aware choice resolved through `quota-array-dispatch`.

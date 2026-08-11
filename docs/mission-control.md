@@ -256,7 +256,7 @@ At that wake, a validated `file` record surfaces its `note` unchanged for firstm
 For an `answer` or `dispatch`, firstmate runs `bin/fm-procevent-board-reply.sh apply <result-file>` before acknowledging the captured generation.
 The collector preserves an answer's field values and overflow note as compact JSON, validates them against the filed decision, and delegates closure to `bin/fm-decision-hold.sh resolve-board` and its existing `resolve` ordering, while a dispatch request goes through the bounded shared validator and apply boundary.
 A refusal leaves the captured request available and does not change the target state, so firstmate can report the reason and retry without losing the request.
-The transport does no automatic backlog filing, project matching, task classification, or dispatch.
+The transport does no automatic backlog filing, project matching, task classification, or task dispatch.
 
 `bin/fm-procevent-board-reply.sh say-source <source-id> <text>|-` is how firstmate answers a board-reply wake into its originating board's conversation, while `say <board.html> <text>|-` is the board-path form and `reply-log-path <board.html>` prints where that conversation is kept.
 A reply is validated by the same program over the same bytes, under its own marker and its own single permitted intent, and direction is taken from the leading marker so neither side can claim the other's.

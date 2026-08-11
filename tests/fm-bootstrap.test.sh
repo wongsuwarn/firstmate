@@ -806,7 +806,7 @@ make_routine_bootstrap_fixture() {
   fm_git_identity
   mkdir -p "$home/config" "$home/state"
   printf '%s\n' codex > "$home/config/crew-harness"
-  printf '%s\n' '{"rules":[{"when":"normal work","use":{"harness":"codex"}}],"default":{"harness":"claude","effort":"low"}}' \
+  printf '%s\n' '{"rules":[{"id":"normal","when":"normal work","use":{"id":"normal-codex","harness":"codex"}}],"default":{"id":"default-claude","harness":"claude","effort":"low"}}' \
     > "$home/config/crew-dispatch.json"
   git init -q -b main "$root"
   {
