@@ -63,6 +63,8 @@
 #   FM_MISSION_CONTROL_TOKEN_JSON path to a captured Token Dashboard API payload.
 #   FM_MISSION_CONTROL_TOKEN_URL  local Token Dashboard API URL (default
 #                                 http://127.0.0.1:4173/api/dashboard).
+#   FM_CONFIG_OVERRIDE            config directory used for dispatch rendering;
+#                                 otherwise the snapshot data root's sibling.
 #
 # Deferring a decision:
 #   Firstmate sets a captain decision aside on the captain's word, in the home
@@ -168,6 +170,36 @@ printf '%s' "$SNAPSHOT" | jq -e 'type == "object" and has("tasks")' >/dev/null 2
 STATE_DIR=$(printf '%s' "$SNAPSHOT" | jq -r '.roots.state // ""')
 DATA_DIR=$(printf '%s' "$SNAPSHOT" | jq -r '.roots.data // ""')
 PROJECTS_DIR=$(printf '%s' "$SNAPSHOT" | jq -r '.roots.projects // ""')
+if [ -n "${FM_CONFIG_OVERRIDE:-}" ]; then
+  CONFIG_DIR=$FM_CONFIG_OVERRIDE
+elif [ -n "$DATA_DIR" ] && [ "${DATA_DIR%/data}" != "$DATA_DIR" ]; then
+  CONFIG_DIR="${DATA_DIR%/data}/config"
+else
+  CONFIG_DIR=""
+fi
+DISPATCH_FILE="$CONFIG_DIR/crew-dispatch.json"
+DISPATCH_CMD="$SCRIPT_DIR/fm-crew-dispatch.sh"
+if [ -n "$CONFIG_DIR" ] && [ -x "$DISPATCH_CMD" ]; then
+  DISPATCH=$("$DISPATCH_CMD" status "$DISPATCH_FILE" 2>/dev/null) \
+    || DISPATCH='{"present":false,"status":"unavailable","error":"dispatch status could not be read","config":null,"raw":null}'
+else
+  DISPATCH='{"present":false,"status":"unavailable","error":"dispatch config location is unavailable","config":null,"raw":null}'
+fi
+printf '%s' "$DISPATCH" | jq -e 'type == "object" and has("status")' >/dev/null 2>&1 \
+  || DISPATCH='{"present":false,"status":"unavailable","error":"dispatch status could not be read","config":null,"raw":null}'
+DISPATCH_RESULTS=$(
+  if [ -r "$STATE_DIR/board-reply/dispatch-results.ndjson" ] \
+      && [ ! -L "$STATE_DIR/board-reply/dispatch-results.ndjson" ]; then
+    jq -R -s '[split("\n")[] | select(length > 0) | (fromjson? // empty)
+      | select(type == "object" and (.request_id | type) == "string"
+        and (.scope == "rule" or .scope == "default")
+        and (.index | type) == "number" and (.profile | type) == "number"
+        and (.ok | type) == "boolean" and (.message | type) == "string")][-100:]' \
+      "$STATE_DIR/board-reply/dispatch-results.ndjson" 2>/dev/null || printf '[]\n'
+  else
+    printf '[]\n'
+  fi
+)
 
 if [ "$TO_STDOUT" = 0 ] && [ -z "$OUT" ]; then
   [ -n "$STATE_DIR" ] || die "snapshot reported no state directory; pass --out"
@@ -569,6 +601,8 @@ render_html() {
     --argjson registry "$REGISTRY" \
     --argjson updated "$UPDATED" \
     --argjson recent_actions "$RECENT_ACTIONS" \
+    --argjson dispatch "$DISPATCH" \
+    --argjson dispatch_results "$DISPATCH_RESULTS" \
     --argjson projects_present "$PROJECTS_PRESENT" \
     --argjson pending_answers "$PENDING_ANSWERS" \
     --arg today "$TODAY" \
@@ -1306,6 +1340,161 @@ def recent_action_row:
   + (@html "<time class=\"recent-when\">\(recent_action_age($action.ts))</time>")
   + "</div>";
 
+# --------------------------------------------------------- dispatch view ----
+# The schema and validator remain owned outside this renderer. Mission Control
+# displays the validated file as supplied and offers only the bounded model and
+# effort edit intent; it never matches a rule or chooses among an array.
+def dispatch_profiles($value):
+  if ($value | type) == "array" then $value
+  elif ($value | type) == "object" then [$value]
+  else [] end;
+
+def dispatch_short_label($text):
+  (($text // "") | tostring) as $label |
+  if ($label | length) > 72 then $label[0:69] + "..." else $label end;
+
+def dispatch_profile_card($profile; $position):
+  (@html "<div class=\"dispatch-profile\"><span class=\"dispatch-profile-n\">Profile \($position + 1)</span>")
+  + "<dl>"
+  + (@html "<div><dt>Harness</dt><dd>\($profile.harness // "not set")</dd></div>")
+  + (@html "<div><dt>Model</dt><dd>\($profile.model // "harness default")</dd></div>")
+  + (@html "<div><dt>Effort</dt><dd>\($profile.effort // "harness default")</dd></div>")
+  + (if ($profile.provider // "") == "" then ""
+     else (@html "<div><dt>Provider</dt><dd>\($profile.provider)</dd></div>") end)
+  + "</dl></div>";
+
+def dispatch_profile_cards($value):
+  dispatch_profiles($value) as $profiles |
+  "<div class=\"dispatch-profiles\">"
+  + (([range(0; $profiles | length) as $position
+      | dispatch_profile_card($profiles[$position]; $position)] | add) // "")
+  + "</div>";
+
+def dispatch_current_profile($result):
+  ($dispatch.config // {}) as $config |
+  (if $result.scope == "rule" then
+     if (($config.rules // [])[$result.index].when // null) != ($result.when // null) then null
+     else (($config.rules // [])[$result.index].use // null) end
+   else ($config.default // null) end) as $value |
+  if ($value | type) == "array" then $value[$result.profile] // null
+  elif ($value | type) == "object" and $result.profile == 0 then $value
+  else null end;
+
+def dispatch_result_current($result):
+  dispatch_current_profile($result) as $profile |
+  if $profile == null then false
+  elif $result.ok != true then true
+  else ($result.assignment // {}) as $assignment |
+    ($assignment.harness == ($profile.harness // null))
+    and ($assignment.model == ($profile.model // "harness default"))
+    and ($assignment.effort == ($profile.effort // "harness default"))
+    and ($assignment.provider == ($profile.provider // null))
+  end;
+
+def latest_dispatch_result($scope; $index):
+  [($dispatch_results // [])[]
+    | select(.scope == $scope and .index == $index)
+    | select(dispatch_result_current(.))] | last // null;
+
+def dispatch_result_banner($result):
+  if $result == null then ""
+  else (@html "<div class=\"dispatch-result \(if $result.ok then "dispatch-result-ok" else "dispatch-result-bad" end)\" role=\"status\"><strong>\(if $result.ok then "Assignment updated" else "Assignment rejected" end)</strong><span>\($result.message)</span></div>")
+  end;
+
+def dispatch_profile_option($profile; $position):
+  (@html "<option value=\"\($position)\" data-harness=\"\($profile.harness // "")\" data-model=\"\($profile.model // "")\" data-effort=\"\($profile.effort // "")\">Profile \($position + 1) - \($profile.harness // "unknown harness") / \($profile.model // "harness default")</option>");
+
+def dispatch_editor($scope; $index; $when; $value):
+  dispatch_profiles($value) as $profiles |
+  latest_dispatch_result($scope; $index) as $result |
+  if ($controls | not) or ($profiles | length) == 0 then "" else
+    (@html "<div class=\"rc dispatch-editor\" data-home=\"main\" data-id=\"dispatch-\($scope)-\($index)\" data-key=\"\" data-what=\"\(if $scope == "rule" then $when else "Default dispatch" end)\" data-dispatch-scope=\"\($scope)\" data-dispatch-index=\"\($index)\" data-dispatch-when=\"\($when)\">")
+    + dispatch_result_banner($result)
+    + "<div class=\"rc-ok rc-quiet\" data-ok=\"dispatch\" hidden role=\"status\">"
+    + icon_check + "<span class=\"rc-ok-t\"><strong class=\"rc-ok-h\"></strong>"
+    + "<span class=\"rc-ok-s\">The assignment request was recorded for validation.</span></span></div>"
+    + "<button type=\"button\" class=\"rc-b rc-dispatch\" data-open=\"dispatch\">Change assignment</button>"
+    + "<form class=\"rc-f dispatch-form\" data-toggle data-intent=\"dispatch\" hidden>"
+    + "<p class=\"rc-q\">Change an existing profile. The board records this intent; firstmate validates the complete file before writing it.</p>"
+    + "<label class=\"dispatch-field\"><span>Profile</span><select data-dispatch-profile data-dispatch-field>"
+    + (([range(0; $profiles | length) as $position
+         | dispatch_profile_option($profiles[$position]; $position)] | add) // "")
+    + "</select></label>"
+    + (@html "<label class=\"dispatch-field\"><span>Model</span><input type=\"text\" maxlength=\"300\" data-dispatch-model data-dispatch-field value=\"\($profiles[0].model // "")\" placeholder=\"Harness default\"></label>")
+    + "<label class=\"dispatch-field\"><span>Effort</span><select data-dispatch-effort data-dispatch-field>"
+    + "<option value=\"\">Harness default</option>"
+    + ((["low","medium","high","xhigh","max"] | map(
+        . as $effort | (@html "<option value=\"\($effort)\"\(if ($profiles[0].effort // "") == $effort then " selected" else "" end)>\($effort)</option>")) | add) // "")
+    + "</select></label>"
+    + (@html "<p class=\"dispatch-harness-note\">Harness stays \($profiles[0].harness). An explicit per-task spawn override still takes precedence.</p>")
+    + "<div class=\"rc-row\"><button type=\"submit\" class=\"rc-go\">Request assignment change</button>"
+    + "<button type=\"button\" class=\"rc-x\">Cancel</button></div>"
+    + "<span class=\"rc-sent\" hidden></span>"
+    + "<p class=\"rc-hold\">The board holds its refresh while this is open.</p></form></div>"
+  end;
+
+def dispatch_rule_row($rule; $index):
+  dispatch_profiles($rule.use) as $profiles |
+  (@html "<article class=\"dispatch-rule\"><div class=\"dispatch-rule-head\"><span class=\"dispatch-kicker\">Rule \($index + 1)</span><h4 title=\"\($rule.when)\">\(dispatch_short_label($rule.when))</h4><span class=\"dispatch-kind\">\(if ($rule.use | type) == "array" then (($profiles | length) | tostring) + "-profile quota array" else "single profile" end)</span></div>")
+  + (@html "<p class=\"dispatch-when\">\($rule.when)</p>")
+  + dispatch_profile_cards($rule.use)
+  + "<p class=\"dispatch-summary\">"
+  + (if $rule.independent == true then "Independent provider required"
+     else "No independent-provider requirement" end)
+  + (if $rule | has("fallback") then
+       " <span aria-hidden=\"true\">&middot;</span> "
+       + ((dispatch_profiles($rule.fallback) | length) | tostring) + " fallback "
+       + (if (dispatch_profiles($rule.fallback) | length) == 1 then "profile" else "profiles" end)
+     else " <span aria-hidden=\"true\">&middot;</span> No fallback" end)
+  + "</p>"
+  + (if $rule | has("fallback") then
+      "<details class=\"dispatch-more\"><summary>Fallback assignment</summary>"
+      + dispatch_profile_cards($rule.fallback) + "</details>" else "" end)
+  + (if ($rule.why // "") == "" then ""
+     else (@html "<details class=\"dispatch-more\"><summary>Why this rule exists</summary><p>\($rule.why)</p></details>") end)
+  + dispatch_editor("rule"; $index; $rule.when; $rule.use)
+  + "</article>";
+
+def dispatch_default_row($config):
+  if ($config | has("default") | not) then
+    "<p class=\"dispatch-empty\">No default profile is configured. Firstmate falls back to the static crew harness when no rule fits.</p>"
+  else
+    dispatch_profiles($config.default) as $profiles |
+    "<article class=\"dispatch-rule dispatch-default\"><div class=\"dispatch-rule-head\"><span class=\"dispatch-kicker\">Default</span><h4>No matching rule</h4>"
+    + (@html "<span class=\"dispatch-kind\">\(if ($config.default | type) == "array" then (($profiles | length) | tostring) + "-profile quota array" else "single profile" end)</span></div>")
+    + dispatch_profile_cards($config.default)
+    + (if $config | has("default_fallback") then
+        "<p class=\"dispatch-summary\">"
+        + ((dispatch_profiles($config.default_fallback) | length) | tostring)
+        + " outage fallback "
+        + (if (dispatch_profiles($config.default_fallback) | length) == 1 then "profile" else "profiles" end)
+        + "</p><details class=\"dispatch-more\"><summary>Default fallback assignment</summary>"
+        + dispatch_profile_cards($config.default_fallback) + "</details>"
+      else "<p class=\"dispatch-summary\">No default fallback</p>" end)
+    + dispatch_editor("default"; 0; ""; $config.default)
+    + "</article>"
+  end;
+
+def dispatch_block:
+  if ($dispatch.status // "unavailable") == "absent" then
+    "<div class=\"dispatch-pane dispatch-absent\"><div class=\"dispatch-state\"><strong>Not configured</strong><span>No crew dispatch file is active in this home.</span></div><p class=\"dispatch-note\">Secondmate homes receive the same file when firstmate pushes inherited configuration.</p></div>"
+  elif $dispatch.status != "valid" then
+    (@html "<div class=\"dispatch-pane dispatch-invalid\"><div class=\"dispatch-state\"><strong>Invalid</strong><span>Checked during this board render - \($dispatch.error // "status unavailable")</span></div>")
+    + (if ($dispatch.raw // "") == "" then ""
+       else (@html "<details class=\"dispatch-raw\"><summary>Raw crew-dispatch.json</summary><pre>\($dispatch.raw)</pre></details>") end)
+    + "</div>"
+  else
+    ($dispatch.config // {}) as $config |
+    "<div class=\"dispatch-pane\"><div class=\"dispatch-state dispatch-valid\"><strong>Active and valid</strong><span>Validated during this board render</span></div>"
+    + "<p class=\"dispatch-note\">Firstmate matches these natural-language task types at intake. Explicit per-task spawn overrides remain higher precedence. Secondmate homes receive this same file when it is pushed.</p>"
+    + "<div class=\"dispatch-list\">"
+    + (([range(0; (($config.rules // []) | length)) as $index
+        | dispatch_rule_row($config.rules[$index]; $index)] | add) // "")
+    + dispatch_default_row($config) + "</div>"
+    + (@html "<details class=\"dispatch-raw\"><summary>Raw crew-dispatch.json</summary><pre>\($dispatch.raw // "")</pre></details>")
+    + "</div>"
+  end;
+
 # ------------------------------------------------------- reply controls ----
 # Every control below queues ONE request and performs nothing. The markup holds
 # no endpoint, no token, and no action; the only thing a tap reaches is a proved
@@ -2027,6 +2216,24 @@ body.board-reply .rc-b.rc-choice{display:inline-block;}
 .rc-ok.rc-needs-you,.rc-ok.rc-warn{border-color:#ead7ae;border-left-color:var(--amber);background:var(--amber-soft);}
 .rc-ok.rc-needs-you .ck,.rc-ok.rc-warn .ck{color:var(--amber);}
 .rc-ok.rc-needs-you .rc-ok-h,.rc-ok.rc-warn .rc-ok-h{color:#936218;}
+/* Dispatch edits use the same hidden-until-proved transport and request form,
+   but remain nested inside their always-readable rule row. */
+body.board-reply .dispatch-editor{display:block;margin-top:12px;padding:0;border-top:none;}
+body.lavish .dispatch-editor{display:none;}
+.dispatch-editor .rc-dispatch{background:var(--panel);border-color:#c8d0db;color:var(--slate);}
+.dispatch-editor .rc-dispatch:hover{background:var(--slate-soft);border-color:#aeb8c6;}
+.dispatch-form{margin-top:10px;padding:13px;border:1px solid var(--line);border-radius:11px;background:#fbfcfe;}
+.dispatch-field{display:grid;grid-template-columns:76px minmax(0,1fr);gap:9px;align-items:center;}
+.dispatch-field span{color:var(--muted);font-size:11.5px;font-weight:620;}
+.dispatch-field input,.dispatch-field select{width:100%;min-height:38px;border:1px solid #cfd6e0;border-radius:8px;
+  background:var(--panel);color:var(--ink);font:12px var(--mono);padding:7px 9px;}
+.dispatch-field input:focus-visible,.dispatch-field select:focus-visible{outline:2px solid var(--amber);outline-offset:-1px;}
+.dispatch-harness-note{margin:0;color:var(--faint);font-size:11px;overflow-wrap:anywhere;}
+.dispatch-result{display:flex;align-items:baseline;gap:8px;margin:0 0 9px;padding:10px 12px;border-radius:10px;
+  border:1px solid #d7e7dd;border-left:4px solid var(--green);background:var(--green-soft);font-size:12px;flex-wrap:wrap;}
+.dispatch-result strong{color:var(--green);}.dispatch-result span{color:var(--muted);overflow-wrap:anywhere;}
+.dispatch-result-bad{border-color:#efcfcc;border-left-color:var(--red);background:var(--red-soft);}
+.dispatch-result-bad strong,.dispatch-result-bad span{color:var(--red);}
 /* The Ask-firstmate thread. Every message is inert text, so nothing here borrows
    a control's shape: no pill, no button tone, no underlined action. */
 .thr{margin:13px 0 0;padding:0 22px;}
@@ -2056,6 +2263,11 @@ body.board-reply .rc-b.rc-choice{display:inline-block;}
   .rc-file-kicker{grid-row:auto;justify-self:start;margin:0 0 7px;}
   .rc-file-head p{grid-column:1;}
   .rc-b,.rc-go{min-height:44px;padding-top:9px;padding-bottom:9px;}
+  .dispatch-field{grid-template-columns:minmax(0,1fr);gap:3px;}
+  .dispatch-field input,.dispatch-field select{min-height:44px;}
+  .dispatch-form .rc-row{align-items:stretch;flex-direction:column;gap:3px;}
+  .dispatch-form .rc-go{width:100%;}
+  .dispatch-form .rc-x{align-self:center;min-height:38px;}
   .thr{padding-left:16px;padding-right:16px;}
 }
 "
@@ -2343,6 +2555,44 @@ a.ship:hover{background:#fbfcfe;}
 .recent-url{display:block;color:var(--faint);font-family:var(--mono);font-size:11.5px;margin-top:2px;overflow-wrap:anywhere;}
 .recent-when{flex:none;color:var(--faint);font-size:11.5px;white-space:nowrap;}
 
+/* ---- dispatch configuration ---- */
+.dispatch-pane{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  box-shadow:var(--shadow);overflow:hidden;}
+.dispatch-state{display:flex;align-items:baseline;gap:10px;padding:15px 20px;background:var(--slate-soft);
+  color:var(--muted);font-size:12.5px;flex-wrap:wrap;}
+.dispatch-state strong{color:var(--slate);font-size:13px;}
+.dispatch-state.dispatch-valid strong{color:var(--green);}
+.dispatch-invalid .dispatch-state{background:var(--red-soft);color:var(--red);}
+.dispatch-invalid .dispatch-state strong{color:var(--red);}
+.dispatch-note{margin:0;padding:13px 20px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12.5px;}
+.dispatch-list{display:flex;flex-direction:column;}
+.dispatch-rule{margin:0;padding:17px 20px;border-top:1px solid var(--line);}
+.dispatch-rule:first-child{border-top:none;}
+.dispatch-default{background:#fbfcfe;}
+.dispatch-rule-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px 12px;align-items:baseline;}
+.dispatch-kicker{color:var(--faint);font-size:10px;font-weight:740;letter-spacing:.07em;text-transform:uppercase;}
+.dispatch-rule-head h4{margin:0;font-size:14px;font-weight:660;overflow-wrap:anywhere;}
+.dispatch-kind{color:var(--slate);background:var(--slate-soft);border-radius:999px;padding:3px 9px;
+  font-size:10.5px;font-weight:620;white-space:nowrap;}
+.dispatch-when{margin:5px 0 11px;color:var(--muted);font-size:12px;overflow-wrap:anywhere;}
+.dispatch-profiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px;}
+.dispatch-profile{border:1px solid var(--line);border-radius:10px;padding:10px 11px;background:var(--panel);}
+.dispatch-profile-n{display:block;margin-bottom:5px;color:var(--faint);font-size:9.5px;font-weight:700;
+  letter-spacing:.06em;text-transform:uppercase;}
+.dispatch-profile dl{margin:0;display:grid;gap:4px;}
+.dispatch-profile dl div{display:grid;grid-template-columns:62px minmax(0,1fr);gap:7px;align-items:baseline;}
+.dispatch-profile dt{color:var(--faint);font-size:10px;}
+.dispatch-profile dd{margin:0;color:var(--ink);font-family:var(--mono);font-size:10.5px;overflow-wrap:anywhere;}
+.dispatch-summary{margin:10px 0 0;color:var(--faint);font-size:11px;}
+.dispatch-more,.dispatch-raw{margin-top:9px;color:var(--muted);font-size:11.5px;}
+.dispatch-more summary,.dispatch-raw summary{cursor:pointer;color:var(--slate);font-weight:620;}
+.dispatch-more p{margin:7px 0 0;overflow-wrap:anywhere;}
+.dispatch-more .dispatch-profiles{margin-top:8px;}
+.dispatch-raw{padding:0 20px 15px;}
+.dispatch-raw pre{max-height:420px;overflow:auto;margin:8px 0 0;padding:12px;border-radius:9px;
+  background:#f7f8fa;color:var(--slate);font:10.5px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;}
+.dispatch-empty{margin:0;padding:17px 20px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px;}
+
 /* ---- health and allowance strip ---- */
 .strip{display:grid;grid-template-columns:minmax(240px,.72fr) minmax(0,1.8fr);gap:16px;align-items:start;}
 .pane{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow);}
@@ -2468,6 +2718,14 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   .qbalance-last{text-align:left}
   .qbalance li{grid-template-columns:minmax(0,1fr) auto}
   .qbalance li time{grid-column:1 / -1}
+  .dispatch-rule{padding:15px 16px;}
+  .dispatch-note{padding-left:16px;padding-right:16px;}
+  .dispatch-rule-head{grid-template-columns:minmax(0,1fr) auto;gap:6px 8px;}
+  .dispatch-kicker{grid-column:1 / -1;}
+  .dispatch-kind{align-self:start;white-space:normal;text-align:right;max-width:130px;}
+  .dispatch-profiles{grid-template-columns:minmax(0,1fr);}
+  .dispatch-profile dl div{grid-template-columns:58px minmax(0,1fr);}
+  .dispatch-raw{padding-left:16px;padding-right:16px;}
 }
 /* Four tabs still have to fit an iPhone without a sideways scroll, so below
    this width the label sits under the glyph rather than beside it. */
@@ -2657,6 +2915,15 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   </div>
 
   <div class=\"panel\" id=\"panel-system\" role=\"tabpanel\" aria-labelledby=\"tab-system\">
+  <section id=\"dispatch\" data-scroll-anchor=\"section:dispatch\">
+    <div class=\"sec-h\"><h2>Dispatch</h2>"
++ (if $dispatch.status == "valid" then
+    (@html "<span class=\"count\">\((($dispatch.config.rules // []) | length)) rules</span>")
+   elif $dispatch.status == "absent" then "<span class=\"count\">not configured</span>"
+   else "<span class=\"count\">needs attention</span>" end)
++ "</div>"
++ dispatch_block
++ "  </section>
   <section class=\"strip\" id=\"health\">
     <div class=\"pane health-pane\">"
 + (@html "<h3>Fleet health<span class=\"count\">\(if $health_count > 0 then "\($health_count) \(plural($health_count; "item"; "items"))\(if $health_incomplete or ($backlog_present | not) then "+" else "" end)" elif $health_incomplete or ($backlog_present | not) then "incomplete" else "all clear" end)</span></h3>")
@@ -3243,6 +3510,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     if (intent === \"answer\") { return \"From the board - answer on: \" + what; }
     if (intent === \"reply\")  { return \"From the board - note on: \" + what; }
     if (intent === \"file\")   { return \"From the board - start something new\"; }
+    if (intent === \"dispatch\") { return \"From the board - change dispatch assignment: \" + what; }
     return \"From the board - a conversation message\";
   }
 
@@ -3270,6 +3538,24 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   function requiredFactKeys(form) {
     return Array.prototype.map.call(form.querySelectorAll('[data-fact-required=\"true\"]'),
       function (field) { return field.getAttribute(\"data-fact-key\"); });
+  }
+  function dispatchValues(form) {
+    if (!form || form.getAttribute(\"data-intent\") !== \"dispatch\") { return null; }
+    var profile = form.querySelector(\"[data-dispatch-profile]\");
+    var model = form.querySelector(\"[data-dispatch-model]\");
+    var effort = form.querySelector(\"[data-dispatch-effort]\");
+    return {profile:profile ? profile.value : \"0\", model:model ? model.value : \"\",
+      effort:effort ? effort.value : \"\"};
+  }
+  function restoreDispatchValues(form, values) {
+    if (!values || typeof values !== \"object\" || Array.isArray(values)) { return; }
+    var profile = form.querySelector(\"[data-dispatch-profile]\");
+    var model = form.querySelector(\"[data-dispatch-model]\");
+    var effort = form.querySelector(\"[data-dispatch-effort]\");
+    if (profile && typeof values.profile === \"string\") { profile.value = values.profile; }
+    syncDispatchFields(form);
+    if (model && typeof values.model === \"string\") { model.value = values.model; }
+    if (effort && typeof values.effort === \"string\") { effort.value = values.effort; }
   }
   function labelFactRefusal(form, message) {
     var prefix = [\"answer needs required fact: \", \"answer needs required facts: \"].find(function (candidate) {
@@ -3323,7 +3609,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         var pending = requestState[identity];
         var retry = records[identity] && records[identity].retry;
         if (!open && !note && !hasFacts) { delete records[identity]; return; }
-        records[identity] = {identity:identity,open:open,note:note,facts:facts};
+        records[identity] = {identity:identity,open:open,note:note,facts:facts,
+          dispatch:dispatchValues(form)};
         if (retry && typeof retry.payload === \"string\"
             && typeof retry.attempt === \"string\" && retry.attempt) {
           records[identity].retry = {payload:retry.payload,attempt:retry.attempt};
@@ -3379,6 +3666,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         var area = form.querySelector(\".rc-t\");
         if (area && typeof record.note === \"string\") { area.value = record.note; }
         restoreFactValues(form, record.facts);
+        restoreDispatchValues(form, record.dispatch);
         if (record.open && form.hasAttribute(\"data-toggle\")) { shut(block); form.hidden = false; }
         if (record.queued && typeof record.queued.payload === \"string\"
             && typeof record.queued.note === \"string\"
@@ -3408,6 +3696,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     if (intent === \"reply\") { return \"Reply \" + verb; }
     if (intent === \"defer\") { return \"Set-aside request \" + verb; }
     if (intent === \"file\") { return \"New work request \" + verb; }
+    if (intent === \"dispatch\") { return \"Assignment request \" + verb; }
     return \"Request \" + verb;
   }
   function ackSentence(label, delivery) {
@@ -3479,7 +3768,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     var close = form.querySelector(\".rc-x\");
     var submit = form.querySelector(\".rc-go\");
     if (area) { area.value = state.note || \"\"; area.disabled = true; }
-    Array.prototype.forEach.call(form.querySelectorAll(\"[data-fact-key]\"), function (field) {
+    Array.prototype.forEach.call(form.querySelectorAll(\"[data-fact-key],[data-dispatch-field]\"), function (field) {
       field.disabled = true;
     });
     if (close) { close.disabled = true; }
@@ -3496,7 +3785,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     var close = form.querySelector(\".rc-x\");
     var submit = form.querySelector(\".rc-go\");
     if (area) { area.disabled = false; }
-    Array.prototype.forEach.call(form.querySelectorAll(\"[data-fact-key]\"), function (field) {
+    Array.prototype.forEach.call(form.querySelectorAll(\"[data-fact-key],[data-dispatch-field]\"), function (field) {
       field.disabled = false;
     });
     if (close) { close.disabled = false; }
@@ -3592,7 +3881,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         formsIn(block).forEach(function (f) {
           if (f.getAttribute(\"data-intent\") !== want) { return; }
           f.hidden = false;
-          var area = f.querySelector(\".rc-t\");
+          var area = f.querySelector(\".rc-t\") || f.querySelector(\"[data-dispatch-model]\");
           if (area) { area.focus(); }
         });
       }
@@ -3614,7 +3903,11 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         }
         var area = form && form.querySelector(\".rc-t\");
         if (area) { area.value = \"\"; }
-        if (form) { clearFactValues(form); clearFactError(form); }
+        if (form) {
+          clearFactValues(form);
+          clearFactError(form);
+          if (intent === \"dispatch\") { syncDispatchFields(form); }
+        }
         shut(owner);
         saveDrafts();
       }
@@ -3640,15 +3933,31 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     };
     var id = block.getAttribute(\"data-id\");
     var key = block.getAttribute(\"data-key\");
-    if (id) { request.id = id; }
-    if (key) { request.key = key; }
-    if (note) { request.note = note; }
-    if (fieldedFacts) {
-      request.facts = factValues(form);
-      request.required_keys = requiredFactKeys(form);
+    if (request.intent === \"dispatch\") {
+      var profileField = form.querySelector(\"[data-dispatch-profile]\");
+      var modelField = form.querySelector(\"[data-dispatch-model]\");
+      var effortField = form.querySelector(\"[data-dispatch-effort]\");
+      request.scope = block.getAttribute(\"data-dispatch-scope\") || \"\";
+      request.index = Number(block.getAttribute(\"data-dispatch-index\"));
+      request.profile = Number(profileField && profileField.value);
+      if (request.scope === \"rule\") { request.when = block.getAttribute(\"data-dispatch-when\") || \"\"; }
+      request.model = ((modelField && modelField.value) || \"\").replace(/^\\s+|\\s+$/g, \"\");
+      request.effort = (effortField && effortField.value) || \"\";
+      if (!form._fmDispatchRequestId) {
+        form._fmDispatchRequestId = newAttempt().replace(/^fm-board:/, \"fm-dispatch-\");
+      }
+      request.request_id = form._fmDispatchRequestId;
+    } else {
+      if (id) { request.id = id; }
+      if (key) { request.key = key; }
+      if (note) { request.note = note; }
+      if (fieldedFacts) {
+        request.facts = factValues(form);
+        request.required_keys = requiredFactKeys(form);
+      }
     }
 
-    var persistent = request.intent !== \"ask\";
+    var persistent = request.intent !== \"ask\" && request.intent !== \"dispatch\";
     var identity = persistent ? ackKey(block, request.intent) : \"\";
     var requestIdentity = draftIdentity(block, request.intent);
     try {
@@ -3694,6 +4003,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       }
       rememberRetry(requestIdentity, null);
       releasePayload(form);
+      if (request.intent === \"dispatch\") { form._fmDispatchRequestId = \"\"; }
       if (area) { area.value = \"\"; }
       clearFactValues(form);
       noteCollecting(recorded.armed !== false);
@@ -3781,6 +4091,28 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       noteOnly(block, ackSentence(bridgedLabel, delivery));
     }
     shut(block);
+    saveDrafts();
+  });
+
+  function syncDispatchFields(form) {
+    var select = form && form.querySelector(\"[data-dispatch-profile]\");
+    var option = select && select.options[select.selectedIndex];
+    if (!form || !option) { return; }
+    var model = form.querySelector(\"[data-dispatch-model]\");
+    var effort = form.querySelector(\"[data-dispatch-effort]\");
+    var note = form.querySelector(\".dispatch-harness-note\");
+    if (model) { model.value = option.getAttribute(\"data-model\") || \"\"; }
+    if (effort) { effort.value = option.getAttribute(\"data-effort\") || \"\"; }
+    if (note) {
+      note.textContent = \"Harness stays \" + (option.getAttribute(\"data-harness\") || \"as configured\")
+        + \". An explicit per-task spawn override still takes precedence.\";
+    }
+  }
+
+  document.addEventListener(\"change\", function (ev) {
+    var select = ev.target && ev.target.closest ? ev.target.closest(\"[data-dispatch-profile]\") : null;
+    if (!select) { return; }
+    syncDispatchFields(select.closest(\".dispatch-form\"));
     saveDrafts();
   });
 

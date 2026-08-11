@@ -82,6 +82,13 @@ The stage itself is derived by the snapshot rather than by the board; see `bin/f
   An incomplete decision reads `incomplete` with the specific gaps as its hint, because a decision that reaches Captain's Call unanswerable is a fleet health problem rather than a decision waiting on the captain; [`docs/decision-hold-lifecycle.md`](decision-hold-lifecycle.md) owns the checklist.
   It sits in the closing strip, so every fleet health item is also announced in a bar above the primary sections rather than left for the captain to scroll to.
   That bar names the count as blocked or failed while those are the only kind present, and widens to fleet health items once a held secondmate item or an incomplete decision joins them.
+- **Dispatch** shows the live `config/crew-dispatch.json` in the System view without making the board a second schema owner.
+  It states whether the optional file is absent, valid, invalid, or unavailable and says that the verdict was checked during the current render.
+  Each natural-language rule and the default show their profile count, harness, model, effort, optional provider, quota-array shape, independence and fallback summary, and a collapsed rationale when one exists.
+  The full condition stays readable without sharing a horizontal row with the assignment, so a long task type cannot push the model out of view at phone width.
+  Raw JSON remains available only in an expandable shelf.
+  The canonical schema and all field semantics remain in [`docs/configuration.md`](configuration.md#crew-dispatch-profiles-configcrew-dispatchjson).
+  The view also notes that secondmate homes receive this same file when inherited configuration is pushed.
 - **Allowance & pace** integrates the local Token Dashboard into the System view rather than repeating its numbers in a separate dashboard-shaped panel.
   Each primary allowance window leads with current remaining allowance, then keeps pace against the reset, observed cycle history, and projected runway or exhaustion in one compact card.
   Recent automatic balancing is a quiet collapsed shelf under those cards, so its activity remains visible without becoming another monitoring feed.
@@ -129,13 +136,24 @@ A board request is evidence of the captain's intent, not an authenticated captai
 Firstmate does with it exactly what it would have done had the captain said the same words in chat, under its own contract in `AGENTS.md`: an approval that needs the captain's explicit word still gets confirmed with the captain first, a merge still happens only if firstmate's own checks pass, and nothing destructive, irreversible, or security-sensitive is ever executed from a tap.
 The surface is reachable by anything that can reach the service serving it, so being able to reach it is never treated as authorization for any of that.
 
-There are six controls, and each row offers only what it can actually resolve:
+There are six general controls plus the System view's bounded Dispatch editor, and each row offers only what it can actually resolve:
 
 - **Approve merge** and **Reply**, on a PR awaiting the captain.
 - **Answer** and **Set aside**, on a decision the captain holds in a backlog.
 - **Answer** alone on a task-level open decision, because there is no backlog row behind it and therefore no hold kind to change.
 - **Start something new**, as a board-level one-shot request for something to look into or build.
 - **Ask firstmate**, as the board-level continuing conversation for a question or follow-up.
+- **Change assignment**, on an existing dispatch rule or the default, limited to the model and effort of one existing profile.
+
+The Dispatch editor appears only when `--controls` is enabled and the direct board-reply service proves it is live.
+It never appears through the legacy Lavish bridge, a plain static server, or `file://`.
+The profile selector chooses only among profiles already present in the selected rule or default, and v1 cannot add, delete, reorder, change `when`, or change a harness.
+Submitting it records one `dispatch` request through the shared board vocabulary and does not edit configuration in the page or service.
+Firstmate collects that request with `bin/fm-procevent-board-reply.sh apply`, which delegates the candidate to `bin/fm-crew-dispatch.sh`.
+That command checks the exact rule identity, changes only the requested existing profile, validates the complete candidate with the same dispatch validator bootstrap uses, and atomically promotes only a valid file.
+A stale rule, malformed profile array, unverified harness already present in the candidate, or unsupported effort leaves the file unchanged.
+The collector records the applied assignment or refusal in private board state, and the next board regeneration shows that outcome beside the same task type.
+An explicit per-task harness, model, or effort at spawn remains higher precedence than this default file.
 
 Start something new and Ask firstmate are deliberately separate surfaces.
 The new-work composer is a visually distinct intake card, while Ask firstmate retains the conversation and its replies.
@@ -199,7 +217,7 @@ Once the board-reply wake is armed, firstmate collects its captured Answer recor
 
 [`bin/fm-procevent-board-reply.sh`](../bin/fm-procevent-board-reply.sh) owns the reply service, arming the wake, posting firstmate's replies into the board conversation, and turning what was recorded into validated requests.
 [`bin/fm-board-request-parse.pl`](../bin/fm-board-request-parse.pl) is the single owner of the board message vocabulary in both directions and of every fail-closed rule, shared by both transports, and the service validates a message at its door with that same program over the same bytes it is about to store.
-Its captain-to-firstmate intents are `merge`, `reply`, `answer`, `defer`, `ask`, and `file`.
+Its captain-to-firstmate intents are `merge`, `reply`, `answer`, `defer`, `ask`, `file`, and `dispatch`.
 A legacy `answer` carries its free-text `note` unchanged.
 A fielded fact `answer` keeps that same intent and carries a `facts` object keyed by the stable field keys, the form's `required_keys`, and an optional overflow `note`.
 The shared parser is the only required-key validator and rejects an incomplete structured answer by its stable keys, while the fielded form translates that refusal back to the recorded human labels before showing it to the captain.

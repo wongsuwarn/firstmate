@@ -35,8 +35,8 @@
 #
 # What it emits, one compact JSON object per line:
 #   {"kind":"contract",...}      always first; states that nothing below is authority
-#   {"kind":"request",...}       a validated captain request: intent, home, id, key, note,
-#                                  and structured facts when the answer carries them
+#   {"kind":"request",...}       a validated captain request: intent, home, target fields,
+#                                  note, structured facts, or a bounded dispatch edit
 #   {"kind":"reply",...}         a validated firstmate board reply: intent, note. Display only.
 #   {"kind":"message",...}       prose carrying no board marker at all
 #   {"kind":"unrecognized",...}  anything else, with a reason. Never acted on.
@@ -198,7 +198,9 @@ my %SPEC = (
   answer => {need => [],             allow => ["id", "key", "note", "facts", "required_keys"], either => ["id", "key"]},
   defer  => {need => ["id"],         allow => ["id", "key"]},
   ask    => {need => ["note"],       allow => ["note"]},
-  file   => {need => ["note"],       allow => ["note"]},
+  file     => {need => ["note"], allow => ["note"]},
+  dispatch => {need => ["scope", "index", "profile", "model", "effort", "request_id"],
+               allow => ["scope", "index", "profile", "when", "model", "effort", "request_id"]},
 );
 
 # Firstmate speaking back to the board carries its words and nothing else. There
@@ -288,6 +290,52 @@ for my $line (@records) {
     $out{$f} = $val;
   }
   next if $out{kind} eq "";
+
+  # A dispatch request identifies one existing profile without carrying the
+  # dispatch schema or any selection logic. The executable dispatch validator
+  # checks the resulting whole-file candidate before it can be written.
+  if ($direction eq "request" && $intent eq "dispatch") {
+    if (($obj->{home} // "") ne "main") { $bad->("dispatch edits apply only to the main home"); next; }
+    my $scope = $obj->{scope};
+    if (!defined($scope) || ref($scope) || ($scope ne "rule" && $scope ne "default")) {
+      $bad->("dispatch scope must be rule or default"); next;
+    }
+    for my $field ("index", "profile") {
+      my $value = $obj->{$field};
+      my $maximum = $field eq "index" ? 999 : 99;
+      if (!defined($value) || ref($value) || $value !~ /\A[0-9]+\z/ || $value > $maximum) {
+        $bad->("dispatch $field is not usable"); $out{kind} = ""; last;
+      }
+      $out{$field} = 0 + $value;
+    }
+    next if $out{kind} eq "";
+    my $request_id = $obj->{request_id};
+    if (!defined($request_id) || ref($request_id) || $request_id !~ $SAFE_ID) {
+      $bad->("dispatch request identity is not usable"); next;
+    }
+    $out{request_id} = $request_id;
+    for my $field ("model", "effort") {
+      my $value = $obj->{$field};
+      my $maximum = $field eq "model" ? 300 : 20;
+      if (!defined($value) || ref($value) || length($value) > $maximum
+          || $value =~ /[\x00-\x1f]/) {
+        $bad->("dispatch $field is not safe text"); $out{kind} = ""; last;
+      }
+      $out{$field} = $value;
+    }
+    next if $out{kind} eq "";
+    if ($scope eq "rule") {
+      my $when = $obj->{when};
+      if (!defined($when) || ref($when) || !length($when) || length($when) > 2000
+          || $when =~ /[\x00-\x08\x0b\x0c\x0e-\x1f]/) {
+        $bad->("dispatch rule identity is not safe text"); next;
+      }
+      $out{when} = $when;
+    } elsif (exists $obj->{when}) {
+      $bad->("default dispatch edit does not carry when"); next;
+    }
+    $out{scope} = $scope;
+  }
 
   if (exists $obj->{note}) {
     my $note = $obj->{note};
