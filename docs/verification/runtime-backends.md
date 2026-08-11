@@ -62,7 +62,7 @@ Verified 2026-08-11 on macOS 26.5.2 arm64 against v2.1.0 (installed) and v2.0.1,
 FM_TREEHOUSE_POOL_DRIFT=1 tests/fm-treehouse-pool-lease-live-e2e.test.sh
 ```
 
-Both versions produced the same five results, one `ok -` line per property:
+Both versions produced the same six results, one `ok -` line per property:
 
 | Property | Observed |
 | --- | --- |
@@ -71,6 +71,10 @@ Both versions produced the same five results, one `ok -` line per property:
 | `prune` while that lease is held | the leased copy is left alone |
 | `return <copy>` without `--force` on a copy holding uncommitted work | prompts, aborts, and leaves both the copy and its uncommitted work in place |
 | `return <copy>` without `--force` on a clean copy | releases it; the next `get` is handed that same copy |
+| `return <copy> --force` on a leased copy | releases it; the next `get` is handed that same copy |
+
+That last row is what keeps the pool from filling instead of racing.
+Nothing expires a lease, and `prune` skips one, so `bin/fm-teardown.sh`'s `treehouse return --force` is now the only thing that frees a slot; a release that stopped honouring `--force` over a lease would leak one slot per task rather than hand a live task's copy away.
 
 Two vendor behaviours the release path in `bin/fm-spawn.sh` has to work around, identical on both versions:
 
