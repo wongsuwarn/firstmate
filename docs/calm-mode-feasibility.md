@@ -436,3 +436,18 @@ right-heading:  <|          over  \__/~~-~~~-~
 
 At 3 columns the sprite fell back to a single exact-width row, `<|~`.
 Escape aborted the run leaving `Operation aborted`, no boat, and no stale sprite rows, and the trial exited 0 after deleting its temporary state.
+
+## 2026-08-11 Pi 0.84.1 export completion verification
+
+Pi 0.84.1 completed Calm-mode `/export` by writing the complete requested HTML document, but the live TUI did not retain Pi's transient `Session exported to: <path>` status row in the captured viewport.
+The prior E2E waited for that presentation-only status row even after the requested export existed, so it reported a false timeout rather than a failed command.
+`tests/fm-calm-pi-extension.test.sh` now waits for the requested export's closing `</html>` tag and then validates the serialized session and rendered export DOM, which directly proves the command's observable result without weakening its export-content assertions.
+
+```text
+$ pi --version
+0.84.1
+
+$ tests/fm-calm-pi-extension.test.sh
+... three consecutive runs exited 0, each ending:
+ok - Pi calm native E2E replaces the stock working row with a moving, resize-clamped working ship that freezes and resumes across two working periods in one Pi session, clears on abort, keeps captain turns visible, hides exact operational user rows without changing persistence, restores stock rendering Calm-off, survives restart, and preserves export plus Ctrl+O behavior
+```
