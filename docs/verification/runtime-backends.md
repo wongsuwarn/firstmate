@@ -73,8 +73,9 @@ Both versions produced the same six results, one `ok -` line per property:
 | `return <copy>` without `--force` on a clean copy | releases it; the next `get` is handed that same copy |
 | `return <copy> --force` on a leased copy | releases it; the next `get` is handed that same copy |
 
-That last row is what keeps the pool from filling instead of racing.
-Nothing expires a lease, and `prune` skips one, so `bin/fm-teardown.sh`'s `treehouse return --force` is now the only thing that frees a slot; a release that stopped honouring `--force` over a lease would leak one slot per task rather than hand a live task's copy away.
+That last row is what lets normal task teardown keep the pool from filling instead of racing.
+Nothing expires a lease, and `prune` skips one, so `bin/fm-teardown.sh` must release every completed task with `treehouse return --force`; an aborted launch or a relaunch into a fresh copy instead returns its own provably clean superseded lease from `bin/fm-spawn.sh`.
+A teardown path that stopped honouring `--force` over a lease would leak one slot per completed task rather than hand a live task's copy away.
 
 Two vendor behaviours the release path in `bin/fm-spawn.sh` has to work around, identical on both versions:
 

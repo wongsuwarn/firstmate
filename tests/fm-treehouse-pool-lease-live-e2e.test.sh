@@ -16,10 +16,10 @@
 #   3. `return` WITHOUT --force refuses a copy that still holds uncommitted work
 #      rather than cleaning it, which is what keeps an abandoned copy's unlanded
 #      work safe when firstmate declines to reclaim it.
-#   4. `return --force` releases a LEASED copy back to the pool. Under a lease
-#      that call is now the only thing that ever frees a slot, so a release that
-#      quietly ignored it would fill the pool over a long run instead of racing
-#      over one copy - a different failure, equally fatal.
+#   4. `return --force` releases a LEASED copy back to the pool. Normal task
+#      teardown depends on that call to free its slot, so a release that quietly
+#      ignored it would fill the pool over a long run instead of racing over one
+#      copy - a different failure, equally fatal.
 #
 # The portable counterpart in tests/fm-spawn-worktree-settle.test.sh pins
 # firstmate's own behaviour on top of these, and runs in CI against whatever
@@ -111,11 +111,10 @@ WT_REUSED=$(lease task-d)
   || fail "treehouse $TH_VERSION: 'return' on a clean copy did not release it back to the pool (next lease got '$WT_REUSED', expected $WT_A)"
 pass "return without --force releases a clean copy back to the pool non-interactively"
 
-# WT_A is leased to task-d now. bin/fm-teardown.sh releases every task's copy
-# with `return --force`, and under a lease that call is the only thing that frees
-# a slot: nothing expires, and prune skips leases (checked above). A release that
-# stopped honouring --force over a lease would leak a slot per task and exhaust
-# the pool part-way through a long run.
+# WT_A is leased to task-d now. bin/fm-teardown.sh releases every completed
+# task's copy with `return --force`; nothing expires a lease, and prune skips one
+# (checked above). A release that stopped honouring --force over a lease would
+# leak a slot per completed task and exhaust the pool part-way through a long run.
 printf 'discarded by force\n' > "$WT_A/scratch.txt"
 ( cd "$REPO" && "$TH" return --force "$WT_A" ) </dev/null >/dev/null 2>&1 || true
 WT_FORCED=$(lease task-e)
