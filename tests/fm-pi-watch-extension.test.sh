@@ -1369,17 +1369,21 @@ test_opencode_watch_arm_coordinator_respects_primary_scope() {
   home="$TMP_ROOT/opencode-coordinator-home"
   log="$TMP_ROOT/opencode-coordinator.log"
   fm_git_worktree "$base" "$repo" fm/opencode-coordinator
-  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  mkdir -p "$repo/bin" "$home/bin" "$home/state" "$home/config"
   : > "$repo/AGENTS.md"
   install_primary_scope_fixture "$repo"
+  git init -q "$home"
+  git -C "$home" commit -q --allow-empty -m init
+  : > "$home/AGENTS.md"
+  install_primary_scope_fixture "$home"
   : > "$home/state/task.meta"
-  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+  cat > "$home/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'arm\n' >> "${FM_ARM_LOG:?}"
 printf 'watcher: healthy pid=1 (beacon 0s)\n'
 SH
-  chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" node 2>&1 <<'EOF'
+  chmod +x "$home/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_ARM_LOG="$log" node 2>&1 <<'EOF'
 import { existsSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -2161,7 +2165,7 @@ test_pi_extensions_are_inert_in_linked_worktree() {
   cp "$ROOT/.pi/extensions/lib/fm-primary-scope.ts" "$worktree/.pi/extensions/lib/fm-primary-scope.ts"
   watch_extension="$worktree/.pi/extensions/fm-primary-pi-watch.ts"
   turnend_extension="$worktree/.pi/extensions/fm-primary-turnend-guard.ts"
-  out=$(WATCH_EXTENSION="$watch_extension" TURNEND_EXTENSION="$turnend_extension" FM_HOME="$home" node --input-type=module 2>&1 <<'EOF'
+  out=$(WATCH_EXTENSION="$watch_extension" TURNEND_EXTENSION="$turnend_extension" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" node --input-type=module 2>&1 <<'EOF'
 import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 

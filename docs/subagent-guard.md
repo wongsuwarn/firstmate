@@ -136,7 +136,7 @@ It costs one line and removes the failure mode where a rename or a rollback sile
 The shipped hook fires only in a genuine firstmate primary home, using the shared predicate `fm_primary_scope_matches` from `bin/fm-primary-scope-lib.sh`.
 `bin/fm-primary-scope.sh` is the executable adapter boundary for integrations that cannot source the shell library directly.
 Each tracked session-start, turn-end, and watcher integration listed below uses that predicate before it injects an instruction, blocks a turn end, registers a watcher arm, exposes an away-mode affordance, or writes a primary marker.
-This keeps a linked task worktree inert even when it inherits a primary home's `FM_HOME` or state path.
+This keeps a linked task worktree inert even when it inherits a primary home's `FM_ROOT_OVERRIDE`, `FM_HOME`, or state path.
 
 | Harness | Tracked project-local primary integration | Linked task worktree result |
 | --- | --- | --- |

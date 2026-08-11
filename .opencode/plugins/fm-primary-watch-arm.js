@@ -87,7 +87,7 @@ function effectivePaths(root) {
   const fmHome = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || fmRoot;
   const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
   const config = process.env.FM_CONFIG_OVERRIDE || `${fmHome}/config`;
-  return { root: fmRoot, home: fmHome, state, config };
+  return { integrationRoot: root, root: fmRoot, home: fmHome, state, config };
 }
 
 function shouldArm(paths) {
@@ -369,7 +369,7 @@ function spawnArm(paths, sessionID, client, predecessorArmPid = "") {
 
 async function beginArm(paths, sessionID, client, predecessorArmPid) {
   if (!sessionID) return { status: "skipped", armChild: null };
-  if (!(await fmPrimaryScopeMatches(paths.root, paths.state))) return { status: "not-primary", armChild: null };
+  if (!(await fmPrimaryScopeMatches(paths.integrationRoot, paths.state))) return { status: "not-primary", armChild: null };
   if (!(await sessionOwnsLock(paths))) return { status: "read-only", armChild: null };
   if (child) return { status: "existing", armChild: child };
   if (retryTimer) return { status: "retrying", armChild: null };
@@ -404,7 +404,7 @@ async function ensureArm(paths, sessionID, client, predecessorArmPid = "", inclu
 export const FmPrimaryWatchArm = async ({ client, directory, worktree }) => {
   const root = worktree ? resolvePath(worktree) : await resolveRoot(directory);
   const paths = effectivePaths(root);
-  if (!(await fmPrimaryScopeMatches(paths.root, paths.state))) {
+  if (!(await fmPrimaryScopeMatches(paths.integrationRoot, paths.state))) {
     return { event: async () => {} };
   }
   globalThis[COORDINATOR_KEY] = {

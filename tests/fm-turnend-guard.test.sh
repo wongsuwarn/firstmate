@@ -693,6 +693,21 @@ test_hook_silent_in_crewmate_worktree() {
   pass "fm-turnend-guard: inert in a crewmate/scout task worktree (linked git worktree) even when unhealthy"
 }
 
+test_hook_ignores_inherited_primary_overrides_in_crewmate_worktree() {
+  local primary base dir out status
+  primary=$(make_primary_dir "$TMP_ROOT/hook-inherited-primary")
+  base="$TMP_ROOT/hook-inherited-base"
+  dir="$TMP_ROOT/hook-inherited-wt"
+  make_crewmate_worktree_dir "$base" "$dir" >/dev/null
+  : > "$primary/state/task1.meta"
+  out=$(printf '{"stop_hook_active":false}' | CLAUDECODE=1 \
+    FM_ROOT_OVERRIDE="$primary" FM_HOME="$primary" FM_STATE_OVERRIDE="$primary/state" \
+    bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
+  expect_code 0 "$status" "inherited primary overrides must not activate a crewmate guard"
+  [ -z "$out" ] || fail "inherited primary overrides activated a crewmate guard: $out"
+  pass "fm-turnend-guard: inherited primary overrides cannot activate a linked worktree"
+}
+
 test_hook_silent_without_jq() {
   local dir out status fakebin tool tool_path
   dir=$(make_primary_dir "$TMP_ROOT/hook-nojq")
@@ -1675,6 +1690,7 @@ test_hook_blocks_in_treehouse_leased_secondmate_home
 test_hook_exempts_linked_worktree_with_stray_marker
 test_hook_exempts_linked_worktree_with_non_ascii_marker
 test_hook_silent_in_crewmate_worktree
+test_hook_ignores_inherited_primary_overrides_in_crewmate_worktree
 test_hook_silent_without_jq
 test_hook_silent_without_stdin
 test_hook_runs_fast
