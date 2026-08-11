@@ -92,7 +92,8 @@ make_case() {
 # fetch stays hermetic while the real owner/repo match logic still runs
 # against a real GitHub-style remote string. Echoes the tracked clone path.
 make_primary_fixture() {
-  local label=$1 slug=$2 seed bare tracked origin_work github_url
+  local label=$1 slug=$2 origin_url=${3:-https://github.com/$2.git}
+  local seed bare tracked origin_work
   seed="$TMP_ROOT/$label-seed"
   git init -q -b main "$seed"
   printf 'projects/\nstate/\ndata/\nconfig/\n' > "$seed/.gitignore"
@@ -102,9 +103,8 @@ make_primary_fixture() {
   git clone --quiet --bare "$seed" "$bare" >/dev/null
   tracked="$TMP_ROOT/$label-tracked"
   git clone --quiet "$bare" "$tracked" >/dev/null
-  github_url="https://github.com/$slug.git"
-  git -C "$tracked" remote set-url origin "$github_url"
-  git -C "$tracked" config "url.file://$bare.insteadOf" "$github_url"
+  git -C "$tracked" remote set-url origin "$origin_url"
+  git -C "$tracked" config "url.file://$bare.insteadOf" "$origin_url"
   origin_work="$TMP_ROOT/$label-origin-work"
   git clone --quiet "$bare" "$origin_work" >/dev/null
   git -C "$origin_work" commit -q --allow-empty -m "upstream merge"
@@ -166,6 +166,52 @@ test_other_project_merge_never_touches_primary() {
   pass "fm-pr-merge never fast-forwards the primary checkout for a merge of an unrelated project"
 }
 
+test_github_path_segment_lookalike_never_touches_primary() {
+  local case_dir root rc before after
+  case_dir=$(make_case github-path-lookalike)
+  root=$(make_primary_fixture github-path-lookalike acme/firstmate \
+    file:///srv/github.com/acme/firstmate.git)
+  add_gh_mocks "$case_dir" 5555555555555555555555555555555555555555
+  : > "$case_dir/gh-axi.log"
+  before=$(git -C "$root" rev-parse HEAD)
+
+  set +e
+  run_pr_merge "$case_dir" "$root" task-x1 https://github.com/acme/firstmate/pull/45 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "github-path-lookalike: fm-pr-merge should succeed"
+  after=$(git -C "$root" rev-parse HEAD)
+  [ "$before" = "$after" ] \
+    || fail "github-path-lookalike: a non-GitHub origin containing github.com in its path triggered the self-update"
+  assert_not_contains "$(cat "$case_dir/stderr")" "SELF_UPDATE" \
+    "github-path-lookalike: a non-GitHub origin must never attempt or report the primary self-update"
+  pass "fm-pr-merge rejects a non-GitHub origin containing github.com in its path"
+}
+
+test_case_variant_github_host_triggers_fast_forward() {
+  local case_dir root rc before after
+  case_dir=$(make_case case-variant-host)
+  root=$(make_primary_fixture case-variant-host acme/firstmate \
+    https://GitHub.com/acme/firstmate.git)
+  add_gh_mocks "$case_dir" 6666666666666666666666666666666666666666
+  : > "$case_dir/gh-axi.log"
+  before=$(git -C "$root" rev-parse HEAD)
+
+  set +e
+  run_pr_merge "$case_dir" "$root" task-x1 https://github.com/acme/firstmate/pull/46 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "case-variant-host: fm-pr-merge should succeed"
+  after=$(git -C "$root" rev-parse HEAD)
+  [ "$before" != "$after" ] \
+    || fail "case-variant-host: a case-variant GitHub host did not trigger the primary self-update"
+  pass "fm-pr-merge accepts a case-variant GitHub host"
+}
+
 test_dirty_primary_blocked_without_failing_the_merge() {
   local case_dir root rc before after out
   case_dir=$(make_case dirty-repo)
@@ -214,5 +260,7 @@ test_merge_failure_never_attempts_self_update() {
 
 test_firstmate_repo_merge_triggers_fast_forward
 test_other_project_merge_never_touches_primary
+test_github_path_segment_lookalike_never_touches_primary
+test_case_variant_github_host_triggers_fast_forward
 test_dirty_primary_blocked_without_failing_the_merge
 test_merge_failure_never_attempts_self_update
