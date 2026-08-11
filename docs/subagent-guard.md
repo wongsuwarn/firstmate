@@ -134,21 +134,7 @@ It costs one line and removes the failure mode where a rename or a rollback sile
 ## Scope
 
 The shipped hook fires only in a genuine firstmate primary home, using the shared predicate `fm_primary_scope_matches` from `bin/fm-primary-scope-lib.sh`.
-`bin/fm-primary-scope.sh` is the executable adapter boundary for integrations that cannot source the shell library directly.
-Each tracked session-start, delegation, turn-end, and watcher integration listed below uses that predicate before it injects an instruction, blocks a tool or turn end, registers a watcher arm, exposes an away-mode affordance, or writes a primary marker.
-This keeps a linked task worktree inert even when it inherits a primary home's `FM_ROOT_OVERRIDE`, `FM_HOME`, or state path.
-
-| Harness | Tracked project-local primary integration | Linked task worktree result |
-| --- | --- | --- |
-| Claude | `.claude/settings.json` routes session start, delegation checks, the turn-end guard, and Stop auto-arm through scoped shell entrypoints. | Inert. |
-| Codex | `.codex/hooks.json` routes session start and Stop through scoped shell entrypoints. | Inert. |
-| Grok | `.grok/hooks/` routes session start and Stop through scoped shell entrypoints. | Inert. |
-| OpenCode | The nudge and turn-end plugins route through scoped shell entrypoints, and the watcher coordinator calls `bin/fm-primary-scope.sh` before it installs. | Inert. |
-| Pi and pi-signed | Both tracked primary extensions call `bin/fm-primary-scope.sh` before registering handlers, markers, or the watcher command and tool. | Inert. |
-| Kimi | Kimi has no tracked project-local primary integration. Its global token hook is crew-only. | Not applicable. |
-
-The first five rows propagate into this repository's linked worktrees because their hook or plugin configuration is tracked with the project.
-The Kimi row was inspected to make the non-applicability explicit rather than assumed.
+The cross-harness inventory and linked-worktree propagation boundary are owned by [architecture.md](architecture.md#tracked-primary-integration-scope).
 
 A home is in scope when it has `AGENTS.md`, a `bin/` directory, an existing state directory, and either a plain checkout where git-dir equals git-common-dir or a valid `.fm-secondmate-home` marker.
 A marked secondmate home is in scope on purpose: it operates its own fleet and must dispatch through it for the same durability reasons.
@@ -157,6 +143,7 @@ A crewmate's disposable task worktree is a linked git worktree, which is the sha
 A crewmate using delegation tools inside its own task worktree is legitimate and stays allowed.
 A non-firstmate repo is out of scope.
 Any failure to confirm the home is inert, never a block, so a broken environment can never deny a tool call.
+Inherited primary-home environment overrides cannot redirect this check away from the checkout that supplied the hook.
 
 A local Claude deny list is upstream of hook scope and removes known Claude delegation tools wherever Claude applies it.
 Do not put that list in tracked project settings, because linked worktrees inherit those settings and would lose legitimate delegation tools.
@@ -367,7 +354,7 @@ The live consequence is confirmed by the shipped-guard result above: Claude hono
 ## Automated validation
 
 `tests/fm-subagent-pretool-check.test.sh` owns the acceptance matrix and is registered in the `pure-contract-unit` family in `bin/fm-test-run.sh`.
-It covers the tracked Claude settings boundary that forbids a `permissions` key; the match-all Claude hook registration; denial of every work-creating delegation tool by shape; denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop, plan-only, and MCP exclusions; the exactness of the plan-only exclusion against six near-miss names a substring or shorter-stem widening would release; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree and in a non-firstmate repo; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
+It covers the tracked Claude settings boundary that forbids a `permissions` key; the match-all Claude hook registration; denial of every work-creating delegation tool by shape; denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop, plan-only, and MCP exclusions; the exactness of the plan-only exclusion against six near-miss names a substring or shorter-stem widening would release; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree with local or inherited primary-home paths and in a non-firstmate repo; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
 
 Run:
 
