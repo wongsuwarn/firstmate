@@ -193,7 +193,8 @@ DISPATCH_RESULTS=$(
     jq -R -s '[split("\n")[] | select(length > 0) | (fromjson? // empty)
       | select(type == "object" and (.request_id | type) == "string"
         and (.scope == "rule" or .scope == "default")
-        and (.index | type) == "number" and (.profile | type) == "number"
+        and (.profile_id | type) == "string"
+        and (.scope == "default" or (.rule_id | type) == "string")
         and (.ok | type) == "boolean" and (.message | type) == "string")][-100:]' \
       "$STATE_DIR/board-reply/dispatch-results.ndjson" 2>/dev/null || printf '[]\n'
   else
@@ -1369,12 +1370,10 @@ def dispatch_profile_cards($value):
 def dispatch_current_profile($result):
   ($dispatch.config // {}) as $config |
   (if $result.scope == "rule" then
-     if (($config.rules // [])[$result.index].when // null) != ($result.when // null) then null
-     else (($config.rules // [])[$result.index].use // null) end
+     ([($config.rules // [])[] | select(.id == $result.rule_id)] | first // null) as $rule |
+     ($rule.use // null)
    else ($config.default // null) end) as $value |
-  if ($value | type) == "array" then $value[$result.profile] // null
-  elif ($value | type) == "object" and $result.profile == 0 then $value
-  else null end;
+  [dispatch_profiles($value)[] | select(.id == $result.profile_id)] | first // null;
 
 def dispatch_result_current($result):
   dispatch_current_profile($result) as $profile |
@@ -1387,9 +1386,9 @@ def dispatch_result_current($result):
     and ($assignment.provider == ($profile.provider // null))
   end;
 
-def latest_dispatch_result($scope; $index):
+def latest_dispatch_result($scope; $rule_id):
   [($dispatch_results // [])[]
-    | select(.scope == $scope and .index == $index)
+    | select(.scope == $scope and (.rule_id // "") == $rule_id)
     | select(dispatch_result_current(.))] | last // null;
 
 def dispatch_result_banner($result):
@@ -1398,13 +1397,13 @@ def dispatch_result_banner($result):
   end;
 
 def dispatch_profile_option($profile; $position; $revision):
-  (@html "<option value=\"\($position)\" data-harness=\"\($profile.harness // "")\" data-model=\"\($profile.model // "")\" data-effort=\"\($profile.effort // "")\" data-revision=\"\($revision // "")\">Profile \($position + 1) - \($profile.harness // "unknown harness") / \($profile.model // "harness default")</option>");
+  (@html "<option value=\"\($profile.id)\" data-profile-id=\"\($profile.id)\" data-harness=\"\($profile.harness // "")\" data-model=\"\($profile.model // "")\" data-effort=\"\($profile.effort // "")\" data-revision=\"\($revision // "")\">Profile \($position + 1) - \($profile.harness // "unknown harness") / \($profile.model // "harness default")</option>");
 
-def dispatch_editor($scope; $index; $when; $value; $revisions):
+def dispatch_editor($scope; $rule_id; $when; $value; $revisions):
   dispatch_profiles($value) as $profiles |
-  latest_dispatch_result($scope; $index) as $result |
+  latest_dispatch_result($scope; $rule_id) as $result |
   if ($controls | not) or ($profiles | length) == 0 then "" else
-    (@html "<div class=\"rc dispatch-editor\" data-home=\"main\" data-id=\"dispatch-\($scope)-\($index)\" data-key=\"\" data-what=\"\(if $scope == "rule" then $when else "Default dispatch" end)\" data-dispatch-scope=\"\($scope)\" data-dispatch-index=\"\($index)\" data-dispatch-when=\"\($when)\" data-dispatch-rule-revision=\"\($revisions.rule // "")\">")
+    (@html "<div class=\"rc dispatch-editor\" data-home=\"main\" data-id=\"dispatch-\($scope)-\($rule_id)\" data-key=\"\" data-what=\"\(if $scope == "rule" then $when else "Default dispatch" end)\" data-dispatch-scope=\"\($scope)\" data-dispatch-rule-id=\"\($rule_id)\" data-dispatch-rule-revision=\"\($revisions.revision // "")\">")
     + dispatch_result_banner($result)
     + "<div class=\"rc-ok rc-quiet\" data-ok=\"dispatch\" hidden role=\"status\">"
     + icon_check + "<span class=\"rc-ok-t\"><strong class=\"rc-ok-h\"></strong>"
@@ -1414,7 +1413,7 @@ def dispatch_editor($scope; $index; $when; $value; $revisions):
     + "<p class=\"rc-q\">Change an existing profile. The board records this intent; firstmate validates the complete file before writing it.</p>"
     + "<label class=\"dispatch-field\"><span>Profile</span><select data-dispatch-profile data-dispatch-field>"
     + (([range(0; $profiles | length) as $position
-         | dispatch_profile_option($profiles[$position]; $position; $revisions.profiles[$position])] | add) // "")
+         | dispatch_profile_option($profiles[$position]; $position; ([($revisions.profiles // [])[] | select(.id == $profiles[$position].id)] | first | .revision))] | add) // "")
     + "</select></label>"
     + (@html "<label class=\"dispatch-field\"><span>Model</span><input type=\"text\" maxlength=\"300\" data-dispatch-model data-dispatch-field value=\"\($profiles[0].model // "")\" placeholder=\"Harness default\"></label>")
     + "<label class=\"dispatch-field\"><span>Effort</span><select data-dispatch-effort data-dispatch-field>"
@@ -1443,11 +1442,12 @@ def dispatch_rule_row($rule; $index):
      else " <span aria-hidden=\"true\">&middot;</span> No fallback" end)
   + "</p>"
   + (if $rule | has("fallback") then
-      "<details class=\"dispatch-more\"><summary>Fallback assignment</summary>"
-      + dispatch_profile_cards($rule.fallback) + "</details>" else "" end)
+      "<div class=\"dispatch-fallback\"><h5>Configured fallback</h5>"
+      + dispatch_profile_cards($rule.fallback) + "</div>" else "" end)
   + (if ($rule.why // "") == "" then ""
      else (@html "<details class=\"dispatch-more\"><summary>Why this rule exists</summary><p>\($rule.why)</p></details>") end)
-  + dispatch_editor("rule"; $index; $rule.when; $rule.use; $dispatch.revisions.rules[$index])
+  + dispatch_editor("rule"; $rule.id; $rule.when; $rule.use;
+      ([($dispatch.revisions.rules // [])[] | select(.id == $rule.id)] | first))
   + "</article>";
 
 def dispatch_default_row($config):
@@ -1463,10 +1463,10 @@ def dispatch_default_row($config):
         + ((dispatch_profiles($config.default_fallback) | length) | tostring)
         + " outage fallback "
         + (if (dispatch_profiles($config.default_fallback) | length) == 1 then "profile" else "profiles" end)
-        + "</p><details class=\"dispatch-more\"><summary>Default fallback assignment</summary>"
-        + dispatch_profile_cards($config.default_fallback) + "</details>"
+        + "</p><div class=\"dispatch-fallback\"><h5>Configured default fallback</h5>"
+        + dispatch_profile_cards($config.default_fallback) + "</div>"
       else "<p class=\"dispatch-summary\">No default fallback</p>" end)
-    + dispatch_editor("default"; 0; ""; $config.default; $dispatch.revisions.default)
+    + dispatch_editor("default"; ""; ""; $config.default; $dispatch.revisions.default)
     + "</article>"
   end;
 
@@ -1481,7 +1481,7 @@ def dispatch_block:
   else
     ($dispatch.config // {}) as $config |
     "<div class=\"dispatch-pane\"><div class=\"dispatch-state dispatch-valid\"><strong>Active and valid</strong><span>Validated during this board render</span></div>"
-    + "<p class=\"dispatch-note\">Firstmate matches these natural-language task types at intake. Explicit per-task spawn overrides remain higher precedence. Secondmate homes receive this same file when it is pushed.</p>"
+    + "<p class=\"dispatch-note\">Firstmate matches these natural-language task types at intake. Explicit per-task spawn overrides remain higher precedence. Secondmate homes receive this same file when it is pushed. <a href=\"#allowance\">Model-provider allowance and pace appear below.</a></p>"
     + "<div class=\"dispatch-list\">"
     + (([range(0; (($config.rules // []) | length)) as $index
         | dispatch_rule_row($config.rules[$index]; $index)] | add) // "")
@@ -2578,6 +2578,8 @@ a.ship:hover{background:#fbfcfe;}
 .dispatch-profile dt{color:var(--faint);font-size:10px;}
 .dispatch-profile dd{margin:0;color:var(--ink);font-family:var(--mono);font-size:10.5px;overflow-wrap:anywhere;}
 .dispatch-summary{margin:10px 0 0;color:var(--faint);font-size:11px;}
+.dispatch-fallback{margin-top:10px;padding:10px;border:1px solid #d9e0e9;border-radius:11px;background:#f8fafc;}
+.dispatch-fallback h5{margin:0 0 8px;color:var(--slate);font-size:10.5px;font-weight:700;letter-spacing:.02em;}
 .dispatch-more,.dispatch-raw{margin-top:9px;color:var(--muted);font-size:11.5px;}
 .dispatch-more summary,.dispatch-raw summary{cursor:pointer;color:var(--slate);font-weight:620;}
 .dispatch-more p{margin:7px 0 0;overflow-wrap:anywhere;}
@@ -2621,6 +2623,8 @@ a.ship:hover{background:#fbfcfe;}
    Mission Control summary. One allowance number leads each card, with pace,
    runway, observed trend, and balancing activity subordinate to that number. */
 .allowance-pane{padding:18px 18px 16px;}
+.system-link{margin:0 0 10px;color:var(--muted);font-size:11px;}
+.system-link a,.dispatch-note a{color:var(--slate);font-weight:620;text-decoration-color:#aeb8c6;text-underline-offset:2px;}
 .qmeta{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;margin:-3px 0 12px;
   color:var(--faint);font-size:11px;}
 .qmeta span:first-child{color:var(--slate);font-weight:600;}
@@ -2923,8 +2927,8 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
 + (@html "<h3>Fleet health<span class=\"count\">\(if $health_count > 0 then "\($health_count) \(plural($health_count; "item"; "items"))\(if $health_incomplete or ($backlog_present | not) then "+" else "" end)" elif $health_incomplete or ($backlog_present | not) then "incomplete" else "all clear" end)</span></h3>")
 + health_block
 + "    </div>
-    <div class=\"pane allowance-pane\">
-      <h3>Allowance &amp; pace</h3>"
+    <div class=\"pane allowance-pane\" id=\"allowance\">
+      <h3>Model-provider allowance &amp; pace</h3><p class=\"system-link\"><a href=\"#dispatch\">Dispatch assignments above use these provider budgets.</a></p>"
 + quota_block
 + "    </div>
   </section>
@@ -3535,21 +3539,42 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   }
   function dispatchValues(form) {
     if (!form || form.getAttribute(\"data-intent\") !== \"dispatch\") { return null; }
+    var block = form.closest(\".dispatch-editor\");
     var profile = form.querySelector(\"[data-dispatch-profile]\");
+    var option = profile && profile.options[profile.selectedIndex];
     var model = form.querySelector(\"[data-dispatch-model]\");
     var effort = form.querySelector(\"[data-dispatch-effort]\");
-    return {profile:profile ? profile.value : \"0\", model:model ? model.value : \"\",
-      effort:effort ? effort.value : \"\"};
+    var target = form._fmDispatchTarget || {
+      ruleId:block ? (block.getAttribute(\"data-dispatch-rule-id\") || \"\") : \"\",
+      profileId:option ? (option.getAttribute(\"data-profile-id\") || \"\") : \"\",
+      ruleRevision:block ? (block.getAttribute(\"data-dispatch-rule-revision\") || \"\") : \"\",
+      profileRevision:option ? (option.getAttribute(\"data-revision\") || \"\") : \"\"
+    };
+    form._fmDispatchTarget = target;
+    return {ruleId:target.ruleId,profileId:target.profileId,
+      ruleRevision:target.ruleRevision,profileRevision:target.profileRevision,
+      model:model ? model.value : \"\",effort:effort ? effort.value : \"\"};
   }
   function restoreDispatchValues(form, values) {
-    if (!values || typeof values !== \"object\" || Array.isArray(values)) { return; }
+    if (!values || typeof values !== \"object\" || Array.isArray(values)) { return true; }
+    var block = form.closest(\".dispatch-editor\");
     var profile = form.querySelector(\"[data-dispatch-profile]\");
     var model = form.querySelector(\"[data-dispatch-model]\");
     var effort = form.querySelector(\"[data-dispatch-effort]\");
-    if (profile && typeof values.profile === \"string\") { profile.value = values.profile; }
+    var option = profile && Array.prototype.find.call(profile.options, function (candidate) {
+      return candidate.getAttribute(\"data-profile-id\") === values.profileId;
+    });
+    if (!block || !option || typeof values.ruleId !== \"string\"
+        || values.ruleId !== (block.getAttribute(\"data-dispatch-rule-id\") || \"\")
+        || values.ruleRevision !== (block.getAttribute(\"data-dispatch-rule-revision\") || \"\")
+        || values.profileRevision !== (option.getAttribute(\"data-revision\") || \"\")) { return false; }
+    profile.value = values.profileId;
     syncDispatchFields(form);
+    form._fmDispatchTarget = {ruleId:values.ruleId,profileId:values.profileId,
+      ruleRevision:values.ruleRevision,profileRevision:values.profileRevision};
     if (model && typeof values.model === \"string\") { model.value = values.model; }
     if (effort && typeof values.effort === \"string\") { effort.value = values.effort; }
+    return true;
   }
   function labelFactRefusal(form, message) {
     var prefix = [\"answer needs required fact: \", \"answer needs required facts: \"].find(function (candidate) {
@@ -3648,8 +3673,9 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   }
   function restoreDrafts() {
     var records = storedDrafts();
+    var discarded = {};
     records.forEach(function (record) {
-      Array.prototype.some.call(document.querySelectorAll(\".rc\"), function (block) {
+      var matched = Array.prototype.some.call(document.querySelectorAll(\".rc\"), function (block) {
         var form = formsIn(block).find(function (candidate) {
           return draftIdentity(block, candidate.getAttribute(\"data-intent\") || \"\") === record.identity;
         });
@@ -3660,7 +3686,11 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         var area = form.querySelector(\".rc-t\");
         if (area && typeof record.note === \"string\") { area.value = record.note; }
         restoreFactValues(form, record.facts);
-        restoreDispatchValues(form, record.dispatch);
+        if (!restoreDispatchValues(form, record.dispatch)) {
+          discarded[record.identity] = true;
+          say(block, \"Saved assignment draft discarded - its rule or profile changed.\", true);
+          return true;
+        }
         if (record.open && form.hasAttribute(\"data-toggle\")) { shut(block); form.hidden = false; }
         if (record.queued && typeof record.queued.payload === \"string\"
             && typeof record.queued.note === \"string\"
@@ -3675,7 +3705,15 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
         }
         return true;
       });
+      if (!matched && record && record.dispatch) { discarded[record.identity] = true; }
     });
+    if (Object.keys(discarded).length) {
+      records = records.filter(function (record) { return !discarded[record.identity]; });
+      try {
+        if (records.length) { window.sessionStorage.setItem(draftKey, JSON.stringify(records)); }
+        else { window.sessionStorage.removeItem(draftKey); }
+      } catch (e) { /* stale draft remains unavailable to this page */ }
+    }
     saveDrafts(true);
   }
 
@@ -3928,19 +3966,16 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     var id = block.getAttribute(\"data-id\");
     var key = block.getAttribute(\"data-key\");
     if (request.intent === \"dispatch\") {
-      var profileField = form.querySelector(\"[data-dispatch-profile]\");
       var modelField = form.querySelector(\"[data-dispatch-model]\");
       var effortField = form.querySelector(\"[data-dispatch-effort]\");
+      var dispatch = dispatchValues(form);
       request.scope = block.getAttribute(\"data-dispatch-scope\") || \"\";
-      request.index = Number(block.getAttribute(\"data-dispatch-index\"));
-      request.profile = Number(profileField && profileField.value);
-      var selectedProfile = profileField && profileField.options[profileField.selectedIndex];
-      if (request.scope === \"rule\") { request.when = block.getAttribute(\"data-dispatch-when\") || \"\"; }
+      if (request.scope === \"rule\") { request.rule_id = dispatch.ruleId; }
+      request.profile_id = dispatch.profileId;
       request.model = ((modelField && modelField.value) || \"\").replace(/^\\s+|\\s+$/g, \"\");
       request.effort = (effortField && effortField.value) || \"\";
-      request.expected_rule_revision = block.getAttribute(\"data-dispatch-rule-revision\") || \"\";
-      request.expected_profile_revision = selectedProfile
-        ? (selectedProfile.getAttribute(\"data-revision\") || \"\") : \"\";
+      request.expected_rule_revision = dispatch.ruleRevision;
+      request.expected_profile_revision = dispatch.profileRevision;
       if (!form._fmDispatchRequestId) {
         form._fmDispatchRequestId = newAttempt().replace(/^fm-board:/, \"fm-dispatch-\");
       }
@@ -4101,6 +4136,13 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
     var note = form.querySelector(\".dispatch-harness-note\");
     if (model) { model.value = option.getAttribute(\"data-model\") || \"\"; }
     if (effort) { effort.value = option.getAttribute(\"data-effort\") || \"\"; }
+    var block = form.closest(\".dispatch-editor\");
+    form._fmDispatchTarget = {
+      ruleId:block ? (block.getAttribute(\"data-dispatch-rule-id\") || \"\") : \"\",
+      profileId:option.getAttribute(\"data-profile-id\") || \"\",
+      ruleRevision:block ? (block.getAttribute(\"data-dispatch-rule-revision\") || \"\") : \"\",
+      profileRevision:option.getAttribute(\"data-revision\") || \"\"
+    };
     if (note) {
       note.textContent = \"Harness stays \" + (option.getAttribute(\"data-harness\") || \"as configured\")
         + \". An explicit per-task spawn override still takes precedence.\";

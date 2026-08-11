@@ -610,8 +610,10 @@ record_dispatch_result() {  # <request-json> <ok-json> <message> <assignment-jso
   body=$(jq -nc --arg ts "$(LC_ALL=C date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     --argjson request "$request" --argjson ok "$ok" --arg message "$message" \
     --argjson assignment "$assignment" \
-    '{ts:$ts,request_id:$request.request_id,scope:$request.scope,index:$request.index,
-      profile:$request.profile,when:($request.when // null),model:$request.model,
+    '{ts:$ts,request_id:$request.request_id,scope:$request.scope,
+      rule_id:($request.rule_id // null),profile_id:$request.profile_id,model:$request.model,
+      expected_rule_revision:$request.expected_rule_revision,
+      expected_profile_revision:$request.expected_profile_revision,
       effort:$request.effort,ok:$ok,message:$message,assignment:$assignment}') \
     || return 1
   if ! printf '%s\n' "$body" >> "$DISPATCH_RESULTS"; then return 1; fi
@@ -619,7 +621,7 @@ record_dispatch_result() {  # <request-json> <ok-json> <message> <assignment-jso
 }
 
 cmd_apply() {
-  local file=${1-} records record kind intent home id target_home reason staged assignment message
+  local file=${1-} records record kind intent home id target_home reason staged assignment message prior
   local applied=0 failed=0
   [ "$#" -eq 1 ] || usage
   [ -f "$file" ] || die "result file does not exist: $file"
@@ -653,6 +655,28 @@ cmd_apply() {
     intent=$(printf '%s' "$record" | jq -r '.intent // ""')
     if [ "$intent" = dispatch ]; then
       [ -f "$CREW_DISPATCH" ] || die "dispatch lifecycle command not found: $CREW_DISPATCH"
+      prior=''
+      if [ -f "$DISPATCH_RESULTS" ] && [ ! -L "$DISPATCH_RESULTS" ]; then
+        prior=$(jq -R -s --argjson request "$record" '
+          [split("\n")[] | select(length > 0) | (fromjson? // empty)
+            | select(.ok == true and .request_id == $request.request_id)] | last // empty
+        ' "$DISPATCH_RESULTS" 2>/dev/null) || die "could not read prior dispatch results"
+      fi
+      if [ -n "$prior" ]; then
+        if jq -ne --argjson prior "$prior" --argjson request "$record" '
+            [$prior.scope, ($prior.rule_id // null), $prior.profile_id, $prior.model, $prior.effort,
+             $prior.expected_rule_revision, $prior.expected_profile_revision]
+            == [$request.scope, ($request.rule_id // null), $request.profile_id, $request.model, $request.effort,
+                $request.expected_rule_revision, $request.expected_profile_revision]' >/dev/null; then
+          message=$(printf '%s' "$prior" | jq -r '.message')
+          printf '%s\n' "$message"
+          applied=$((applied + 1))
+          continue
+        fi
+        printf 'unapplyable dispatch edit: request identity was already used for another assignment\n' >&2
+        failed=$((failed + 1))
+        continue
+      fi
       staged=$(umask 077; mktemp "$REQUEST_DIR/.dispatch.XXXXXX") || die "could not stage dispatch edit"
       if ! printf '%s' "$record" | jq -cS . > "$staged"; then
         rm -f -- "$staged"

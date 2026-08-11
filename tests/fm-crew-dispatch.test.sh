@@ -31,25 +31,27 @@ write_dispatch_fixture() {
 {
   "rules": [
     {
+      "id": "visual-ui",
       "when": "visual browser work with a deliberately long task type that must wrap without hiding its assignment at phone width",
       "use": [
-        {"harness":"codex","model":"gpt-5.5","effort":"high","provider":"openai"},
-        {"harness":"claude","model":"claude-sonnet-5","effort":"xhigh","provider":"anthropic"}
+        {"id":"visual-codex","harness":"codex","model":"gpt-5.5","effort":"high","provider":"openai"},
+        {"id":"visual-claude","harness":"claude","model":"claude-sonnet-5","effort":"xhigh","provider":"anthropic"}
       ],
-      "fallback": {"harness":"pi","model":"anthropic/claude-sonnet-5","effort":"high"},
+      "fallback": {"id":"visual-pi-fallback","harness":"pi","model":"anthropic/claude-sonnet-5","effort":"high"},
       "independent": true,
       "why": "Browser verification benefits from the isolated visual tool session."
     },
     {
+      "id": "small-docs",
       "when": "small documentation corrections",
-      "use": {"harness":"claude","model":"claude-haiku-4-5","effort":"low"}
+      "use": {"id":"small-docs-claude","harness":"claude","model":"claude-haiku-4-5","effort":"low"}
     }
   ],
   "default": [
-    {"harness":"pi","model":"anthropic/claude-sonnet-5","effort":"high"},
-    {"harness":"grok","model":"grok-4.5","effort":"high"}
+    {"id":"default-pi","harness":"pi","model":"anthropic/claude-sonnet-5","effort":"high"},
+    {"id":"default-grok","harness":"grok","model":"grok-4.5","effort":"high"}
   ],
-  "default_fallback": {"harness":"claude","model":"claude-sonnet-5","effort":"high"}
+  "default_fallback": {"id":"default-claude-fallback","harness":"claude","model":"claude-sonnet-5","effort":"high"}
 }
 JSON
 }
@@ -75,9 +77,9 @@ status=$($DISPATCH status "$CONFIG") || fail "a valid multi-rule fixture must ha
   || fail "the status read flattened a profile array"
 [ "$(printf '%s' "$status" | jq -r '.config.default | length')" = 2 ] \
   || fail "the status read flattened the default profile array"
-[ "$(printf '%s' "$status" | jq -r '.revisions.rules[0].rule | length')" = 64 ] \
+[ "$(printf '%s' "$status" | jq -r '.revisions.rules[0].revision | length')" = 64 ] \
   || fail "the status read did not revision each rule"
-[ "$(printf '%s' "$status" | jq -r '.revisions.rules[0].profiles[1] | length')" = 64 ] \
+[ "$(printf '%s' "$status" | jq -r '.revisions.rules[0].profiles[1].revision | length')" = 64 ] \
   || fail "the status read did not revision each profile"
 pass "dispatch status preserves multi-rule and quota-array fixtures"
 
@@ -97,6 +99,15 @@ assert_grep '<h4>small documentation corrections</h4>' "$READ_ONLY" \
 assert_no_grep 'class="dispatch-when"' "$READ_ONLY" \
   "a rule must not repeat its task type below the heading"
 assert_grep '>Why this rule exists</summary>' "$READ_ONLY" "a rationale must stay collapsed"
+assert_grep '<h5>Configured fallback</h5>' "$READ_ONLY" "a rule fallback must remain visible"
+assert_grep '<dt>Model</dt><dd>anthropic/claude-sonnet-5</dd>' "$READ_ONLY" \
+  "a configured fallback model must be visible"
+assert_grep '<h5>Configured default fallback</h5>' "$READ_ONLY" \
+  "the default fallback must remain visible"
+assert_grep 'Model-provider allowance and pace appear below.' "$READ_ONLY" \
+  "dispatch must link to its related provider allowance surface"
+assert_grep 'Dispatch assignments above use these provider budgets.' "$READ_ONLY" \
+  "provider allowance must link back to dispatch"
 assert_grep '>Raw crew-dispatch.json</summary>' "$READ_ONLY" "raw JSON must be expandable rather than primary"
 assert_grep 'Secondmate homes receive this same file when it is pushed.' "$READ_ONLY" \
   "the board must state the inherited-file relationship"
@@ -108,6 +119,16 @@ FM_CONFIG_OVERRIDE="$HOME_DIR/config" "$BOARD" --snapshot "$SNAPSHOT" --no-quota
 editors=$(grep -o 'data-intent="dispatch"' "$CONTROLLED" | wc -l | tr -d ' ')
 [ "$editors" = 3 ] || fail "two rules and the default must each get one bounded editor, got $editors"
 assert_grep 'data-dispatch-profile' "$CONTROLLED" "an array editor must identify a selected existing profile"
+assert_grep 'data-dispatch-rule-id="visual-ui"' "$CONTROLLED" \
+  "a rule editor must carry its stable rule identity"
+assert_grep 'data-profile-id="visual-codex"' "$CONTROLLED" \
+  "a profile option must carry its stable profile identity"
+assert_grep 'return {ruleId:target.ruleId,profileId:target.profileId' "$CONTROLLED" \
+  "a persisted dispatch draft must retain stable identities"
+assert_grep 'values.ruleRevision !== (block.getAttribute("data-dispatch-rule-revision")' "$CONTROLLED" \
+  "a persisted dispatch draft must refuse a changed rule revision"
+assert_grep 'request.expected_rule_revision = dispatch.ruleRevision' "$CONTROLLED" \
+  "dispatch submission must use the draft-bound rule revision"
 rendered_rule_revision=$(sed -n 's/.*data-dispatch-rule-revision="\([0-9a-f]*\)".*/\1/p' "$CONTROLLED" | head -1)
 [ "${#rendered_rule_revision}" -eq 64 ] || fail "an editor must carry the rendered rule revision"
 rendered_profile_revision=$(sed -n 's/.*data-revision="\([0-9a-f]*\)".*/\1/p' "$CONTROLLED" | head -1)
@@ -131,7 +152,7 @@ assert_grep 'No crew dispatch file is active in this home.' "$TMP_ROOT/missing.h
 pass "a missing crew dispatch file renders an explicit inactive state"
 
 cp "$CONFIG" "$TMP_ROOT/valid-dispatch.json"
-printf '%s\n' '{"rules":[{"when":"broken quota choice","use":[]}]}' > "$CONFIG"
+printf '%s\n' '{"rules":[{"id":"broken","when":"broken quota choice","use":[]}]}' > "$CONFIG"
 invalid_status=$($DISPATCH status "$CONFIG") || fail "an invalid profile array must still return board status"
 [ "$(printf '%s' "$invalid_status" | jq -r '.status')" = invalid ] \
   || fail "an empty profile array was not reported invalid"
@@ -146,10 +167,10 @@ pass "a malformed profile array renders the existing validator refusal without b
 
 VALID_RESULT="$TMP_ROOT/valid.result"
 valid_request=$(printf '%s' "$status" | jq -c \
-  '{v:1,intent:"dispatch",home:"main",scope:"rule",index:0,profile:1,
-    when:.config.rules[0].when,model:"claude-opus-5",effort:"max",request_id:"dispatch-valid-one",
-    expected_rule_revision:.revisions.rules[0].rule,
-    expected_profile_revision:.revisions.rules[0].profiles[1]}') \
+  '{v:1,intent:"dispatch",home:"main",scope:"rule",rule_id:.config.rules[0].id,
+    profile_id:.config.rules[0].use[1].id,model:"claude-opus-5",effort:"max",request_id:"dispatch-valid-one",
+    expected_rule_revision:.revisions.rules[0].revision,
+    expected_profile_revision:.revisions.rules[0].profiles[1].revision}') \
   || fail "could not build a revision-bound valid request"
 capture_request "$VALID_RESULT" "FM-BOARD-REQUEST $valid_request"
 FM_HOME="$HOME_DIR" "$REPLY" apply "$VALID_RESULT" > "$TMP_ROOT/valid.out" \
@@ -171,12 +192,64 @@ cmp -s "$TMP_ROOT/before-replay.json" "$CONFIG" \
   || fail "a replayed successful dispatch intent rewrote the source"
 pass "a replayed applied request is idempotent"
 
+jq '(.rules[] | select(.id == "visual-ui").use[] | select(.id == "visual-claude"))
+  |= (.harness = "pi" | .provider = "changed-provider")' "$CONFIG" > "$TMP_ROOT/changed-target.json" \
+  || fail "could not stage the changed replay target"
+mv "$TMP_ROOT/changed-target.json" "$CONFIG"
+cp "$CONFIG" "$TMP_ROOT/before-changed-replay.json"
+FM_HOME="$HOME_DIR" "$REPLY" apply "$VALID_RESULT" > "$TMP_ROOT/changed-replay.out" \
+  || fail "a recorded successful request must replay without applying again"
+cmp -s "$TMP_ROOT/before-changed-replay.json" "$CONFIG" \
+  || fail "a successful replay changed the later stable target"
+assert_grep 'Assignment updated: claude / claude-opus-5 / max.' "$TMP_ROOT/changed-replay.out" \
+  "a successful replay must return its recorded result rather than a changed assignment"
+cp "$TMP_ROOT/before-replay.json" "$CONFIG"
+
+collision_request=$(printf '%s' "$status" | jq -c \
+  '{v:1,intent:"dispatch",home:"main",scope:"rule",rule_id:.config.rules[0].id,
+    profile_id:.config.rules[0].use[1].id,model:"different-model",effort:"max",request_id:"dispatch-valid-one",
+    expected_rule_revision:.revisions.rules[0].revision,
+    expected_profile_revision:.revisions.rules[0].profiles[1].revision}') \
+  || fail "could not build a request-identity collision"
+COLLISION_RESULT="$TMP_ROOT/collision.result"
+capture_request "$COLLISION_RESULT" "FM-BOARD-REQUEST $collision_request"
+cp "$CONFIG" "$TMP_ROOT/before-collision.json"
+if FM_HOME="$HOME_DIR" "$REPLY" apply "$COLLISION_RESULT" > "$TMP_ROOT/collision.out" 2> "$TMP_ROOT/collision.err"; then
+  fail "a successful request identity reused for another payload must be rejected"
+fi
+cmp -s "$TMP_ROOT/before-collision.json" "$CONFIG" \
+  || fail "a request-identity collision changed the source"
+assert_grep 'request identity was already used' "$TMP_ROOT/collision.err" \
+  "a request-identity collision must explain its refusal"
+pass "replay requires the prior successful stable target payload"
+
+reorder_status=$($DISPATCH status "$CONFIG") || fail "could not read revisions before rule-reorder coverage"
+reorder_request=$(printf '%s' "$reorder_status" | jq -c \
+  '{v:1,intent:"dispatch",home:"main",scope:"rule",rule_id:.config.rules[1].id,
+    profile_id:.config.rules[1].use.id,model:"claude-haiku-4-6",effort:"low",request_id:"dispatch-reordered-rule",
+    expected_rule_revision:.revisions.rules[1].revision,
+    expected_profile_revision:.revisions.rules[1].profiles[0].revision}') \
+  || fail "could not build a stable rule-reorder request"
+REORDER_RESULT="$TMP_ROOT/reorder.result"
+capture_request "$REORDER_RESULT" "FM-BOARD-REQUEST $reorder_request"
+jq '.rules |= reverse' "$CONFIG" > "$TMP_ROOT/reordered-rules.json" \
+  || fail "could not stage reordered rules"
+mv "$TMP_ROOT/reordered-rules.json" "$CONFIG"
+FM_HOME="$HOME_DIR" "$REPLY" apply "$REORDER_RESULT" > "$TMP_ROOT/reorder.out" \
+  || fail "stable identities must survive rule reordering"
+[ "$(jq -r '.rules[] | select(.id == "small-docs").use.model' "$CONFIG")" = claude-haiku-4-6 ] \
+  || fail "rule reordering redirected the stable-id edit"
+jq '.rules |= reverse' "$CONFIG" > "$TMP_ROOT/restored-rules.json" \
+  || fail "could not restore rule order"
+mv "$TMP_ROOT/restored-rules.json" "$CONFIG"
+pass "stable identities target the same rule after reordering"
+
 stale_status=$($DISPATCH status "$CONFIG") || fail "could not read revisions before stale-edit coverage"
 stale_request=$(printf '%s' "$stale_status" | jq -c \
-  '{v:1,intent:"dispatch",home:"main",scope:"rule",index:0,profile:0,
-    when:.config.rules[0].when,model:"gpt-5.6",effort:"high",request_id:"dispatch-stale-one",
-    expected_rule_revision:.revisions.rules[0].rule,
-    expected_profile_revision:.revisions.rules[0].profiles[0]}') \
+  '{v:1,intent:"dispatch",home:"main",scope:"rule",rule_id:.config.rules[0].id,
+    profile_id:.config.rules[0].use[0].id,model:"gpt-5.6",effort:"high",request_id:"dispatch-stale-one",
+    expected_rule_revision:.revisions.rules[0].revision,
+    expected_profile_revision:.revisions.rules[0].profiles[0].revision}') \
   || fail "could not build a revision-bound stale request"
 STALE_RESULT="$TMP_ROOT/stale.result"
 capture_request "$STALE_RESULT" "FM-BOARD-REQUEST $stale_request"
@@ -199,10 +272,10 @@ pass "rule and profile revisions reject reordered stale targets"
 BAD_RESULT="$TMP_ROOT/bad.result"
 bad_status=$($DISPATCH status "$CONFIG") || fail "could not read revisions before invalid-edit coverage"
 bad_request=$(printf '%s' "$bad_status" | jq -c \
-  '{v:1,intent:"dispatch",home:"main",scope:"default",index:0,profile:1,
+  '{v:1,intent:"dispatch",home:"main",scope:"default",profile_id:.config.default[1].id,
     model:"grok-4.5",effort:"max",request_id:"dispatch-invalid-one",
-    expected_rule_revision:.revisions.default.rule,
-    expected_profile_revision:.revisions.default.profiles[1]}') \
+    expected_rule_revision:.revisions.default.revision,
+    expected_profile_revision:.revisions.default.profiles[1].revision}') \
   || fail "could not build a revision-bound invalid request"
 capture_request "$BAD_RESULT" "FM-BOARD-REQUEST $bad_request"
 cp "$CONFIG" "$TMP_ROOT/before-invalid.json"

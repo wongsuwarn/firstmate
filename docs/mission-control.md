@@ -84,12 +84,13 @@ The stage itself is derived by the snapshot rather than by the board; see `bin/f
   That bar names the count as blocked or failed while those are the only kind present, and widens to fleet health items once a held secondmate item or an incomplete decision joins them.
 - **Dispatch** shows the live `config/crew-dispatch.json` in the System view without making the board a second schema owner.
   It states whether the optional file is absent, valid, invalid, or unavailable and says that the verdict was checked during the current render.
-  Each natural-language rule and the default show their profile count, harness, model, effort, optional provider, quota-array shape, independence and fallback summary, and a collapsed rationale when one exists.
+  Each natural-language rule and the default show their profile count, harness, model, effort, optional provider, quota-array shape, independence and fallback summary, every configured fallback assignment, and a collapsed rationale when one exists.
   The full condition stays readable without sharing a horizontal row with the assignment, so a long task type cannot push the model out of view at phone width.
   Raw JSON remains available only in an expandable shelf.
   The canonical schema and all field semantics remain in [`docs/configuration.md`](configuration.md#crew-dispatch-profiles-configcrew-dispatchjson).
   The view also notes that secondmate homes receive this same file when inherited configuration is pushed.
-- **Allowance & pace** integrates the local Token Dashboard into the System view rather than repeating its numbers in a separate dashboard-shaped panel.
+- **Model-provider allowance & pace** integrates the local Token Dashboard into the System view rather than repeating its numbers in a separate dashboard-shaped panel.
+  Reciprocal links connect this provider-budget surface with Dispatch directly above it without adding routing or selection logic.
   Each primary allowance window leads with current remaining allowance, then keeps pace against the reset, observed cycle history, and projected runway or exhaustion in one compact card.
   Recent automatic balancing is a quiet collapsed shelf under those cards, so its activity remains visible without becoming another monitoring feed.
   Mission Control consumes normalized allowance windows, bounded history, pace thresholds, and the safe balancing summary from the Token Dashboard API, adding a narrowed live Grok window set from `quota-axi` only while that source has no Grok windows.
@@ -147,11 +148,13 @@ There are six general controls plus the System view's bounded Dispatch editor, a
 
 The Dispatch editor appears only when `--controls` is enabled and the direct board-reply service proves it is live.
 It never appears through the legacy Lavish bridge, a plain static server, or `file://`.
-The profile selector chooses only among profiles already present in the selected rule or default, and v1 cannot add, delete, reorder, change `when`, or change a harness.
+The profile selector chooses only among profiles already present in the selected rule or default, and v1 cannot add, delete, reorder, change an id, change `when`, or change a harness.
 Submitting it records one `dispatch` request through the shared board vocabulary and does not edit configuration in the page or service.
 Firstmate collects that request with `bin/fm-procevent-board-reply.sh apply`, which delegates the candidate to `bin/fm-crew-dispatch.sh` before acknowledging its wake.
-That command checks the rendered rule and profile revisions, changes only the requested existing profile, validates the complete candidate with the same dispatch validator bootstrap uses, and atomically promotes only a valid file.
+That command resolves the canonical stable rule and profile ids, checks their rendered revisions, changes only the requested existing profile, validates the complete candidate with the same dispatch validator bootstrap uses, and atomically promotes only a valid file.
 A stale rule, malformed profile array, unverified harness already present in the candidate, or unsupported effort leaves the file unchanged.
+An open assignment draft retains the stable ids and revisions it began with and is discarded after regeneration if either object changed, so it can never bind itself to a newly occupying position.
+The collector treats a repeated request as successful only when its request id and complete stable target payload match an already recorded successful result.
 The collector records the applied assignment or refusal in private board state, and the next board regeneration shows that outcome beside the same task type.
 An explicit per-task harness, model, or effort at spawn remains higher precedence than this default file.
 
@@ -349,6 +352,8 @@ Fleet prose is checked to stay escaped inside the attributes a control carries.
 A real-browser regression also covers exact and fallback Answer prompts, explicit quick answers beside the free-text path, fielded fact intake and its fallback cases, structured submission with overflow context, the per-decision entry into the one shared Ask-firstmate composer, main-home and secondmate decision links, malformed and hostile inputs, successful and failed sends, duplicate prevention, acknowledgement restoration and retirement, active-tab restoration, stable reading anchors, explicit-navigation precedence, and disappeared-anchor fallback.
 It renders two fresh board copies from one durable request log and measures the recorded quiet banners, answered-row ordering, shared composer, Deferred shelf, exact cross-home identity, and quick-answer controls at 1280px and 390px.
 It also proves that a quick answer and a typed answer emit the same validated `answer` intent with only their note text differing.
+
+`tests/fm-crew-dispatch.test.sh` covers stable rule and profile ids, stale revisions, position-independent targeting, successful-request replay, request-id collisions, complete candidate validation, visible fallback assignments, the reciprocal allowance relationship, and read-only versus direct-service edit availability.
 
 `tests/fm-board-reply.test.sh` covers the direct transport with no Lavish anywhere.
 It re-proves every fail-closed rule at the service door and again at wake time, refuses a cross-site write and a non-loopback bind, holds captain text that looks like the wire format inside its own field, and pins the properties the cursor design rests on: a delta discarded before capture is re-derived byte for byte, a capture truncated before its end sentinel records no cursor and loses nothing, a captured delta advances the cursor so nothing is announced twice, a request accepted before arming survives to the next arm, one retried attempt is recorded once, and a broken cursor escalates exactly once with rebase as the recovery.

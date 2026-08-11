@@ -188,6 +188,7 @@ sub duplicate_object_key {
 }
 
 my $SAFE_ID = qr/\A[A-Za-z0-9._-]{1,120}\z/;
+my $STABLE_ID = qr/\A[A-Za-z0-9][A-Za-z0-9._-]{0,119}\z/;
 
 # Exactly which fields each intent may carry, per direction. An intent is refused
 # outright if it carries anything else, so a field that means nothing for that
@@ -199,9 +200,9 @@ my %SPEC = (
   defer  => {need => ["id"],         allow => ["id", "key"]},
   ask    => {need => ["note"],       allow => ["note"]},
   file     => {need => ["note"], allow => ["note"]},
-  dispatch => {need => ["scope", "index", "profile", "model", "effort", "request_id",
+  dispatch => {need => ["scope", "profile_id", "model", "effort", "request_id",
                        "expected_rule_revision", "expected_profile_revision"],
-               allow => ["scope", "index", "profile", "when", "model", "effort", "request_id",
+               allow => ["scope", "rule_id", "profile_id", "model", "effort", "request_id",
                          "expected_rule_revision", "expected_profile_revision"]},
 );
 
@@ -302,15 +303,6 @@ for my $line (@records) {
     if (!defined($scope) || ref($scope) || ($scope ne "rule" && $scope ne "default")) {
       $bad->("dispatch scope must be rule or default"); next;
     }
-    for my $field ("index", "profile") {
-      my $value = $obj->{$field};
-      my $maximum = $field eq "index" ? 999 : 99;
-      if (!defined($value) || ref($value) || $value !~ /\A[0-9]+\z/ || $value > $maximum) {
-        $bad->("dispatch $field is not usable"); $out{kind} = ""; last;
-      }
-      $out{$field} = 0 + $value;
-    }
-    next if $out{kind} eq "";
     my $request_id = $obj->{request_id};
     if (!defined($request_id) || ref($request_id) || $request_id !~ $SAFE_ID) {
       $bad->("dispatch request identity is not usable"); next;
@@ -335,15 +327,19 @@ for my $line (@records) {
     }
     next if $out{kind} eq "";
     if ($scope eq "rule") {
-      my $when = $obj->{when};
-      if (!defined($when) || ref($when) || !length($when) || length($when) > 2000
-          || $when =~ /[\x00-\x08\x0b\x0c\x0e-\x1f]/) {
-        $bad->("dispatch rule identity is not safe text"); next;
+      my $rule_id = $obj->{rule_id};
+      if (!defined($rule_id) || ref($rule_id) || $rule_id !~ $STABLE_ID) {
+        $bad->("dispatch rule identity is not usable"); next;
       }
-      $out{when} = $when;
-    } elsif (exists $obj->{when}) {
-      $bad->("default dispatch edit does not carry when"); next;
+      $out{rule_id} = $rule_id;
+    } elsif (exists $obj->{rule_id}) {
+      $bad->("default dispatch edit does not carry rule_id"); next;
     }
+    my $profile_id = $obj->{profile_id};
+    if (!defined($profile_id) || ref($profile_id) || $profile_id !~ $STABLE_ID) {
+      $bad->("dispatch profile identity is not usable"); next;
+    }
+    $out{profile_id} = $profile_id;
     $out{scope} = $scope;
   }
 
