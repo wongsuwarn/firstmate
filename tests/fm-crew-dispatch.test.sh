@@ -244,6 +244,53 @@ jq '.rules |= reverse' "$CONFIG" > "$TMP_ROOT/restored-rules.json" \
 mv "$TMP_ROOT/restored-rules.json" "$CONFIG"
 pass "stable identities target the same rule after reordering"
 
+race_status=$($DISPATCH status "$CONFIG") || fail "could not read revisions before concurrent-edit coverage"
+race_request=$(printf '%s' "$race_status" | jq -c \
+  '{intent:"dispatch",scope:"rule",rule_id:.config.rules[0].id,
+    profile_id:.config.rules[0].use[0].id,model:"gpt-5.7",effort:"high",
+    expected_rule_revision:.revisions.rules[0].revision,
+    expected_profile_revision:.revisions.rules[0].profiles[0].revision}') \
+  || fail "could not build a concurrent-edit request"
+RACE_REQUEST="$TMP_ROOT/race-request.json"
+printf '%s\n' "$race_request" > "$RACE_REQUEST"
+RACE_BIN="$TMP_ROOT/race-bin"
+mkdir -p "$RACE_BIN"
+REAL_JQ=$(command -v jq)
+cat > "$RACE_BIN/jq" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ ! -e "$FM_RACE_MARKER" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      *.source.*)
+        : > "$FM_RACE_MARKER"
+        "$FM_REAL_JQ" '.rules |= reverse' "$FM_RACE_CONFIG" > "$FM_RACE_NEXT" || exit 1
+        mv "$FM_RACE_NEXT" "$FM_RACE_CONFIG" || exit 1
+        break
+        ;;
+    esac
+  done
+fi
+exec "$FM_REAL_JQ" "$@"
+SH
+chmod +x "$RACE_BIN/jq"
+if PATH="$RACE_BIN:$PATH" FM_REAL_JQ="$REAL_JQ" FM_RACE_CONFIG="$CONFIG" \
+    FM_RACE_NEXT="$TMP_ROOT/race-live.json" FM_RACE_MARKER="$TMP_ROOT/race-triggered" \
+    "$DISPATCH" apply "$CONFIG" "$RACE_REQUEST" > "$TMP_ROOT/race.out" 2> "$TMP_ROOT/race.err"; then
+  fail "a live config change during candidate construction must be rejected"
+fi
+assert_present "$TMP_ROOT/race-triggered" "the concurrent-edit fixture did not change the live source"
+assert_grep 'dispatch config changed while applying' "$TMP_ROOT/race.err" \
+  "a concurrent live change must explain its refusal"
+[ "$(jq -r '.rules[0].id' "$CONFIG")" = small-docs ] \
+  || fail "a refused concurrent edit overwrote the live rule reorder"
+[ "$(jq -r '.rules[] | select(.id == "visual-ui").use[0].model' "$CONFIG")" = gpt-5.5 ] \
+  || fail "a refused concurrent edit changed the stable target"
+jq '.rules |= reverse' "$CONFIG" > "$TMP_ROOT/restored-race-order.json" \
+  || fail "could not restore the post-race rule order"
+mv "$TMP_ROOT/restored-race-order.json" "$CONFIG"
+pass "a concurrent live reorder cannot cross the stable-id apply boundary"
+
 stale_status=$($DISPATCH status "$CONFIG") || fail "could not read revisions before stale-edit coverage"
 stale_request=$(printf '%s' "$stale_status" | jq -c \
   '{v:1,intent:"dispatch",home:"main",scope:"rule",rule_id:.config.rules[0].id,

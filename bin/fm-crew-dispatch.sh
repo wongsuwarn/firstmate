@@ -182,11 +182,10 @@ status_file() {  # <path>
 }
 
 apply_request() {  # <path> <request-json>
-  local file=$1 request_file=$2 scope rule_id profile_id index profile model effort use_type count
+  local file=$1 request_file=$2 scope rule_id profile_id model effort
   local expected_rule_revision expected_profile_revision current_rule_revision current_profile_revision
-  local revisions dir base tmp reason assignment
+  local revisions dir base source tmp reason assignment
   [ -f "$request_file" ] && [ ! -L "$request_file" ] || die "request file is absent or unsafe"
-  reason=$(validate_file "$file") || die "$reason"
   jq -e 'type == "object" and .intent == "dispatch"
     and (.scope == "rule" or .scope == "default")
     and (.profile_id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$"))
@@ -205,80 +204,86 @@ apply_request() {  # <path> <request-json>
   effort=$(jq -r '.effort' "$request_file")
   expected_rule_revision=$(jq -r '.expected_rule_revision' "$request_file")
   expected_profile_revision=$(jq -r '.expected_profile_revision' "$request_file")
-  revisions=$(config_revisions "$file") || die "could not revise dispatch config"
-  if [ "$scope" = rule ]; then
-    index=$(jq -r --arg rule_id "$rule_id" '(.rules // []) | map(.id == $rule_id) | index(true) // -1' "$file")
-    [ "$index" -ge 0 ] || die "dispatch rule no longer exists"
-    use_type=$(jq -r --argjson index "$index" '.rules[$index].use | type' "$file")
-    if [ "$use_type" = array ]; then
-      count=$(jq -r --argjson index "$index" '.rules[$index].use | length' "$file")
-    else
-      count=1
-    fi
-    profile=$(jq -r --argjson index "$index" --arg profile_id "$profile_id" '
-      .rules[$index].use | (if type == "array" then . else [.] end)
-      | map(.id == $profile_id) | index(true) // -1' "$file")
-    current_rule_revision=$(printf '%s' "$revisions" | jq -r --arg rule_id "$rule_id" \
-      '.rules[] | select(.id == $rule_id) | .revision')
-  else
-    index=0
-    jq -e 'has("default")' "$file" >/dev/null 2>&1 || die "default dispatch profile no longer exists"
-    use_type=$(jq -r '.default | type' "$file")
-    if [ "$use_type" = array ]; then count=$(jq -r '.default | length' "$file"); else count=1; fi
-    profile=$(jq -r --arg profile_id "$profile_id" '
-      .default | (if type == "array" then . else [.] end)
-      | map(.id == $profile_id) | index(true) // -1' "$file")
-    current_rule_revision=$(printf '%s' "$revisions" | jq -r '.default.revision // ""')
-  fi
-  [ "$profile" -ge 0 ] && [ "$profile" -lt "$count" ] || die "dispatch profile no longer exists"
-  if [ "$scope" = rule ]; then
-    current_profile_revision=$(printf '%s' "$revisions" | jq -r --arg rule_id "$rule_id" \
-      --arg profile_id "$profile_id" \
-      '.rules[] | select(.id == $rule_id) | .profiles[] | select(.id == $profile_id) | .revision')
-  else
-    current_profile_revision=$(printf '%s' "$revisions" | jq -r --arg profile_id "$profile_id" \
-      '.default.profiles[] | select(.id == $profile_id) | .revision')
-  fi
-  if [ "$current_rule_revision" != "$expected_rule_revision" ] \
-      || [ "$current_profile_revision" != "$expected_profile_revision" ]; then
-    die "dispatch rule or profile changed; regenerate the board and try again"
-  fi
-
   dir=${file%/*}; base=${file##*/}
   [ "$dir" != "$file" ] || dir=.
   [ -d "$dir" ] && [ ! -L "$dir" ] || die "dispatch config directory is unsafe"
-  tmp=$(umask 077; mktemp "$dir/.${base}.edit.XXXXXX") || die "could not stage dispatch edit"
-  if ! jq --arg scope "$scope" --argjson index "$index" --argjson profile "$profile" \
+  [ -f "$file" ] && [ ! -L "$file" ] || die "file is absent or unsafe"
+  source=$(umask 077; mktemp "$dir/.${base}.source.XXXXXX") || die "could not stage dispatch source"
+  if ! cp -- "$file" "$source"; then
+    rm -f -- "$source"
+    die "could not stage dispatch source"
+  fi
+  if ! reason=$(validate_file "$source"); then
+    rm -f -- "$source"
+    die "$reason"
+  fi
+  if ! revisions=$(config_revisions "$source"); then
+    rm -f -- "$source"
+    die "could not revise dispatch config"
+  fi
+  if [ "$scope" = rule ]; then
+    current_rule_revision=$(printf '%s' "$revisions" | jq -r --arg rule_id "$rule_id" \
+      '[.rules[] | select(.id == $rule_id) | .revision] | first // ""')
+    current_profile_revision=$(printf '%s' "$revisions" | jq -r --arg rule_id "$rule_id" \
+      --arg profile_id "$profile_id" \
+      '[.rules[] | select(.id == $rule_id) | .profiles[] | select(.id == $profile_id) | .revision]
+       | first // ""')
+  else
+    current_rule_revision=$(printf '%s' "$revisions" | jq -r '.default.revision // ""')
+    current_profile_revision=$(printf '%s' "$revisions" | jq -r --arg profile_id "$profile_id" \
+      '[.default.profiles[] | select(.id == $profile_id) | .revision] | first // ""')
+  fi
+  if [ "$current_rule_revision" != "$expected_rule_revision" ] \
+      || [ "$current_profile_revision" != "$expected_profile_revision" ]; then
+    rm -f -- "$source"
+    die "dispatch rule or profile changed; regenerate the board and try again"
+  fi
+
+  if ! tmp=$(umask 077; mktemp "$dir/.${base}.edit.XXXXXX"); then
+    rm -f -- "$source"
+    die "could not stage dispatch edit"
+  fi
+  if ! jq --arg scope "$scope" --arg rule_id "$rule_id" --arg profile_id "$profile_id" \
       --arg model "$model" --arg effort "$effort" '
       def changed($model; $effort):
         (if $model == "" then del(.model) else .model = $model end)
         | (if $effort == "" then del(.effort) else .effort = $effort end);
+      def changed_profile($profile_id; $model; $effort):
+        if type == "array" then
+          if any(.[]; .id == $profile_id)
+          then map(if .id == $profile_id then changed($model; $effort) else . end)
+          else error("dispatch profile no longer exists") end
+        elif .id == $profile_id then changed($model; $effort)
+        else error("dispatch profile no longer exists") end;
       if $scope == "rule" then
-        if (.rules[$index].use | type) == "array"
-        then .rules[$index].use[$profile] |= changed($model; $effort)
-        else .rules[$index].use |= changed($model; $effort)
-        end
+        if any(.rules[]; .id == $rule_id)
+        then .rules |= map(if .id == $rule_id
+          then .use |= changed_profile($profile_id; $model; $effort) else . end)
+        else error("dispatch rule no longer exists") end
       else
-        if (.default | type) == "array"
-        then .default[$profile] |= changed($model; $effort)
-        else .default |= changed($model; $effort)
-        end
+        if has("default") then .default |= changed_profile($profile_id; $model; $effort)
+        else error("default dispatch profile no longer exists") end
       end
-    ' "$file" > "$tmp"; then
-    rm -f -- "$tmp"
+    ' "$source" > "$tmp"; then
+    rm -f -- "$source" "$tmp"
     die "could not build dispatch candidate"
   fi
   if ! reason=$(validate_file "$tmp"); then
-    rm -f -- "$tmp"
+    rm -f -- "$source" "$tmp"
     die "$reason"
   fi
-  chmod 0600 "$tmp" || { rm -f -- "$tmp"; die "could not secure dispatch candidate"; }
-  mv -f -- "$tmp" "$file" || { rm -f -- "$tmp"; die "could not publish dispatch edit"; }
-  assignment=$(jq -c --arg scope "$scope" --argjson index "$index" --argjson profile "$profile" '
-    def at_profile($value): if ($value | type) == "array" then $value[$profile] else $value end;
-    (if $scope == "rule" then at_profile(.rules[$index].use) else at_profile(.default) end)
+  assignment=$(jq -c --arg scope "$scope" --arg rule_id "$rule_id" --arg profile_id "$profile_id" '
+    def profiles($value): if ($value | type) == "array" then $value else [$value] end;
+    (if $scope == "rule" then [.rules[] | select(.id == $rule_id) | profiles(.use)[]]
+     else [profiles(.default)[]] end)
+    | map(select(.id == $profile_id)) | first
     | {harness, model:(.model // "harness default"), effort:(.effort // "harness default"), provider:(.provider // null)}
-  ' "$file") || die "dispatch edit was written but its assignment could not be read"
+  ' "$tmp") || { rm -f -- "$source" "$tmp"; die "dispatch candidate assignment could not be read"; }
+  chmod 0600 "$tmp" || { rm -f -- "$source" "$tmp"; die "could not secure dispatch candidate"; }
+  cmp -s "$source" "$file" \
+    || { rm -f -- "$source" "$tmp"; die "dispatch config changed while applying; regenerate the board and try again"; }
+  mv -f -- "$tmp" "$file" || { rm -f -- "$source" "$tmp"; die "could not publish dispatch edit"; }
+  rm -f -- "$source"
   printf '%s\n' "$assignment"
 }
 
