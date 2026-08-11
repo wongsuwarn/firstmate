@@ -149,8 +149,8 @@ The Dispatch editor appears only when `--controls` is enabled and the direct boa
 It never appears through the legacy Lavish bridge, a plain static server, or `file://`.
 The profile selector chooses only among profiles already present in the selected rule or default, and v1 cannot add, delete, reorder, change `when`, or change a harness.
 Submitting it records one `dispatch` request through the shared board vocabulary and does not edit configuration in the page or service.
-Firstmate collects that request with `bin/fm-procevent-board-reply.sh apply`, which delegates the candidate to `bin/fm-crew-dispatch.sh`.
-That command checks the exact rule identity, changes only the requested existing profile, validates the complete candidate with the same dispatch validator bootstrap uses, and atomically promotes only a valid file.
+Firstmate collects that request with `bin/fm-procevent-board-reply.sh apply`, which delegates the candidate to `bin/fm-crew-dispatch.sh` before acknowledging its wake.
+That command checks the rendered rule and profile revisions, changes only the requested existing profile, validates the complete candidate with the same dispatch validator bootstrap uses, and atomically promotes only a valid file.
 A stale rule, malformed profile array, unverified harness already present in the candidate, or unsupported effort leaves the file unchanged.
 The collector records the applied assignment or refusal in private board state, and the next board regeneration shows that outcome beside the same task type.
 An explicit per-task harness, model, or effort at spawn remains higher precedence than this default file.
@@ -250,9 +250,9 @@ A launch agent or unit that inherits no `FM_HOME` resolves them against the trac
 Arming has no precondition and is safe in any order: the request log is append-only and never consumed, so requests accepted while nothing is armed are picked up whole by a later arm.
 A request recorded by the service becomes an ordinary durable `check` wake through the same `state/procevent/` framework every other source uses, so firstmate's normal wake drain picks it up with no second notification path.
 At that wake, a validated `file` record surfaces its `note` unchanged for firstmate's ordinary `AGENTS.md` intake process.
-For an `answer`, firstmate runs `bin/fm-procevent-board-reply.sh apply <result-file>` before acknowledging the captured generation.
-The collector preserves the parser's field values and overflow note as compact JSON, validates them against the filed decision, and delegates closure to `bin/fm-decision-hold.sh resolve-board` and its existing `resolve` ordering.
-A refusal leaves the captured request available and does not change the decision state, so firstmate can report the reason and retry without losing the answer.
+For an `answer` or `dispatch`, firstmate runs `bin/fm-procevent-board-reply.sh apply <result-file>` before acknowledging the captured generation.
+The collector preserves an answer's field values and overflow note as compact JSON, validates them against the filed decision, and delegates closure to `bin/fm-decision-hold.sh resolve-board` and its existing `resolve` ordering, while a dispatch request goes through the bounded shared validator and apply boundary.
+A refusal leaves the captured request available and does not change the target state, so firstmate can report the reason and retry without losing the request.
 The transport does no automatic backlog filing, project matching, task classification, or dispatch.
 
 `bin/fm-procevent-board-reply.sh say-source <source-id> <text>|-` is how firstmate answers a board-reply wake into its originating board's conversation, while `say <board.html> <text>|-` is the board-path form and `reply-log-path <board.html>` prints where that conversation is kept.

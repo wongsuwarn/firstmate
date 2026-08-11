@@ -19,15 +19,16 @@
 #           current validation verdict and its raw bytes for an expandable view;
 #           valid files also include the parsed config unchanged.
 # apply     Apply one already-normalized `dispatch` board request. V1 changes
-#           only model and effort on an existing use/default profile. A rule is
-#           identified by both its array index and exact `when` text, so a stale
-#           board cannot update a reordered rule. The complete candidate is
-#           validated by this same command before a same-directory temporary is
+#           only model and effort on an existing use/default profile. A rule and
+#           profile are identified by their rendered semantic revisions, so a
+#           stale board cannot update a changed or reordered target. The complete
+#           candidate is validated by this same command before a same-directory temporary is
 #           atomically promoted. Any refusal leaves the original file unchanged.
 #
 # Request shape:
 #   {"intent":"dispatch","scope":"rule","index":0,"profile":0,
-#    "when":"exact existing when","model":"model-id","effort":"high"}
+#    "when":"exact existing when","model":"model-id","effort":"high",
+#    "expected_rule_revision":"sha256","expected_profile_revision":"sha256"}
 # or scope `default`, index 0, and no `when`. Empty model or effort removes that
 # optional field. Adding, deleting, reordering, changing `when`, and changing a
 # harness are deliberately unsupported.
@@ -126,8 +127,30 @@ validate_file() {  # <path>
   return 0
 }
 
+config_revisions() {  # <path>
+  perl -MJSON::PP -MDigest::SHA=sha256_hex -e '
+    local $/;
+    open(my $fh, "<", $ARGV[0]) or exit 1;
+    binmode($fh);
+    my $config = decode_json(<$fh> // "");
+    my $json = JSON::PP->new->canonical->allow_nonref;
+    sub revision { sha256_hex($json->encode($_[0])) }
+    sub profiles { ref($_[0]) eq "ARRAY" ? @{$_[0]} : ($_[0]) }
+    my @rules;
+    for my $rule (@{$config->{rules} // []}) {
+      push @rules, {rule => revision($rule), profiles => [map { revision($_) } profiles($rule->{use})]};
+    }
+    my $default = undef;
+    if (exists $config->{default}) {
+      $default = {rule => revision($config->{default}),
+        profiles => [map { revision($_) } profiles($config->{default})]};
+    }
+    print $json->encode({rules => \@rules, default => $default});
+  ' "$1"
+}
+
 status_file() {  # <path>
-  local file=$1 reason raw config
+  local file=$1 reason raw config revisions
   if [ ! -e "$file" ] && [ ! -L "$file" ]; then
     jq -nc '{present:false,status:"absent",error:null,config:null,raw:null}'
     return 0
@@ -139,8 +162,9 @@ status_file() {  # <path>
   if reason=$(validate_file "$file"); then
     config=$(jq -c . "$file") || die "could not read dispatch config"
     raw=$(jq . "$file") || die "could not format dispatch config"
-    jq -nc --argjson config "$config" --arg raw "$raw" \
-      '{present:true,status:"valid",error:null,config:$config,raw:$raw}'
+    revisions=$(config_revisions "$file") || die "could not revise dispatch config"
+    jq -nc --argjson config "$config" --argjson revisions "$revisions" --arg raw "$raw" \
+      '{present:true,status:"valid",error:null,config:$config,revisions:$revisions,raw:$raw}'
   else
     raw=$(LC_ALL=C head -c 1048576 "$file" 2>/dev/null || true)
     jq -nc --arg error "$reason" --arg raw "$raw" \
@@ -150,7 +174,8 @@ status_file() {  # <path>
 
 apply_request() {  # <path> <request-json>
   local file=$1 request_file=$2 scope index profile when model effort use_type count current_when
-  local dir base tmp reason assignment
+  local expected_rule_revision expected_profile_revision current_rule_revision current_profile_revision
+  local revisions dir base tmp reason assignment
   [ -f "$request_file" ] && [ ! -L "$request_file" ] || die "request file is absent or unsafe"
   reason=$(validate_file "$file") || die "$reason"
   jq -e 'type == "object" and .intent == "dispatch"
@@ -159,6 +184,8 @@ apply_request() {  # <path> <request-json>
     and (.profile | type == "number" and floor == . and . >= 0 and . <= 99)
     and (.model | type == "string" and length <= 300)
     and (.effort | type == "string" and length <= 20)
+    and (.expected_rule_revision | type == "string" and test("^[0-9a-f]{64}$"))
+    and (.expected_profile_revision | type == "string" and test("^[0-9a-f]{64}$"))
     and ((.scope == "rule" and (.when | type == "string" and length > 0 and length <= 2000))
       or (.scope == "default" and (has("when") | not)))' "$request_file" >/dev/null 2>&1 \
     || die "dispatch edit request is malformed"
@@ -168,6 +195,9 @@ apply_request() {  # <path> <request-json>
   when=$(jq -r '.when // ""' "$request_file")
   model=$(jq -r '.model' "$request_file")
   effort=$(jq -r '.effort' "$request_file")
+  expected_rule_revision=$(jq -r '.expected_rule_revision' "$request_file")
+  expected_profile_revision=$(jq -r '.expected_profile_revision' "$request_file")
+  revisions=$(config_revisions "$file") || die "could not revise dispatch config"
   if [ "$scope" = rule ]; then
     count=$(jq -r '(.rules // []) | length' "$file")
     [ "$index" -lt "$count" ] || die "dispatch rule no longer exists"
@@ -179,13 +209,41 @@ apply_request() {  # <path> <request-json>
     else
       count=1
     fi
+    current_rule_revision=$(printf '%s' "$revisions" | jq -r --argjson index "$index" '.rules[$index].rule // ""')
   else
     [ "$index" -eq 0 ] || die "default dispatch index must be zero"
     jq -e 'has("default")' "$file" >/dev/null 2>&1 || die "default dispatch profile no longer exists"
     use_type=$(jq -r '.default | type' "$file")
     if [ "$use_type" = array ]; then count=$(jq -r '.default | length' "$file"); else count=1; fi
+    current_rule_revision=$(printf '%s' "$revisions" | jq -r '.default.rule // ""')
   fi
   [ "$profile" -lt "$count" ] || die "dispatch profile no longer exists"
+  if [ "$scope" = rule ]; then
+    current_profile_revision=$(printf '%s' "$revisions" | jq -r --argjson index "$index" \
+      --argjson profile "$profile" '.rules[$index].profiles[$profile] // ""')
+  else
+    current_profile_revision=$(printf '%s' "$revisions" | jq -r --argjson profile "$profile" \
+      '.default.profiles[$profile] // ""')
+  fi
+  if [ "$current_rule_revision" != "$expected_rule_revision" ] \
+      || [ "$current_profile_revision" != "$expected_profile_revision" ]; then
+    if jq -e --arg scope "$scope" --argjson index "$index" --argjson profile "$profile" \
+        --arg model "$model" --arg effort "$effort" '
+        def at_profile($value): if ($value | type) == "array" then $value[$profile] else $value end;
+        (if $scope == "rule" then at_profile(.rules[$index].use) else at_profile(.default) end)
+        | (if $model == "" then has("model") | not else .model == $model end)
+          and (if $effort == "" then has("effort") | not else .effort == $effort end)
+      ' "$file" >/dev/null 2>&1; then
+      assignment=$(jq -c --arg scope "$scope" --argjson index "$index" --argjson profile "$profile" '
+        def at_profile($value): if ($value | type) == "array" then $value[$profile] else $value end;
+        (if $scope == "rule" then at_profile(.rules[$index].use) else at_profile(.default) end)
+        | {harness, model:(.model // "harness default"), effort:(.effort // "harness default"), provider:(.provider // null)}
+      ' "$file") || die "replayed dispatch edit was applied but its assignment could not be read"
+      printf '%s\n' "$assignment"
+      return 0
+    fi
+    die "dispatch rule or profile changed; regenerate the board and try again"
+  fi
 
   dir=${file%/*}; base=${file##*/}
   [ "$dir" != "$file" ] || dir=.

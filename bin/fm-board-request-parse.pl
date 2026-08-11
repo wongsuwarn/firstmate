@@ -199,8 +199,10 @@ my %SPEC = (
   defer  => {need => ["id"],         allow => ["id", "key"]},
   ask    => {need => ["note"],       allow => ["note"]},
   file     => {need => ["note"], allow => ["note"]},
-  dispatch => {need => ["scope", "index", "profile", "model", "effort", "request_id"],
-               allow => ["scope", "index", "profile", "when", "model", "effort", "request_id"]},
+  dispatch => {need => ["scope", "index", "profile", "model", "effort", "request_id",
+                       "expected_rule_revision", "expected_profile_revision"],
+               allow => ["scope", "index", "profile", "when", "model", "effort", "request_id",
+                         "expected_rule_revision", "expected_profile_revision"]},
 );
 
 # Firstmate speaking back to the board carries its words and nothing else. There
@@ -314,6 +316,14 @@ for my $line (@records) {
       $bad->("dispatch request identity is not usable"); next;
     }
     $out{request_id} = $request_id;
+    for my $field ("expected_rule_revision", "expected_profile_revision") {
+      my $value = $obj->{$field};
+      if (!defined($value) || ref($value) || $value !~ /\A[0-9a-f]{64}\z/) {
+        $bad->("dispatch revision is not usable"); $out{kind} = ""; last;
+      }
+      $out{$field} = $value;
+    }
+    next if $out{kind} eq "";
     for my $field ("model", "effort") {
       my $value = $obj->{$field};
       my $maximum = $field eq "model" ? 300 : 20;

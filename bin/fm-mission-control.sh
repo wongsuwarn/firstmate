@@ -1397,14 +1397,14 @@ def dispatch_result_banner($result):
   else (@html "<div class=\"dispatch-result \(if $result.ok then "dispatch-result-ok" else "dispatch-result-bad" end)\" role=\"status\"><strong>\(if $result.ok then "Assignment updated" else "Assignment rejected" end)</strong><span>\($result.message)</span></div>")
   end;
 
-def dispatch_profile_option($profile; $position):
-  (@html "<option value=\"\($position)\" data-harness=\"\($profile.harness // "")\" data-model=\"\($profile.model // "")\" data-effort=\"\($profile.effort // "")\">Profile \($position + 1) - \($profile.harness // "unknown harness") / \($profile.model // "harness default")</option>");
+def dispatch_profile_option($profile; $position; $revision):
+  (@html "<option value=\"\($position)\" data-harness=\"\($profile.harness // "")\" data-model=\"\($profile.model // "")\" data-effort=\"\($profile.effort // "")\" data-revision=\"\($revision // "")\">Profile \($position + 1) - \($profile.harness // "unknown harness") / \($profile.model // "harness default")</option>");
 
-def dispatch_editor($scope; $index; $when; $value):
+def dispatch_editor($scope; $index; $when; $value; $revisions):
   dispatch_profiles($value) as $profiles |
   latest_dispatch_result($scope; $index) as $result |
   if ($controls | not) or ($profiles | length) == 0 then "" else
-    (@html "<div class=\"rc dispatch-editor\" data-home=\"main\" data-id=\"dispatch-\($scope)-\($index)\" data-key=\"\" data-what=\"\(if $scope == "rule" then $when else "Default dispatch" end)\" data-dispatch-scope=\"\($scope)\" data-dispatch-index=\"\($index)\" data-dispatch-when=\"\($when)\">")
+    (@html "<div class=\"rc dispatch-editor\" data-home=\"main\" data-id=\"dispatch-\($scope)-\($index)\" data-key=\"\" data-what=\"\(if $scope == "rule" then $when else "Default dispatch" end)\" data-dispatch-scope=\"\($scope)\" data-dispatch-index=\"\($index)\" data-dispatch-when=\"\($when)\" data-dispatch-rule-revision=\"\($revisions.rule // "")\">")
     + dispatch_result_banner($result)
     + "<div class=\"rc-ok rc-quiet\" data-ok=\"dispatch\" hidden role=\"status\">"
     + icon_check + "<span class=\"rc-ok-t\"><strong class=\"rc-ok-h\"></strong>"
@@ -1414,7 +1414,7 @@ def dispatch_editor($scope; $index; $when; $value):
     + "<p class=\"rc-q\">Change an existing profile. The board records this intent; firstmate validates the complete file before writing it.</p>"
     + "<label class=\"dispatch-field\"><span>Profile</span><select data-dispatch-profile data-dispatch-field>"
     + (([range(0; $profiles | length) as $position
-         | dispatch_profile_option($profiles[$position]; $position)] | add) // "")
+         | dispatch_profile_option($profiles[$position]; $position; $revisions.profiles[$position])] | add) // "")
     + "</select></label>"
     + (@html "<label class=\"dispatch-field\"><span>Model</span><input type=\"text\" maxlength=\"300\" data-dispatch-model data-dispatch-field value=\"\($profiles[0].model // "")\" placeholder=\"Harness default\"></label>")
     + "<label class=\"dispatch-field\"><span>Effort</span><select data-dispatch-effort data-dispatch-field>"
@@ -1447,7 +1447,7 @@ def dispatch_rule_row($rule; $index):
       + dispatch_profile_cards($rule.fallback) + "</details>" else "" end)
   + (if ($rule.why // "") == "" then ""
      else (@html "<details class=\"dispatch-more\"><summary>Why this rule exists</summary><p>\($rule.why)</p></details>") end)
-  + dispatch_editor("rule"; $index; $rule.when; $rule.use)
+  + dispatch_editor("rule"; $index; $rule.when; $rule.use; $dispatch.revisions.rules[$index])
   + "</article>";
 
 def dispatch_default_row($config):
@@ -1466,7 +1466,7 @@ def dispatch_default_row($config):
         + "</p><details class=\"dispatch-more\"><summary>Default fallback assignment</summary>"
         + dispatch_profile_cards($config.default_fallback) + "</details>"
       else "<p class=\"dispatch-summary\">No default fallback</p>" end)
-    + dispatch_editor("default"; 0; ""; $config.default)
+    + dispatch_editor("default"; 0; ""; $config.default; $dispatch.revisions.default)
     + "</article>"
   end;
 
@@ -3934,9 +3934,13 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
       request.scope = block.getAttribute(\"data-dispatch-scope\") || \"\";
       request.index = Number(block.getAttribute(\"data-dispatch-index\"));
       request.profile = Number(profileField && profileField.value);
+      var selectedProfile = profileField && profileField.options[profileField.selectedIndex];
       if (request.scope === \"rule\") { request.when = block.getAttribute(\"data-dispatch-when\") || \"\"; }
       request.model = ((modelField && modelField.value) || \"\").replace(/^\\s+|\\s+$/g, \"\");
       request.effort = (effortField && effortField.value) || \"\";
+      request.expected_rule_revision = block.getAttribute(\"data-dispatch-rule-revision\") || \"\";
+      request.expected_profile_revision = selectedProfile
+        ? (selectedProfile.getAttribute(\"data-revision\") || \"\") : \"\";
       if (!form._fmDispatchRequestId) {
         form._fmDispatchRequestId = newAttempt().replace(/^fm-board:/, \"fm-dispatch-\");
       }

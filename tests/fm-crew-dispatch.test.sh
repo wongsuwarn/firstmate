@@ -75,6 +75,10 @@ status=$($DISPATCH status "$CONFIG") || fail "a valid multi-rule fixture must ha
   || fail "the status read flattened a profile array"
 [ "$(printf '%s' "$status" | jq -r '.config.default | length')" = 2 ] \
   || fail "the status read flattened the default profile array"
+[ "$(printf '%s' "$status" | jq -r '.revisions.rules[0].rule | length')" = 64 ] \
+  || fail "the status read did not revision each rule"
+[ "$(printf '%s' "$status" | jq -r '.revisions.rules[0].profiles[1] | length')" = 64 ] \
+  || fail "the status read did not revision each profile"
 pass "dispatch status preserves multi-rule and quota-array fixtures"
 
 READ_ONLY="$TMP_ROOT/read-only.html"
@@ -104,6 +108,10 @@ FM_CONFIG_OVERRIDE="$HOME_DIR/config" "$BOARD" --snapshot "$SNAPSHOT" --no-quota
 editors=$(grep -o 'data-intent="dispatch"' "$CONTROLLED" | wc -l | tr -d ' ')
 [ "$editors" = 3 ] || fail "two rules and the default must each get one bounded editor, got $editors"
 assert_grep 'data-dispatch-profile' "$CONTROLLED" "an array editor must identify a selected existing profile"
+rendered_rule_revision=$(sed -n 's/.*data-dispatch-rule-revision="\([0-9a-f]*\)".*/\1/p' "$CONTROLLED" | head -1)
+[ "${#rendered_rule_revision}" -eq 64 ] || fail "an editor must carry the rendered rule revision"
+rendered_profile_revision=$(sed -n 's/.*data-revision="\([0-9a-f]*\)".*/\1/p' "$CONTROLLED" | head -1)
+[ "${#rendered_profile_revision}" -eq 64 ] || fail "each profile option must carry its rendered revision"
 assert_grep 'data-dispatch-model' "$CONTROLLED" "the bounded editor must expose model"
 assert_grep 'data-dispatch-effort' "$CONTROLLED" "the bounded editor must expose effort"
 assert_grep 'body.lavish .dispatch-editor{display:none' "$CONTROLLED" \
@@ -137,8 +145,13 @@ mv "$TMP_ROOT/valid-dispatch.json" "$CONFIG"
 pass "a malformed profile array renders the existing validator refusal without becoming board logic"
 
 VALID_RESULT="$TMP_ROOT/valid.result"
-capture_request "$VALID_RESULT" \
-  'FM-BOARD-REQUEST {"v":1,"intent":"dispatch","home":"main","scope":"rule","index":0,"profile":1,"when":"visual browser work with a deliberately long task type that must wrap without hiding its assignment at phone width","model":"claude-opus-5","effort":"max","request_id":"dispatch-valid-one"}'
+valid_request=$(printf '%s' "$status" | jq -c \
+  '{v:1,intent:"dispatch",home:"main",scope:"rule",index:0,profile:1,
+    when:.config.rules[0].when,model:"claude-opus-5",effort:"max",request_id:"dispatch-valid-one",
+    expected_rule_revision:.revisions.rules[0].rule,
+    expected_profile_revision:.revisions.rules[0].profiles[1]}') \
+  || fail "could not build a revision-bound valid request"
+capture_request "$VALID_RESULT" "FM-BOARD-REQUEST $valid_request"
 FM_HOME="$HOME_DIR" "$REPLY" apply "$VALID_RESULT" > "$TMP_ROOT/valid.out" \
   || fail "a valid dispatch intent must apply through the board collector"
 [ "$(jq -r '.rules[0].use[1].model' "$CONFIG")" = claude-opus-5 ] \
@@ -151,9 +164,47 @@ assert_grep 'Assignment updated: claude / claude-opus-5 / max.' "$CONTROLLED" \
   "a successful write must surface the new assignment"
 pass "a board dispatch request updates one existing array profile and regenerates confirmation"
 
+cp "$CONFIG" "$TMP_ROOT/before-replay.json"
+FM_HOME="$HOME_DIR" "$REPLY" apply "$VALID_RESULT" > "$TMP_ROOT/replay.out" \
+  || fail "a replayed successful dispatch intent must be accepted as a no-op"
+cmp -s "$TMP_ROOT/before-replay.json" "$CONFIG" \
+  || fail "a replayed successful dispatch intent rewrote the source"
+pass "a replayed applied request is idempotent"
+
+stale_status=$($DISPATCH status "$CONFIG") || fail "could not read revisions before stale-edit coverage"
+stale_request=$(printf '%s' "$stale_status" | jq -c \
+  '{v:1,intent:"dispatch",home:"main",scope:"rule",index:0,profile:0,
+    when:.config.rules[0].when,model:"gpt-5.6",effort:"high",request_id:"dispatch-stale-one",
+    expected_rule_revision:.revisions.rules[0].rule,
+    expected_profile_revision:.revisions.rules[0].profiles[0]}') \
+  || fail "could not build a revision-bound stale request"
+STALE_RESULT="$TMP_ROOT/stale.result"
+capture_request "$STALE_RESULT" "FM-BOARD-REQUEST $stale_request"
+jq '.rules[0].use |= reverse' "$CONFIG" > "$TMP_ROOT/reordered.json" \
+  || fail "could not stage the reordered profile fixture"
+mv "$TMP_ROOT/reordered.json" "$CONFIG"
+cp "$CONFIG" "$TMP_ROOT/before-stale.json"
+if FM_HOME="$HOME_DIR" "$REPLY" apply "$STALE_RESULT" > "$TMP_ROOT/stale.out" 2> "$TMP_ROOT/stale.err"; then
+  fail "a request captured before profile reordering must be rejected"
+fi
+cmp -s "$TMP_ROOT/before-stale.json" "$CONFIG" \
+  || fail "a stale revision-bound request changed the reordered source"
+assert_grep 'dispatch rule or profile changed' "$TMP_ROOT/stale.err" \
+  "a stale revision refusal must explain that the target changed"
+jq '.rules[0].use |= reverse' "$CONFIG" > "$TMP_ROOT/restored-order.json" \
+  || fail "could not restore the profile order"
+mv "$TMP_ROOT/restored-order.json" "$CONFIG"
+pass "rule and profile revisions reject reordered stale targets"
+
 BAD_RESULT="$TMP_ROOT/bad.result"
-capture_request "$BAD_RESULT" \
-  'FM-BOARD-REQUEST {"v":1,"intent":"dispatch","home":"main","scope":"default","index":0,"profile":1,"model":"grok-4.5","effort":"max","request_id":"dispatch-invalid-one"}'
+bad_status=$($DISPATCH status "$CONFIG") || fail "could not read revisions before invalid-edit coverage"
+bad_request=$(printf '%s' "$bad_status" | jq -c \
+  '{v:1,intent:"dispatch",home:"main",scope:"default",index:0,profile:1,
+    model:"grok-4.5",effort:"max",request_id:"dispatch-invalid-one",
+    expected_rule_revision:.revisions.default.rule,
+    expected_profile_revision:.revisions.default.profiles[1]}') \
+  || fail "could not build a revision-bound invalid request"
+capture_request "$BAD_RESULT" "FM-BOARD-REQUEST $bad_request"
 cp "$CONFIG" "$TMP_ROOT/before-invalid.json"
 if FM_HOME="$HOME_DIR" "$REPLY" apply "$BAD_RESULT" > "$TMP_ROOT/bad.out" 2> "$TMP_ROOT/bad.err"; then
   fail "an effort unsupported by the configured harness must be rejected"
