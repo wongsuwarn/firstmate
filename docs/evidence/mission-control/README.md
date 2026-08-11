@@ -106,6 +106,7 @@ Submitting the blank form returned a required-facts refusal from the direct repl
 The Grok-inspired visual pass was verified on 2026-08-11 with `chrome-devtools-axi 0.1.27` against a synthetic board served on loopback.
 Desktop inspection used a 1280px by 900px viewport, while mobile inspection used `chrome-devtools-axi emulate --viewport '390x844x3,mobile,touch'`; both were repeated with explicit light and dark colour-scheme emulation.
 All four after views reported a document width equal to the viewport width, and the open control views kept quick answers, free-text Answer, Set aside, Ask firstmate, submit, and cancel visually distinct.
+The empty-card comparison used those same desktop and mobile viewports in both themes and confirmed that the labelled Start something new and Ask firstmate inputs remained visible inside their respective cards without horizontal overflow.
 The Projects view showed active and needs-you cards before one shadowless idle card, and the valid Dispatch view plus its open existing-profile editor fit at 390px with its 44px mobile inputs and submit control still available.
 The no-script fallback and control transport behavior remain covered through the executable renderer and real-browser regressions in `tests/fm-mission-control.test.sh` and `tests/fm-board-reply.test.sh`.
 
