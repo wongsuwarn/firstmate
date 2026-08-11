@@ -62,10 +62,8 @@ BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 fm_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-harness)
 export FM_BACKEND=tmux
-FM_STATE_OVERRIDE="$TMP_ROOT/lock-state"
 # shellcheck source=/dev/null
-. "$ROOT/bin/fm-wake-lib.sh"
-unset FM_STATE_OVERRIDE
+FM_STATE_OVERRIDE="$TMP_ROOT/lock-state" . "$ROOT/bin/fm-wake-lib.sh"
 
 # ===========================================================================
 # A) fm-harness.sh secondmate resolution + fallback (deterministic detect_own)
