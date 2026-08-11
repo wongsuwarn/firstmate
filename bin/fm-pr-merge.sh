@@ -226,28 +226,6 @@ fi
 
 gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
 
-# Parse owner/repo from an exact GitHub remote URL (https or ssh); empty if
-# the host or path does not match a supported GitHub remote shape.
-github_repo_slug() {
-  local remote slug owner repo
-  remote=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  case "$remote" in
-    https://github.com/*) slug=${remote#https://github.com/} ;;
-    git@github.com:*) slug=${remote#git@github.com:} ;;
-    ssh://git@github.com/*) slug=${remote#ssh://git@github.com/} ;;
-    *) return 0 ;;
-  esac
-  slug=${slug%/}
-  slug=${slug%.git}
-  case "$slug" in
-    ''|/*|*/|*/*/*) return 0 ;;
-  esac
-  owner=${slug%%/*}
-  repo=${slug#*/}
-  [ -n "$owner" ] && [ -n "$repo" ] || return 0
-  printf '%s/%s\n' "$owner" "$repo"
-}
-
 # True only when this merged PR's owner/repo is FM_ROOT's own GitHub origin,
 # so the automatic post-merge self-update below never runs against an
 # unrelated project's merge. Reads the configured remote.origin.url directly
@@ -255,10 +233,11 @@ github_repo_slug() {
 # home may have configured) so this compares the identity the captain
 # actually registered, not a resolved fetch target.
 merged_pr_is_firstmate_repo() {
-  local origin_slug pr_slug
-  origin_slug=$(github_repo_slug "$(git -C "$FM_ROOT" config --get remote.origin.url 2>/dev/null || true)")
+  local origin_url origin_slug pr_slug
+  origin_url=$(git -C "$FM_ROOT" config --get remote.origin.url 2>/dev/null || true)
+  origin_slug=$(fm_pr_github_remote_parse "$origin_url") || return 1
   pr_slug=$(printf '%s/%s' "$PR_OWNER" "$PR_REPO" | tr '[:upper:]' '[:lower:]')
-  [ -n "$origin_slug" ] && [ "$origin_slug" = "$pr_slug" ]
+  [ "$origin_slug" = "$pr_slug" ]
 }
 
 # The merge above just landed on origin, so the primary checkout that

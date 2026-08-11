@@ -212,6 +212,52 @@ test_case_variant_github_host_triggers_fast_forward() {
   pass "fm-pr-merge accepts a case-variant GitHub host"
 }
 
+test_one_component_github_origin_never_touches_primary() {
+  local case_dir root rc before after
+  case_dir=$(make_case one-component-origin)
+  root=$(make_primary_fixture one-component-origin acme/firstmate \
+    https://github.com/acme)
+  add_gh_mocks "$case_dir" 7777777777777777777777777777777777777777
+  : > "$case_dir/gh-axi.log"
+  before=$(git -C "$root" rev-parse HEAD)
+
+  set +e
+  run_pr_merge "$case_dir" "$root" task-x1 https://github.com/acme/acme/pull/47 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "one-component-origin: fm-pr-merge should succeed"
+  after=$(git -C "$root" rev-parse HEAD)
+  [ "$before" = "$after" ] \
+    || fail "one-component-origin: a malformed GitHub origin triggered the self-update"
+  assert_not_contains "$(cat "$case_dir/stderr")" "SELF_UPDATE" \
+    "one-component-origin: a malformed GitHub origin must never attempt or report the primary self-update"
+  pass "fm-pr-merge rejects a one-component GitHub origin"
+}
+
+test_git_ssh_origin_triggers_fast_forward() {
+  local case_dir root rc before after
+  case_dir=$(make_case git-ssh-origin)
+  root=$(make_primary_fixture git-ssh-origin acme/firstmate \
+    git@GitHub.com:acme/firstmate.git)
+  add_gh_mocks "$case_dir" 8888888888888888888888888888888888888888
+  : > "$case_dir/gh-axi.log"
+  before=$(git -C "$root" rev-parse HEAD)
+
+  set +e
+  run_pr_merge "$case_dir" "$root" task-x1 https://github.com/acme/firstmate/pull/48 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "git-ssh-origin: fm-pr-merge should succeed"
+  after=$(git -C "$root" rev-parse HEAD)
+  [ "$before" != "$after" ] \
+    || fail "git-ssh-origin: a GitHub SSH origin did not trigger the primary self-update"
+  pass "fm-pr-merge accepts a GitHub SSH origin"
+}
+
 test_dirty_primary_blocked_without_failing_the_merge() {
   local case_dir root rc before after out
   case_dir=$(make_case dirty-repo)
@@ -262,5 +308,7 @@ test_firstmate_repo_merge_triggers_fast_forward
 test_other_project_merge_never_touches_primary
 test_github_path_segment_lookalike_never_touches_primary
 test_case_variant_github_host_triggers_fast_forward
+test_one_component_github_origin_never_touches_primary
+test_git_ssh_origin_triggers_fast_forward
 test_dirty_primary_blocked_without_failing_the_merge
 test_merge_failure_never_attempts_self_update
