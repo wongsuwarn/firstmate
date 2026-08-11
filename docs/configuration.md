@@ -41,7 +41,7 @@ For a file, it reads only a regular non-symlinked file up to the same 8 MiB boun
 Bootstrap reads the board footer's `rendered <ISO-8601 UTC timestamp>` value and emits `MISSION_CONTROL_STALE:` only when its age exceeds 300 seconds.
 Set the documented environment override `FM_MISSION_CONTROL_STALE_SECS` to a positive decimal number of seconds to select a different threshold; absent, zero, or invalid values use 300 seconds.
 This is a best-effort convenience check, so malformed timestamps, future timestamps, and any read failure remain silent.
-It catches a stopped generator, not stale generator code; a separate, unconditional bootstrap step keeps the firstmate checkout that generates the board itself current, see [`mission-control.md`](mission-control.md#serving-and-refreshing) for both the board-facing setup and that response.
+It catches a stopped generator, not stale generator code; separate, automatic fast-forward triggers keep the firstmate checkout that generates the board itself current, see [`mission-control.md`](mission-control.md#serving-and-refreshing) for both the board-facing setup and that response.
 
 ## Backlog backend (.tasks.toml / config/backlog-backend)
 

@@ -89,7 +89,14 @@
 #          left untouched - never forced, stashed, or reset - and reports
 #          SELF_UPDATE_BLOCKED so the captain is not left guessing why a merged
 #          PR never showed up locally. This mutating step never runs in
-#          detect-only mode, since it fetches.
+#          detect-only mode, since it fetches. This cadence trigger runs on
+#          every session start, so a merge landing between sessions is always
+#          caught; bin/fm-pr-merge.sh separately calls the identical
+#          primary_self_update() once, immediately, right after it confirms a
+#          merge is this repo's own, so a merge landing mid-session (with
+#          nothing prompting a fresh session start) is not left stale until
+#          the next one - see bin/fm-ff-lib.sh's primary_self_update header
+#          for the full mechanism shared by both trigger points.
 #          treehouse is also MISSING when its installed version lacks
 #          "treehouse get --lease" support.
 #          no-mistakes is also MISSING when its installed version is older than
@@ -259,65 +266,10 @@ fleet_sync() {
   rm -f "$tmp"
 }
 
-# Fast-forward FM_ROOT the same way bin/fm-update.sh does for /updatefirstmate
-# (same ff_target call: base_mode "origin", no allow_detached, no seed-marker
-# tolerance), so a firstmate PR merged upstream reaches this home without the
-# captain having to run that update by hand. Scoped to the primary only via
-# the same .fm-secondmate-home marker check startup_memory_budget_setup
-# already uses: a leased-worktree secondmate is also caught by ff_target's own
-# detached-HEAD check below, but a standalone-clone secondmate is not
-# detached and does have an origin remote, so without this marker guard it
-# would fetch and fast-forward straight from origin here - a second
-# convergence path for secondmate homes that bin/fm-update.sh's own
-# origin-based secondmate sweep already owns. A wrong-branch primary is
-# TANGLE's report, and a stale pre-fetch divergence read is MAIN_DIVERGED's,
-# so both reasons stay silent here to avoid re-reporting a fact one of those
-# two already owns. Every other skip reason (dirty tree, a divergence this
-# fetch just revealed, a missing base, or a failed merge) is surfaced as
-# SELF_UPDATE_BLOCKED because none of those is reported anywhere else, and
-# staying silent there would recreate the exact silent-refusal failure mode
-# this guard exists to close.
-primary_self_update() {
-  if [ -e "$FM_HOME/.fm-secondmate-home" ] || [ -L "$FM_HOME/.fm-secondmate-home" ]; then
-    return 0
-  fi
-
-  local tmp status instr out
-  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-bootstrap-self-update.XXXXXX" 2>/dev/null) || return 0
-  ff_target "$FM_ROOT" "firstmate" origin no no > "$tmp" 2>&1
-  status=$FF_STATUS
-  instr=$FF_INSTR
-  out=$(cat "$tmp" 2>/dev/null)
-  rm -f "$tmp"
-
-  case "$status" in
-    updated)
-      if [ -n "$instr" ]; then
-        echo "SELF_UPDATE: $out; re-read AGENTS.md now"
-      elif [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
-        echo "BOOTSTRAP_INFO: $out"
-      fi
-      ;;
-    current)
-      [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: $out"
-      ;;
-    *)
-      case "$out" in
-        *': skipped: not a directory') ;;
-        *': skipped: not a git repo') ;;
-        *': skipped: cannot determine default branch') ;;
-        *': skipped: no origin remote') ;;
-        *': skipped: detached HEAD,'*) ;;
-        *': skipped: on '*) ;;
-        '') ;;
-        *)
-          echo "SELF_UPDATE_BLOCKED: $out; a merged firstmate PR cannot be applied here until this clears, and this home may keep running stale code (including any locally-served Mission Control board) until it does"
-          ;;
-      esac
-      ;;
-  esac
-  return 0
-}
+# primary_self_update() itself now lives in bin/fm-ff-lib.sh (already sourced
+# above), since bin/fm-pr-merge.sh calls the exact same function right after
+# a firstmate-repo merge; see its header comment there for the full
+# mechanism and both trigger points.
 
 secondmate_sync() {
   # shellcheck source=bin/fm-wake-lib.sh disable=SC1091

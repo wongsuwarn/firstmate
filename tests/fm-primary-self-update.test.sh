@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
-# Behavior tests for fm-bootstrap.sh's automatic primary-checkout self-update.
+# Behavior tests for the CADENCE trigger of the automatic primary-checkout
+# self-update: bin/fm-bootstrap.sh calling bin/fm-ff-lib.sh's
+# primary_self_update() on every non-detect-only bootstrap run. The EVENT
+# trigger - bin/fm-pr-merge.sh calling the identical function once,
+# immediately after a firstmate-repo merge - is covered separately in
+# tests/fm-pr-merge-self-update.test.sh; both call the same function, so
+# these cases pin its behavior regardless of which caller is exercised.
 #
 # Firstmate's board and other locally-served surfaces are regenerated from
 # the primary firstmate home. Before this guard, a merged firstmate PR only
 # reached that home when the captain remembered to run /updatefirstmate by
 # hand, so a merged re-skin (or any other change) could keep being served
-# stale indefinitely with no signal. bin/fm-bootstrap.sh's primary_self_update
-# now attempts the exact same fast-forward /updatefirstmate performs
-# (bin/fm-ff-lib.sh's ff_target, base_mode "origin") on every non-detect-only
-# bootstrap run, and reports a durable, captain-visible SELF_UPDATE_BLOCKED
-# line rather than silently declining when the checkout cannot be advanced -
-# never forcing, stashing, or resetting. These cases pin: a clean checkout
-# fast-forwards; an instruction-surface change asks the agent to re-read
-# AGENTS.md; a dirty or diverged checkout is left untouched and reported; a
-# secondmate-shaped detached HEAD, and a standalone-clone secondmate marked
-# with .fm-secondmate-home, are both silently left to their own existing
-# convergence paths; and detect-only mode never fetches or mutates. All
-# hermetic over temporary git repos.
+# stale indefinitely with no signal. primary_self_update() attempts the
+# exact same fast-forward /updatefirstmate performs (fm-ff-lib.sh's
+# ff_target, base_mode "origin"), and reports a durable, captain-visible
+# SELF_UPDATE_BLOCKED line rather than silently declining when the checkout
+# cannot be advanced - never forcing, stashing, or resetting. These cases
+# pin: a clean checkout fast-forwards; an instruction-surface change asks
+# the agent to re-read AGENTS.md; a dirty or diverged checkout is left
+# untouched and reported; a secondmate-shaped detached HEAD, and a
+# standalone-clone secondmate marked with .fm-secondmate-home, are both
+# silently left to their own existing convergence paths; and detect-only
+# mode never fetches or mutates. All hermetic over temporary git repos.
 set -u
 
 # shellcheck source=tests/lib.sh
