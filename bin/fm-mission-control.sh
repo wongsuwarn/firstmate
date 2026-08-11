@@ -1349,10 +1349,6 @@ def dispatch_profiles($value):
   elif ($value | type) == "object" then [$value]
   else [] end;
 
-def dispatch_short_label($text):
-  (($text // "") | tostring) as $label |
-  if ($label | length) > 72 then $label[0:69] + "..." else $label end;
-
 def dispatch_profile_card($profile; $position):
   (@html "<div class=\"dispatch-profile\"><span class=\"dispatch-profile-n\">Profile \($position + 1)</span>")
   + "<dl>"
@@ -1435,8 +1431,7 @@ def dispatch_editor($scope; $index; $when; $value):
 
 def dispatch_rule_row($rule; $index):
   dispatch_profiles($rule.use) as $profiles |
-  (@html "<article class=\"dispatch-rule\"><div class=\"dispatch-rule-head\"><span class=\"dispatch-kicker\">Rule \($index + 1)</span><h4 title=\"\($rule.when)\">\(dispatch_short_label($rule.when))</h4><span class=\"dispatch-kind\">\(if ($rule.use | type) == "array" then (($profiles | length) | tostring) + "-profile quota array" else "single profile" end)</span></div>")
-  + (@html "<p class=\"dispatch-when\">\($rule.when)</p>")
+  (@html "<article class=\"dispatch-rule\"><div class=\"dispatch-rule-head\"><span class=\"dispatch-kicker\">Rule \($index + 1)</span><h4>\($rule.when)</h4><span class=\"dispatch-kind\">\(if ($rule.use | type) == "array" then (($profiles | length) | tostring) + "-profile quota array" else "single profile" end)</span></div>")
   + dispatch_profile_cards($rule.use)
   + "<p class=\"dispatch-summary\">"
   + (if $rule.independent == true then "Independent provider required"
@@ -2569,12 +2564,11 @@ a.ship:hover{background:#fbfcfe;}
 .dispatch-rule{margin:0;padding:17px 20px;border-top:1px solid var(--line);}
 .dispatch-rule:first-child{border-top:none;}
 .dispatch-default{background:#fbfcfe;}
-.dispatch-rule-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px 12px;align-items:baseline;}
+.dispatch-rule-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px 12px;align-items:baseline;margin-bottom:11px;}
 .dispatch-kicker{color:var(--faint);font-size:10px;font-weight:740;letter-spacing:.07em;text-transform:uppercase;}
 .dispatch-rule-head h4{margin:0;font-size:14px;font-weight:660;overflow-wrap:anywhere;}
 .dispatch-kind{color:var(--slate);background:var(--slate-soft);border-radius:999px;padding:3px 9px;
   font-size:10.5px;font-weight:620;white-space:nowrap;}
-.dispatch-when{margin:5px 0 11px;color:var(--muted);font-size:12px;overflow-wrap:anywhere;}
 .dispatch-profiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px;}
 .dispatch-profile{border:1px solid var(--line);border-radius:10px;padding:10px 11px;background:var(--panel);}
 .dispatch-profile-n{display:block;margin-bottom:5px;color:var(--faint);font-size:9.5px;font-weight:700;

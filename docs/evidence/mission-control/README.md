@@ -78,6 +78,7 @@ The 390px inspection returned `{"w":390,"h":844,"overflow":false}`, and the real
 The dispatch evidence was verified on 2026-08-11 with Chrome and `chrome-devtools-axi 0.1.27` against a synthetic 13-rule dispatch file served through the live board-reply service.
 The browser inspection used a 1280 by 1000 desktop viewport and `chrome-devtools-axi emulate --viewport '390x844x3,mobile,touch'` for the phone viewport.
 Both widths reported no horizontal overflow, and the 390px inspection measured each rule from 19px to 371px and each open edit form from 51px to 339px.
+Each rule's complete task type appears once as its wrapping heading; the recaptured short-rule evidence confirms there is no duplicate description line.
 Opening the same control-enabled file through `file://` reported zero visible Dispatch editors while leaving the complete read-only Dispatch section visible.
 Every mobile input and selector measured 44px high, the submit control measured 44px high, and the adjacent Cancel control retained its separate text-link treatment.
 A real board request changed only the selected array profile, the shared validator accepted `codex:xhigh`, and the regenerated board displayed the new model and effort.

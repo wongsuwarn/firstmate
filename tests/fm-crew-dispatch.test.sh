@@ -88,6 +88,10 @@ assert_grep '<dt>Harness</dt><dd>codex</dd>' "$READ_ONLY" "a rule must show its 
 assert_grep '<dt>Model</dt><dd>gpt-5.5</dd>' "$READ_ONLY" "a rule must show its model"
 assert_grep '<dt>Effort</dt><dd>high</dd>' "$READ_ONLY" "a rule must show its effort"
 assert_grep '<dt>Provider</dt><dd>openai</dd>' "$READ_ONLY" "a rule must show its provider when set"
+assert_grep '<h4>small documentation corrections</h4>' "$READ_ONLY" \
+  "the rule heading must carry the complete task type"
+assert_no_grep 'class="dispatch-when"' "$READ_ONLY" \
+  "a rule must not repeat its task type below the heading"
 assert_grep '>Why this rule exists</summary>' "$READ_ONLY" "a rationale must stay collapsed"
 assert_grep '>Raw crew-dispatch.json</summary>' "$READ_ONLY" "raw JSON must be expandable rather than primary"
 assert_grep 'Secondmate homes receive this same file when it is pushed.' "$READ_ONLY" \
