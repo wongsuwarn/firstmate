@@ -2527,7 +2527,7 @@ test_controls_match_what_each_row_can_actually_resolve() {
     "the one-shot new-work composer must name its purpose"
   assert_grep 'data-intent="ask"' "$board" \
     "the board must retain the continuing Ask-firstmate composer"
-  assert_grep '<strong>Ask firstmate</strong><span>Use the continuing board conversation' "$board" \
+  assert_grep '>Ask firstmate</h2><p>Use the continuing board conversation' "$board" \
     "the conversation composer must stay distinct from new-work intake"
 
   # The item rows are read-only display and carry no control of their own, so the
@@ -2858,9 +2858,13 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       localReport:(()=>{var row=block('main','local-lane-bakeoff-v2-powered-decision-widen-bounded-judgment-rung').closest('.need-wrap');
         var ref=row.querySelector('.local-ref'); return {text:ref&&ref.textContent,anchor:!!row.querySelector('a[href="data/local-lane-bakeoff-v2-powered/report.md"]')};})(),
       composers:(()=>{var file=document.querySelector('.rc-file');var ask=document.querySelector('.rc-ask');
-        var fr=file.getBoundingClientRect();var ar=ask.getBoundingClientRect();return {
-          fileLabel:file.querySelector('h2').textContent,askLabel:ask.querySelector('.rc-q strong').textContent,
+        var fr=file.getBoundingClientRect();var ar=ask.getBoundingClientRect();
+        function input(block){var field=block.querySelector('textarea');var r=field.getBoundingClientRect();return {
+          label:field.getAttribute('aria-label'),display:getComputedStyle(field).display,
+          inside:r.top>=block.getBoundingClientRect().top&&r.bottom<=block.getBoundingClientRect().bottom};}
+        return {fileLabel:file.querySelector('h2').textContent,askLabel:ask.querySelector('h2').textContent,
           fileBackground:getComputedStyle(file).backgroundImage,askBackground:getComputedStyle(ask).backgroundImage,
+          fileInput:input(file),askInput:input(ask),
           gap:Math.round(ar.top-fr.bottom),fileWidth:Math.round(fr.width),askWidth:Math.round(ar.width)};})(),
       cards:document.querySelectorAll('.need-wrap').length
     };
@@ -2886,8 +2890,11 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
     "the Qwen bounded-judgment report path was not preserved as non-clickable context");
   assert(dom.composers.fileLabel === "Start something new" && dom.composers.askLabel === "Ask firstmate"
     && dom.composers.fileBackground !== dom.composers.askBackground && dom.composers.gap >= 20
-    && dom.composers.fileWidth > 500 && dom.composers.askWidth > 500,
-    "the new-work and conversation composers were not visibly distinct at desktop width: "
+    && dom.composers.fileWidth > 500 && dom.composers.askWidth > 500
+    && dom.composers.fileInput.label === "Describe the new work" && dom.composers.fileInput.display !== "none"
+    && dom.composers.fileInput.inside && dom.composers.askInput.label === "Ask firstmate"
+    && dom.composers.askInput.display !== "none" && dom.composers.askInput.inside,
+    "the new-work and conversation composers were not visibly distinct and usable at desktop width: "
       + JSON.stringify(dom.composers));
   assert(dom.cards >= 8, "ordinary multi-card decision list did not render");
 
@@ -2922,12 +2929,19 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
   await send("Emulation.setTouchEmulationEnabled", {enabled:true,maxTouchPoints:1}, sid);
   const mobileComposers = await evaluate(sid, `(() => {var file=document.querySelector('.rc-file');
     var ask=document.querySelector('.rc-ask');var fr=file.getBoundingClientRect();var ar=ask.getBoundingClientRect();
-    return {file:{left:Math.round(fr.left),right:Math.round(fr.right)},
-      ask:{left:Math.round(ar.left),right:Math.round(ar.right)},gap:Math.round(ar.top-fr.bottom),
-      overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth};})()`);
+    var fileInput=file.querySelector('textarea').getBoundingClientRect();
+    var askInput=ask.querySelector('textarea').getBoundingClientRect();
+    return {file:{left:Math.round(fr.left),right:Math.round(fr.right),top:Math.round(fr.top),bottom:Math.round(fr.bottom)},
+      ask:{left:Math.round(ar.left),right:Math.round(ar.right),top:Math.round(ar.top),bottom:Math.round(ar.bottom)},
+      fileInput:{top:Math.round(fileInput.top),bottom:Math.round(fileInput.bottom),display:getComputedStyle(file.querySelector('textarea')).display},
+      askInput:{top:Math.round(askInput.top),bottom:Math.round(askInput.bottom),display:getComputedStyle(ask.querySelector('textarea')).display},
+      gap:Math.round(ar.top-fr.bottom),overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth};})()`);
   assert(!mobileComposers.overflow && mobileComposers.file.left >= 0 && mobileComposers.file.right <= 390
-    && mobileComposers.ask.left >= 0 && mobileComposers.ask.right <= 390 && mobileComposers.gap >= 20,
-    "the visually separated board-level composers did not fit at 390px: " + JSON.stringify(mobileComposers));
+    && mobileComposers.ask.left >= 0 && mobileComposers.ask.right <= 390 && mobileComposers.gap >= 20
+    && mobileComposers.fileInput.display !== "none" && mobileComposers.fileInput.top >= mobileComposers.file.top
+    && mobileComposers.fileInput.bottom <= mobileComposers.file.bottom && mobileComposers.askInput.display !== "none"
+    && mobileComposers.askInput.top >= mobileComposers.ask.top && mobileComposers.askInput.bottom <= mobileComposers.ask.bottom,
+    "the visible board-level composer inputs did not fit inside their labelled cards at 390px: " + JSON.stringify(mobileComposers));
   const mobileTap = await evaluate(sid, `(() => {var ref=document.querySelector('.local-ref'); ref.scrollIntoView({block:'center'});
     var r=ref.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,before:location.href,anchor:!!ref.closest('a')};})()`);
   assert(!mobileTap.anchor && mobileTap.x >= 0 && mobileTap.x <= 390 && mobileTap.y >= 0 && mobileTap.y <= 844,
