@@ -46,6 +46,10 @@ else
 fi
 CONTESTERS="$STATE/contenders"
 TEARDOWN_BIN=${FM_TEARDOWN_BIN:-"$FM_ROOT/bin/fm-teardown.sh"}
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh
+. "$SCRIPT_DIR/fm-pr-lib.sh"
 
 usage() {
   awk '
@@ -55,15 +59,12 @@ usage() {
   ' "$0"
 }
 
-valid_id() {
-  case "$1" in
-    ''|-*|*-|*[!a-z0-9-]*) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
 record_path() {
   printf '%s/%s' "$CONTESTERS" "$1"
+}
+
+lock_path() {
+  printf '%s/.contender-%s.lock' "$STATE" "$1"
 }
 
 write_record() {  # <id> <phase>
@@ -148,59 +149,73 @@ prepare_awaiting_pick() {  # <id>
 }
 
 await_pick() {
-  local id
+  local id lock status
   [ "$#" -gt 0 ] || { usage >&2; return 2; }
   for id in "$@"; do
-    valid_id "$id" || { echo "error: invalid task id: $id" >&2; return 2; }
-    prepare_awaiting_pick "$id"
+    fm_task_id_creation_valid "$id" || { echo "error: invalid task id: $id" >&2; return 2; }
+    lock=$(lock_path "$id")
+    fm_lock_acquire_wait "$lock"
+    status=0
+    prepare_awaiting_pick "$id" || status=$?
+    fm_lock_release "$lock"
+    [ "$status" -eq 0 ] || return "$status"
     printf 'awaiting-pick %s data/%s/report.md\n' "$id" "$id"
   done
 }
 
-settle() {  # <outcome> <id>...
-  local outcome=$1 id phase
-  shift
-  case "$outcome" in picked|rejected|superseded) ;; *) usage >&2; return 2 ;; esac
-  [ "$#" -gt 0 ] || { usage >&2; return 2; }
-  for id in "$@"; do
-    valid_id "$id" || { echo "error: invalid task id: $id" >&2; return 2; }
-    if [ -e "$(record_path "$id")" ]; then
-      phase=$(read_record "$id") || {
-        echo "error: contender record for $id is malformed; refusing settlement" >&2
-        return 1
-      }
-      case "$phase" in
-        "$outcome")
-          rm -f -- "$(record_path "$id")" || {
-            echo "error: could not remove settled contender record for $id" >&2
-            return 1
-          }
-          printf '%s %s\n' "$outcome" "$id"
-          continue
-          ;;
-        picked|rejected|superseded)
-          echo "error: contender $id is already settled as $phase" >&2
-          return 1
-          ;;
-      esac
-    fi
-    prepare_awaiting_pick "$id"
+settle_one() {  # <outcome> <id>
+  local outcome=$1 id=$2 phase
+  if [ -e "$(record_path "$id")" ]; then
     phase=$(read_record "$id") || {
       echo "error: contender record for $id is malformed; refusing settlement" >&2
       return 1
     }
-    [ "$phase" = awaiting-pick ] || {
-      echo "error: contender $id is not awaiting a pick" >&2
-      return 1
-    }
-    write_record "$id" "$outcome" || {
-      echo "error: could not record contender $id as $outcome" >&2
-      return 1
-    }
-    rm -f -- "$(record_path "$id")" || {
-      echo "error: could not remove settled contender record for $id" >&2
-      return 1
-    }
+    case "$phase" in
+      "$outcome")
+        rm -f -- "$(record_path "$id")" || {
+          echo "error: could not remove settled contender record for $id" >&2
+          return 1
+        }
+        return 0
+        ;;
+      picked|rejected|superseded)
+        echo "error: contender $id is already settled as $phase" >&2
+        return 1
+        ;;
+    esac
+  fi
+  prepare_awaiting_pick "$id" || return 1
+  phase=$(read_record "$id") || {
+    echo "error: contender record for $id is malformed; refusing settlement" >&2
+    return 1
+  }
+  [ "$phase" = awaiting-pick ] || {
+    echo "error: contender $id is not awaiting a pick" >&2
+    return 1
+  }
+  write_record "$id" "$outcome" || {
+    echo "error: could not record contender $id as $outcome" >&2
+    return 1
+  }
+  rm -f -- "$(record_path "$id")" || {
+    echo "error: could not remove settled contender record for $id" >&2
+    return 1
+  }
+}
+
+settle() {  # <outcome> <id>...
+  local outcome=$1 id lock status
+  shift
+  case "$outcome" in picked|rejected|superseded) ;; *) usage >&2; return 2 ;; esac
+  [ "$#" -gt 0 ] || { usage >&2; return 2; }
+  for id in "$@"; do
+    fm_task_id_creation_valid "$id" || { echo "error: invalid task id: $id" >&2; return 2; }
+    lock=$(lock_path "$id")
+    fm_lock_acquire_wait "$lock"
+    status=0
+    settle_one "$outcome" "$id" || status=$?
+    fm_lock_release "$lock"
+    [ "$status" -eq 0 ] || return "$status"
     printf '%s %s\n' "$outcome" "$id"
   done
 }
@@ -215,7 +230,7 @@ list() {
       return 1
     }
     id=${path##*/}
-    valid_id "$id" || { echo "error: invalid contender record name: $id" >&2; return 1; }
+    fm_task_id_creation_valid "$id" || { echo "error: invalid contender record name: $id" >&2; return 1; }
     phase=$(read_record "$id") || { echo "error: malformed contender record: $path" >&2; return 1; }
     printf '%s %s data/%s/report.md\n' "$phase" "$id" "$id"
   done

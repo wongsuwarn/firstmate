@@ -107,10 +107,80 @@ test_malformed_record_fails_closed() {
   pass "fm-contender: malformed durable lifecycle evidence fails closed"
 }
 
+test_spawnable_task_ids_enter_the_lifecycle() {
+  local home stub out id
+  id='Design_v2.Final'
+  home=$(make_home spawnable-id "$id")
+  stub=$(make_teardown_stub "$home")
+  out=$(run_contender "$home" "$stub" await-pick "$id") || fail "spawnable mixed-character task id was rejected"
+  [ "$out" = "awaiting-pick $id data/$id/report.md" ] \
+    || fail "spawnable mixed-character task id produced the wrong lifecycle result: $out"
+  pass "fm-contender: lifecycle accepts every shared spawnable task id"
+}
+
+test_concurrent_settlement_cannot_resurrect_a_contender() {
+  local home stub await_pid settle_pid i second_entered=0
+  home=$(make_home concurrent contender-f6)
+  stub="$home/racing-teardown.sh"
+  cat > "$stub" <<'EOF'
+#!/usr/bin/env bash
+home=${FM_STATE_OVERRIDE%/state}
+while ! mkdir "$home/teardown-counter.lock" 2>/dev/null; do sleep 0.01; done
+count=$(cat "$home/teardown-count" 2>/dev/null || printf '0')
+count=$((count + 1))
+printf '%s\n' "$count" > "$home/teardown-count"
+rmdir "$home/teardown-counter.lock"
+if [ "$count" -eq 1 ]; then
+  : > "$home/first-entered"
+  while [ ! -e "$home/release-first" ]; do sleep 0.01; done
+else
+  : > "$home/second-entered"
+fi
+rm -f "$FM_STATE_OVERRIDE/$1.meta" "$FM_STATE_OVERRIDE/$1.status"
+EOF
+  chmod +x "$stub"
+
+  run_contender "$home" "$stub" await-pick contender-f6 > "$home/await.out" 2> "$home/await.err" &
+  await_pid=$!
+  i=0
+  while [ "$i" -lt 100 ]; do
+    [ -e "$home/first-entered" ] && break
+    sleep 0.01
+    i=$((i + 1))
+  done
+  [ -e "$home/first-entered" ] || fail "first contender transition did not reach teardown"
+
+  run_contender "$home" "$stub" settle rejected contender-f6 > "$home/settle.out" 2> "$home/settle.err" &
+  settle_pid=$!
+  i=0
+  while [ "$i" -lt 100 ]; do
+    if [ -e "$home/second-entered" ]; then
+      second_entered=1
+      break
+    fi
+    sleep 0.01
+    i=$((i + 1))
+  done
+  if [ "$second_entered" -eq 1 ]; then
+    wait "$settle_pid" || fail "concurrent settlement failed before the first transition resumed"
+  fi
+  : > "$home/release-first"
+  wait "$await_pid" || fail "await-pick failed after concurrent settlement"
+  if [ "$second_entered" -eq 0 ]; then
+    wait "$settle_pid" || fail "serialized concurrent settlement failed"
+  fi
+
+  [ ! -e "$home/state/contenders/contender-f6" ] || fail "concurrent settlement resurrected an awaiting-pick record"
+  [ "$(cat "$home/settle.out")" = 'rejected contender-f6' ] || fail "concurrent settlement did not complete"
+  pass "fm-contender: concurrent transitions serialize through terminal settlement"
+}
+
 test_await_pick_is_durable_and_releases_endpoint
 test_rejection_converges_cleanup_and_removes_leftover_record
 test_interrupted_settlement_converges_without_reopening_an_endpoint
 test_only_data_only_scouts_can_enter_lifecycle
 test_malformed_record_fails_closed
+test_spawnable_task_ids_enter_the_lifecycle
+test_concurrent_settlement_cannot_resurrect_a_contender
 
 echo "# all fm-contender tests passed"
