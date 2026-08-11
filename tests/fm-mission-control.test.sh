@@ -2782,6 +2782,7 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       const color=(name)=>root.getPropertyValue(name).trim();
       const liveProbe=Object.assign(document.body.appendChild(document.createElement('span')),{className:'dot'});
       const blockedProbe=Object.assign(document.body.appendChild(document.createElement('p')),{className:'rc-form-error'});
+      const answerProbe=document.querySelector('.rc-answer');
       const roles={
         bg:color('--bg'),panel:color('--panel'),ink:color('--ink'),line:color('--line'),
         needs:color('--needs-you'),live:color('--live'),blocked:color('--blocked'),accent:color('--accent'),
@@ -2789,7 +2790,9 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
         decisionBand:getComputedStyle(document.querySelector('.band')).backgroundColor,
         liveDot:getComputedStyle(liveProbe).backgroundColor,
         blockedBar:getComputedStyle(blockedProbe).color,
-        primary:getComputedStyle(document.querySelector('.rc-go')).backgroundColor
+        primary:getComputedStyle(document.querySelector('.rc-go')).backgroundColor,
+        answerInk:getComputedStyle(answerProbe).color,
+        answerSoft:getComputedStyle(answerProbe).backgroundColor
       };
       liveProbe.remove();blockedProbe.remove();return roles;
     })()`);
@@ -2823,6 +2826,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
       name+' does not distinguish live and blocked states through their semantic roles: '+JSON.stringify(roles));
     assert(contrast(roles.ink,roles.panel) >= 7 && contrast(roles.accent,roles.panel) >= 4.5,
       name+' misses executive-text or accent contrast: '+JSON.stringify(roles));
+    assert(contrast(roles.answerInk,roles.answerSoft) >= 4.5,
+      name+' misses Answer control contrast: '+JSON.stringify(roles));
   }
   assert(darkTheme.bg !== lightTheme.bg && darkTheme.panel !== lightTheme.panel,
     'dark and light preferences did not produce distinct rendered themes');

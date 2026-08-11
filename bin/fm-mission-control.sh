@@ -2340,8 +2340,8 @@ def health_block:
   :root{
     --bg:#f4f3f5; --panel:#ffffff; --panel-raised:#faf9fb; --panel-subtle:#efedf1;
     --ink:#17151a; --muted:#65606b; --faint:#8c8692; --line:#dfdce2;
-    --accent:#c42791; --accent-ink:#ffffff; --accent-soft:#f9e8f4; --accent-line:#e6add2;
-    --accent-glow:rgba(196,39,145,.32);
+    --accent:#c1268f; --accent-ink:#ffffff; --accent-soft:#f9e8f4; --accent-line:#e6add2;
+    --accent-glow:rgba(193,38,143,.32);
     --needs-you:var(--accent); --needs-you-soft:var(--accent-soft); --needs-you-line:var(--accent-line);
     --live:#137a58; --live-soft:#e7f4ee; --live-line:#add9c8;
     --blocked:#b63a49; --blocked-soft:#faebed; --blocked-line:#ebbbc1;
