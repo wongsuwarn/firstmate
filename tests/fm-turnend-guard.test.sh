@@ -1007,9 +1007,13 @@ test_pi_extension_injects_once_per_logical_agent_run() {
   ext="$repo/.pi/extensions/fm-primary-turnend-guard.ts"
   log="$TMP_ROOT/pi-logical-run-guard.log"
   mkdir -p "$repo/.pi/extensions/lib" "$repo/bin" "$home/state"
+  fm_git_init_commit "$repo"
+  : > "$repo/AGENTS.md"
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$ext"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
-  cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
+  cp "$ROOT/.pi/extensions/lib/fm-primary-scope.ts" "$repo/.pi/extensions/lib/fm-primary-scope.ts"
+  cp "$ROOT/bin/fm-operational-input.sh" "$ROOT/bin/fm-primary-scope.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$repo/bin/"
+  chmod +x "$repo/bin/fm-primary-scope.sh"
   cat > "$repo/bin/fm-turnend-guard.sh" <<'SH'
 #!/usr/bin/env bash
 cat >/dev/null
@@ -1073,9 +1077,13 @@ test_pi_extension_retries_after_followup_delivery_failure() {
   home="$TMP_ROOT/pi-delivery-failure-home"
   ext="$repo/.pi/extensions/fm-primary-turnend-guard.ts"
   mkdir -p "$repo/.pi/extensions/lib" "$repo/bin" "$home/state"
+  fm_git_init_commit "$repo"
+  : > "$repo/AGENTS.md"
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$ext"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
-  cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
+  cp "$ROOT/.pi/extensions/lib/fm-primary-scope.ts" "$repo/.pi/extensions/lib/fm-primary-scope.ts"
+  cp "$ROOT/bin/fm-operational-input.sh" "$ROOT/bin/fm-primary-scope.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$repo/bin/"
+  chmod +x "$repo/bin/fm-primary-scope.sh"
   cat > "$repo/bin/fm-turnend-guard.sh" <<'SH'
 #!/usr/bin/env bash
 cat >/dev/null

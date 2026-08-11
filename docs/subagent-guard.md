@@ -134,7 +134,21 @@ It costs one line and removes the failure mode where a rename or a rollback sile
 ## Scope
 
 The shipped hook fires only in a genuine firstmate primary home, using the shared predicate `fm_primary_scope_matches` from `bin/fm-primary-scope-lib.sh`.
-This is the same predicate `bin/fm-sessionstart-nudge.sh` and `bin/fm-turnend-guard.sh` use, so the three tracked primary-scoped hooks cannot drift apart.
+`bin/fm-primary-scope.sh` is the executable adapter boundary for integrations that cannot source the shell library directly.
+Each tracked session-start, turn-end, and watcher integration listed below uses that predicate before it injects an instruction, blocks a turn end, registers a watcher arm, exposes an away-mode affordance, or writes a primary marker.
+This keeps a linked task worktree inert even when it inherits a primary home's `FM_HOME` or state path.
+
+| Harness | Tracked project-local primary integration | Linked task worktree result |
+| --- | --- | --- |
+| Claude | `.claude/settings.json` routes session start and Stop through scoped shell entrypoints. | Inert. |
+| Codex | `.codex/hooks.json` routes session start and Stop through scoped shell entrypoints. | Inert. |
+| Grok | `.grok/hooks/` routes session start and Stop through scoped shell entrypoints. | Inert. |
+| OpenCode | The nudge and turn-end plugins route through scoped shell entrypoints, and the watcher coordinator calls `bin/fm-primary-scope.sh` before it installs. | Inert. |
+| Pi and pi-signed | Both tracked primary extensions call `bin/fm-primary-scope.sh` before registering handlers, markers, or the watcher command and tool. | Inert. |
+| Kimi | Kimi has no tracked project-local primary integration. Its global token hook is crew-only. | Not applicable. |
+
+The first five rows propagate into this repository's linked worktrees because their hook or plugin configuration is tracked with the project.
+The Kimi row was inspected to make the non-applicability explicit rather than assumed.
 
 A home is in scope when it has `AGENTS.md`, a `bin/` directory, an existing state directory, and either a plain checkout where git-dir equals git-common-dir or a valid `.fm-secondmate-home` marker.
 A marked secondmate home is in scope on purpose: it operates its own fleet and must dispatch through it for the same durability reasons.
