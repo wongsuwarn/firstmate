@@ -851,11 +851,11 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
     }
     wait "$pid" 2>/dev/null || true
     i=0
-    while fm_remote_job_lock_owner_matches_process "$account_home" && [ "$i" -lt 100 ]; do
+    while fm_remote_job_lock_owner_matches_process "$account_home" 2>/dev/null && [ "$i" -lt 100 ]; do
       i=$((i + 1))
       sleep 0.1
     done
-    if fm_remote_job_lock_owner_matches_process "$account_home"; then
+    if fm_remote_job_lock_owner_matches_process "$account_home" 2>/dev/null; then
       FM_REMOTE_JOB_ERROR="stale remote job worker did not release its ownership safely"
       return 1
     fi
