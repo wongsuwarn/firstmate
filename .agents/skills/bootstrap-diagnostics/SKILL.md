@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, MAIN_DIVERGED, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, MISSION_CONTROL_STALE, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
+  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, MAIN_DIVERGED, SELF_UPDATE, SELF_UPDATE_BLOCKED, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, MISSION_CONTROL_STALE, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
   A silent bootstrap section, or a BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -34,6 +34,12 @@ When any diagnostic needs captain attention, report the plain consequence and re
   If the divergence survives that fetch, inspect the printed `git log origin/<default>..<default>` command to see what only exists locally, then reconcile manually - rebase or merge the local default branch onto `origin/<default>`, or open a PR to land the local-only commits upstream - before rerunning `/updatefirstmate`.
   This is a report only; do not attempt an automatic fix, and do not force-push, reset, or discard the locally-diverged commits without the captain's explicit authorization per `AGENTS.md`'s destructive-action boundary.
   In a read-only session that did not get the fleet lock, the same line is advisory and omits the `git fetch origin` instruction, leaving refresh and reconciliation to the session holding the fleet lock.
+- `SELF_UPDATE: <ff_target detail>; re-read AGENTS.md now` - bootstrap already fast-forwarded the primary checkout to origin (a merged firstmate PR), and that fast-forward changed `AGENTS.md`, `bin/`, or `.agents/skills/`.
+  Re-read `AGENTS.md` now, in this session, before relying on it further; this is the same "did the running firstmate's instructions change" signal `/updatefirstmate` reports as `reread-firstmate: yes`, just delivered automatically instead of by hand.
+  No captain action is needed - report only if the changed instructions materially affect work already under way.
+- `SELF_UPDATE_BLOCKED: <ff_target detail>; <consequence>` - the automatic fast-forward could not advance the primary checkout (dirty working tree, a divergence this fetch just revealed, a missing base, or a failed merge), so a merged firstmate PR has not reached this home yet, and anything it locally serves - including a Mission Control board - may still be running stale code.
+  Report the plain consequence to the captain per `AGENTS.md` section 9, then resolve the named reason (commit or stash the local change, or reconcile a divergence per the `MAIN_DIVERGED` bullet above) and rerun session start to confirm it clears.
+  Do not force, stash, or reset to clear it without the captain's explicit authorization.
 - `STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>` - the visible startup-memory budget is not a safe one-line positive decimal file; do not infer the default or propagate it.
   Correct the local primary file, then rerun session start so the normal convergence path can deliver the validated value to secondmate homes.
 - `CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>` - the optional dispatch profile file exists but failed low-cost bootstrap validation; stop profile-based dispatch, report the actionable error, and require correction of the malformed schema, unverified harness name, or invalid harness/effort pair rather than falling back around it or selecting a bad profile.
