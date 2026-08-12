@@ -118,8 +118,8 @@ test_predicate_secondmate_live_work_and_parent_attention_need_supervision() {
 }
 
 test_predicate_secondmate_terminal_status_heals_open_decisions() {
-  local state="$TMP_ROOT/pred-secondmate-terminal-heal/state" blocked_state="$TMP_ROOT/pred-secondmate-blocked-heal/state" read_only_state="$TMP_ROOT/pred-secondmate-read-only/state" before
-  mkdir -p "$state" "$blocked_state" "$read_only_state"
+  local state="$TMP_ROOT/pred-secondmate-terminal-heal/state" blocked_state="$TMP_ROOT/pred-secondmate-blocked-heal/state" read_only_state="$TMP_ROOT/pred-secondmate-read-only/state" race_state="$TMP_ROOT/pred-secondmate-race/state" before race_pid race_rc
+  mkdir -p "$state" "$blocked_state" "$read_only_state" "$race_state"
   printf 'kind=secondmate\n' > "$state/mate.meta"
   printf 'needs-decision [key=scope]: choose the next route\ndone [corr=0123456789abcdef]: route completed\n' > "$state/mate.status"
   if fm_supervision_needed "$state" 300; then
@@ -148,7 +148,22 @@ test_predicate_secondmate_terminal_status_heals_open_decisions() {
   fm_supervision_needed "$read_only_state" 300 1 || fail "read-only supervision must retain a ghost decision as supervised"
   [ "$(cat "$read_only_state/mate.status")" = "$before" ] \
     || fail "read-only supervision must not append a durable resolution"
-  pass "fm_supervision_needed: terminal secondmate statuses heal only with mutation authority"
+
+  printf 'kind=secondmate\n' > "$race_state/mate.meta"
+  printf 'needs-decision [key=scope]: choose the old route\ndone: old route completed\n' > "$race_state/mate.status"
+  fm_status_lock_acquire "$race_state/mate.status" || fail "could not hold the status append boundary"
+  (fm_supervision_needed "$race_state" 300; printf '%s\n' "$?" > "$race_state/result") &
+  race_pid=$!
+  sleep 0.2
+  fm_status_append_locked "$race_state/mate.status" 'needs-decision [key=scope]: choose the new route' \
+    || fail "could not append the concurrent live decision"
+  fm_status_lock_release "$race_state/mate.status"
+  wait "$race_pid" || true
+  race_rc=$(cat "$race_state/result")
+  [ "$race_rc" -eq 0 ] || fail "a concurrently appended live decision must remain supervised"
+  ! grep -Fq 'terminal done closed an earlier decision' "$race_state/mate.status" \
+    || fail "healing must re-check terminal state after acquiring the append boundary"
+  pass "fm_supervision_needed: terminal healing preserves concurrent live decisions"
 }
 
 test_predicate_secondmate_pending_reply_evidence_fails_closed() {
@@ -252,6 +267,7 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-harness.sh" "$dir/bin/fm-harness.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
+  cp "$ROOT/bin/fm-status-lib.sh" "$dir/bin/fm-status-lib.sh"
   cp "$ROOT/bin/fm-classify-lib.sh" "$dir/bin/fm-classify-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   mkdir -p "$dir/docs"
@@ -1229,6 +1245,7 @@ install_integrated_autoarm() {
   cp "$ROOT/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-claude-stop-autoarm.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
+  cp "$ROOT/bin/fm-status-lib.sh" "$dir/bin/fm-status-lib.sh"
   cp "$ROOT/bin/fm-classify-lib.sh" "$dir/bin/fm-classify-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"

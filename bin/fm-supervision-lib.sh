@@ -18,6 +18,8 @@
 # shellcheck source=bin/fm-classify-lib.sh
 _FM_SUPERVISION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_SUPERVISION_LIB_DIR="."
 . "$_FM_SUPERVISION_LIB_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-status-lib.sh
+. "$_FM_SUPERVISION_LIB_DIR/fm-status-lib.sh"
 
 # Portable mtime; Linux stat lacks -f, macOS stat lacks -c.
 fm_sup_stat_mtime() {
@@ -88,28 +90,30 @@ fm_sup_pending_reply_task_has_open() {  # <state-dir> <task-id>
 # here, at the supervision predicate boundary, without changing that shared fold
 # contract for any other consumer.
 fm_sup_reconcile_secondmate_ghost_decisions() {  # <status-file>
-  local status=$1 last verb decisions line key
+  local status=$1 last verb decisions line key rc=0
   [ -f "$status" ] && [ ! -L "$status" ] && [ -r "$status" ] || return 1
+  fm_status_lock_acquire "$status" || return 1
   last=$(last_status_line "$status")
   verb=$(status_line_verb "$last")
   case "$verb" in
     done|resolved|captain-held) ;;
-    *) return 0 ;;
+    *) fm_status_lock_release "$status"; return 0 ;;
   esac
   decisions=$(status_open_decisions "$status")
-  [ -n "$decisions" ] || return 0
+  [ -n "$decisions" ] || { fm_status_lock_release "$status"; return 0; }
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     key=${line%%$'\t'*}
     if [ "$key" = default ]; then
-      printf 'resolved: terminal %s closed an earlier decision\n' "$verb" >> "$status" || return 1
+      fm_status_append_locked "$status" "resolved: terminal $verb closed an earlier decision" || { rc=1; break; }
     else
-      printf 'resolved [key=%s]: terminal %s closed an earlier decision\n' "$key" "$verb" >> "$status" || return 1
+      fm_status_append_locked "$status" "resolved [key=$key]: terminal $verb closed an earlier decision" || { rc=1; break; }
     fi
   done <<EOF
 $decisions
 EOF
-  return 0
+  fm_status_lock_release "$status"
+  return "$rc"
 }
 
 fm_sup_secondmate_needs_supervision() {  # <state-dir> <task-id> [read-only]
