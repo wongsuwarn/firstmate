@@ -2313,7 +2313,8 @@ a.ship:hover{background:var(--hover);}
 .quota-snapshot{max-width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:9px;
   background:var(--panel-subtle);scrollbar-color:var(--control-line) transparent;}
 .quota-snapshot pre{width:max-content;min-width:100%;margin:0;padding:12px;color:var(--ink);
-  font:11px/1.45 var(--mono);white-space:pre;tab-size:2;}
+  font-family:\"SFMono-Regular\",\"SF Mono\",\"DejaVu Sans Mono\",\"Noto Sans Mono\",\"Liberation Mono\",Menlo,Consolas,monospace;
+  font-size:11px;line-height:1;letter-spacing:0;white-space:pre;tab-size:2;}
 
 footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overflow-wrap:anywhere;}
 
@@ -2347,6 +2348,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
   .defer .tag{width:auto}
   .shelf summary,.shelf-note{padding-left:16px;padding-right:16px}
   .allowance-pane{padding:16px}
+  .quota-snapshot pre{font-size:7px;padding:8px}
   .dispatch-rule{padding:15px 16px;}
   .dispatch-note{padding-left:16px;padding-right:16px;}
   .dispatch-rule-head{grid-template-columns:minmax(0,1fr) auto;gap:6px 8px;}
