@@ -90,9 +90,14 @@ fm_sup_pending_reply_task_has_open() {  # <state-dir> <task-id>
 # here, at the supervision predicate boundary, without changing that shared fold
 # contract for any other consumer.
 fm_sup_reconcile_secondmate_ghost_decisions() {  # <status-file>
-  local status=$1 last verb decisions line key rc=0
+  local status=$1 last verb decisions line key rc=0 snapshot_bytes heal_id payload='' delta before='' seen=0
   [ -f "$status" ] && [ ! -L "$status" ] && [ -r "$status" ] || return 1
   fm_status_lock_acquire "$status" || return 1
+  snapshot_bytes=$(LC_ALL=C wc -c < "$status" | tr -d ' ') || {
+    fm_status_lock_release "$status"
+    return 1
+  }
+  case "$snapshot_bytes" in ''|*[!0-9]*) fm_status_lock_release "$status"; return 1 ;; esac
   last=$(last_status_line "$status")
   verb=$(status_line_verb "$last")
   case "$verb" in
@@ -101,17 +106,36 @@ fm_sup_reconcile_secondmate_ghost_decisions() {  # <status-file>
   esac
   decisions=$(status_open_decisions "$status")
   [ -n "$decisions" ] || { fm_status_lock_release "$status"; return 0; }
+  heal_id="${BASHPID:-$$}-$(date +%s)-$snapshot_bytes"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     key=${line%%$'\t'*}
     if [ "$key" = default ]; then
-      fm_status_append_locked "$status" "resolved: terminal $verb closed an earlier decision" || { rc=1; break; }
+      payload="${payload}resolved: terminal $verb closed an earlier decision [heal=$heal_id]"$'\n'
     else
-      fm_status_append_locked "$status" "resolved [key=$key]: terminal $verb closed an earlier decision" || { rc=1; break; }
+      payload="${payload}resolved [key=$key]: terminal $verb closed an earlier decision [heal=$heal_id]"$'\n'
     fi
   done <<EOF
 $decisions
 EOF
+  printf '%s' "$payload" >> "$status" || rc=1
+  if [ "$rc" -eq 0 ]; then
+    delta=$(tail -c "+$((snapshot_bytes + 1))" "$status") || rc=1
+  fi
+  if [ "$rc" -eq 0 ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        *"[heal=$heal_id]") seen=1 ;;
+        *) [ "$seen" -eq 1 ] || before="${before}${line}"$'\n' ;;
+      esac
+    done <<EOF
+$delta
+EOF
+    [ "$seen" -eq 1 ] || rc=1
+  fi
+  if [ "$rc" -eq 0 ] && [ -n "$before" ]; then
+    printf '%s' "$before" >> "$status" || rc=1
+  fi
   fm_status_lock_release "$status"
   return "$rc"
 }

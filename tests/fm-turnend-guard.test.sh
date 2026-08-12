@@ -126,12 +126,12 @@ test_predicate_secondmate_terminal_status_heals_open_decisions() {
     fail "a terminal done status must heal an earlier secondmate decision and become idle"
   fi
   [ "$FM_SUP_IN_FLIGHT" -eq 0 ] || fail "a healed secondmate must be excluded from the in-flight banner count"
-  grep -Fx 'resolved [key=scope]: terminal done closed an earlier decision' "$state/mate.status" >/dev/null \
+  grep -F 'resolved [key=scope]: terminal done closed an earlier decision [heal=' "$state/mate.status" >/dev/null \
     || fail "terminal done must append a keyed resolution for the earlier decision"
   if fm_supervision_needed "$state" 300; then
     fail "a second supervision pass must leave the healed secondmate idle"
   fi
-  [ "$(grep -Fc 'resolved [key=scope]: terminal done closed an earlier decision' "$state/mate.status")" -eq 1 ] \
+  [ "$(grep -Fc 'resolved [key=scope]: terminal done closed an earlier decision [heal=' "$state/mate.status")" -eq 1 ] \
     || fail "reconciling a healed decision must not append a duplicate resolution"
 
   printf 'kind=secondmate\n' > "$blocked_state/mate.meta"
@@ -139,7 +139,7 @@ test_predicate_secondmate_terminal_status_heals_open_decisions() {
   if fm_supervision_needed "$blocked_state" 300; then
     fail "a terminal done status must heal an earlier secondmate blocker and become idle"
   fi
-  grep -Fx 'resolved: terminal done closed an earlier decision' "$blocked_state/mate.status" >/dev/null \
+  grep -F 'resolved: terminal done closed an earlier decision [heal=' "$blocked_state/mate.status" >/dev/null \
     || fail "terminal done must append a bare resolution for the default blocker"
 
   printf 'kind=secondmate\n' > "$read_only_state/mate.meta"
@@ -151,18 +151,26 @@ test_predicate_secondmate_terminal_status_heals_open_decisions() {
 
   printf 'kind=secondmate\n' > "$race_state/mate.meta"
   printf 'needs-decision [key=scope]: choose the old route\ndone: old route completed\n' > "$race_state/mate.status"
-  fm_status_lock_acquire "$race_state/mate.status" || fail "could not hold the status append boundary"
+  i=0
+  while [ "$i" -lt 200 ]; do
+    printf 'needs-decision [key=old-%s]: choose old route %s\ndone: old route %s completed\n' "$i" "$i" "$i" >> "$race_state/mate.status"
+    i=$((i + 1))
+  done
   (fm_supervision_needed "$race_state" 300; printf '%s\n' "$?" > "$race_state/result") &
   race_pid=$!
-  sleep 0.2
-  fm_status_append_locked "$race_state/mate.status" 'needs-decision [key=scope]: choose the new route' \
-    || fail "could not append the concurrent live decision"
-  fm_status_lock_release "$race_state/mate.status"
+  i=0
+  while [ ! -d "$race_state/mate.status.append.lock" ] && [ "$i" -lt 100 ]; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  [ -d "$race_state/mate.status.append.lock" ] || fail "healing did not acquire the status append boundary"
+  sleep 0.05
+  printf 'needs-decision [key=scope]: choose the new route\n' >> "$race_state/mate.status"
   wait "$race_pid" || true
   race_rc=$(cat "$race_state/result")
   [ "$race_rc" -eq 0 ] || fail "a concurrently appended live decision must remain supervised"
-  ! grep -Fq 'terminal done closed an earlier decision' "$race_state/mate.status" \
-    || fail "healing must re-check terminal state after acquiring the append boundary"
+  [ "$(status_open_decisions "$race_state/mate.status" | awk -F '\t' '$1 == "scope" { count++ } END { print count + 0 }')" -eq 1 ] \
+    || fail "healing must preserve a direct live decision appended ahead of its resolutions"
   pass "fm_supervision_needed: terminal healing preserves concurrent live decisions"
 }
 
