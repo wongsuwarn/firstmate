@@ -30,7 +30,7 @@ fm_sup_stat_mtime() {
   fi
 }
 
-# fm_supervision_status <state-dir> [grace-seconds]
+# fm_supervision_status <state-dir> [grace-seconds] [read-only]
 # Populates, for the state dir at $1:
 #   FM_SUP_IN_FLIGHT      count of tasks that need a watcher; positively idle
 #                         secondmates are excluded so caller banners are truthful

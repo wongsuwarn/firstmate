@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-secondmate-report.sh - optional helper to append a correlated parent report.
+# fm-secondmate-report.sh - serialize parent status appends and correlated reports.
 #
 # A secondmate answering a marked from-firstmate request must report on the
 # parent status channel with the request's corr=<id> token. This helper makes
@@ -8,6 +8,7 @@
 # (bin/fm-pending-reply-lib.sh).
 #
 # Usage:
+#   fm-secondmate-report.sh --line <status-file> <status-line...>
 #   fm-secondmate-report.sh <status-file> <verb> <corr_id> <note...>
 #   fm-secondmate-report.sh --doc <status-file> <verb> <corr_id> <doc-path> <note...>
 #
