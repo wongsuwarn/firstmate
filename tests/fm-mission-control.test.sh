@@ -2001,6 +2001,7 @@ esac
 case "$mode" in
   happy)
     printf '\\033[1;36mquota-axi · fixture allowance\\033[0m\\n'
+    printf '\\033]8;;https://example.invalid/\\033\\\\quota docs\\033]8;;\\033\\\\\\n'
     printf '╭──────────────────────────────────────────────────────────────────────────╮\\n'
     printf '│  72%% week  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━          │\\n'
     printf '│  <img src=x onerror=alert(1)>                                             │\\n'
@@ -2024,8 +2025,12 @@ test_quota_axi_tui_snapshot_renders_safely() {
     || fail "a quota-axi TUI snapshot must render"
   assert_grep 'quota-axi · fixture allowance' "$board" \
     "the board must retain quota-axi's snapshot heading"
+  assert_grep 'quota docs' "$board" "safe text inside an ANSI hyperlink must remain visible"
   assert_grep '72% week' "$board" "the board must retain quota-axi's allowance numbers"
   assert_grep '━━━━━━━━━━━━━━━━' "$board" "the board must retain quota-axi's text bars"
+  assert_no_grep '\[1;36m' "$board" "ANSI styling parameters must not become visible text"
+  assert_no_grep '\[0m' "$board" "ANSI resets must not become visible text"
+  assert_no_grep 'example.invalid' "$board" "ANSI hyperlink controls must not become visible text"
   assert_grep 'class="quota-snapshot"' "$board" "the snapshot must have its own scrollable surface"
   assert_grep '&lt;img src=x onerror=alert(1)&gt;' "$board" \
     "quota output must be escaped as text"

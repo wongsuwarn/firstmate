@@ -415,9 +415,9 @@ if completed.returncode != 0:
     sys.exit(4)
 
 text = completed.stdout.decode("utf-8", errors="replace")
-text = re.sub(r"\\x1b\][^\x07\x1b]*(?:\x07|\\x1b\\\\)", "", text)
-text = re.sub(r"\\x1b\[[0-?]*[ -/]*[@-~]", "", text)
-text = re.sub(r"\\x1b[ -/]*[@-~]", "", text)
+text = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", text)
+text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+text = re.sub(r"\x1b[ -/]*[@-~]", "", text)
 text = "".join(character for character in text if character in "\n\t" or ord(character) >= 32)
 if not text.strip():
     sys.exit(5)
