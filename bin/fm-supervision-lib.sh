@@ -112,8 +112,8 @@ EOF
   return 0
 }
 
-fm_sup_secondmate_needs_supervision() {  # <state-dir> <task-id>
-  local state=$1 task_id=$2 status line prefix rest token verb key corr saw=0 decisions activities last have_key=0 have_corr=0
+fm_sup_secondmate_needs_supervision() {  # <state-dir> <task-id> [read-only]
+  local state=$1 task_id=$2 read_only=${3:-0} status line prefix rest token verb key corr saw=0 decisions activities last have_key=0 have_corr=0
   status="$state/$task_id.status"
   [ -f "$status" ] && [ ! -L "$status" ] && [ -r "$status" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
@@ -176,7 +176,9 @@ fm_sup_secondmate_needs_supervision() {  # <state-dir> <task-id>
     done|resolved|captain-held) ;;
     *) return 0 ;;
   esac
-  fm_sup_reconcile_secondmate_ghost_decisions "$status" || return 0
+  if [ "$read_only" != 1 ]; then
+    fm_sup_reconcile_secondmate_ghost_decisions "$status" || return 0
+  fi
   decisions=$(status_open_decisions "$status")
   [ -z "$decisions" ] || return 0
   activities=$(status_open_activities "$status")
@@ -186,7 +188,7 @@ fm_sup_secondmate_needs_supervision() {  # <state-dir> <task-id>
 }
 
 fm_supervision_status() {
-  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} meta source beat m age task_id
+  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} read_only=${3:-0} meta source beat m age task_id
   FM_SUP_IN_FLIGHT=0
   FM_SUP_NEEDED=false
   FM_SUP_WATCHER_FRESH=false
@@ -198,7 +200,7 @@ fm_supervision_status() {
     if grep -qx 'kind=secondmate' "$meta" 2>/dev/null; then
       task_id=$(basename "$meta")
       task_id=${task_id%.meta}
-      fm_sup_secondmate_needs_supervision "$state" "$task_id" || continue
+      fm_sup_secondmate_needs_supervision "$state" "$task_id" "$read_only" || continue
     fi
     FM_SUP_IN_FLIGHT=$((FM_SUP_IN_FLIGHT + 1))
   done
@@ -231,7 +233,7 @@ fm_supervision_status() {
   return 0
 }
 
-# fm_supervision_needed <state-dir> [grace-seconds]
+# fm_supervision_needed <state-dir> [grace-seconds] [read-only]
 # Exit 0 (true) exactly when the home needs a watcher.
 fm_supervision_needed() {
   fm_supervision_status "$@"

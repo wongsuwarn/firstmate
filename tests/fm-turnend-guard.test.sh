@@ -118,8 +118,8 @@ test_predicate_secondmate_live_work_and_parent_attention_need_supervision() {
 }
 
 test_predicate_secondmate_terminal_status_heals_open_decisions() {
-  local state="$TMP_ROOT/pred-secondmate-terminal-heal/state" blocked_state="$TMP_ROOT/pred-secondmate-blocked-heal/state"
-  mkdir -p "$state" "$blocked_state"
+  local state="$TMP_ROOT/pred-secondmate-terminal-heal/state" blocked_state="$TMP_ROOT/pred-secondmate-blocked-heal/state" read_only_state="$TMP_ROOT/pred-secondmate-read-only/state" before
+  mkdir -p "$state" "$blocked_state" "$read_only_state"
   printf 'kind=secondmate\n' > "$state/mate.meta"
   printf 'needs-decision [key=scope]: choose the next route\ndone [corr=0123456789abcdef]: route completed\n' > "$state/mate.status"
   if fm_supervision_needed "$state" 300; then
@@ -141,7 +141,14 @@ test_predicate_secondmate_terminal_status_heals_open_decisions() {
   fi
   grep -Fx 'resolved: terminal done closed an earlier decision' "$blocked_state/mate.status" >/dev/null \
     || fail "terminal done must append a bare resolution for the default blocker"
-  pass "fm_supervision_needed: terminal secondmate statuses heal ghost decisions and blockers"
+
+  printf 'kind=secondmate\n' > "$read_only_state/mate.meta"
+  printf 'needs-decision [key=scope]: choose the next route\ndone: route completed\n' > "$read_only_state/mate.status"
+  before=$(cat "$read_only_state/mate.status")
+  fm_supervision_needed "$read_only_state" 300 1 || fail "read-only supervision must retain a ghost decision as supervised"
+  [ "$(cat "$read_only_state/mate.status")" = "$before" ] \
+    || fail "read-only supervision must not append a durable resolution"
+  pass "fm_supervision_needed: terminal secondmate statuses heal only with mutation authority"
 }
 
 test_predicate_secondmate_pending_reply_evidence_fails_closed() {
