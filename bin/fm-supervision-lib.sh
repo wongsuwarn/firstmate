@@ -79,6 +79,39 @@ fm_sup_pending_reply_task_has_open() {  # <state-dir> <task-id>
   return 1
 }
 
+# Reconcile decision-fold process debt for a resting secondmate.
+#
+# The authoritative status fold intentionally keeps needs-decision and blocked
+# records open until a matching resolved/captain-held record exists.  Supervision
+# has a narrower concern: a secondmate that subsequently reports a terminal
+# state is not waiting for the parent to act.  Append the missing resolutions
+# here, at the supervision predicate boundary, without changing that shared fold
+# contract for any other consumer.
+fm_sup_reconcile_secondmate_ghost_decisions() {  # <status-file>
+  local status=$1 last verb decisions line key
+  [ -f "$status" ] && [ ! -L "$status" ] && [ -r "$status" ] || return 1
+  last=$(last_status_line "$status")
+  verb=$(status_line_verb "$last")
+  case "$verb" in
+    done|resolved|captain-held) ;;
+    *) return 0 ;;
+  esac
+  decisions=$(status_open_decisions "$status")
+  [ -n "$decisions" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    key=${line%%$'\t'*}
+    if [ "$key" = default ]; then
+      printf 'resolved: terminal %s closed an earlier decision\n' "$verb" >> "$status" || return 1
+    else
+      printf 'resolved [key=%s]: terminal %s closed an earlier decision\n' "$key" "$verb" >> "$status" || return 1
+    fi
+  done <<EOF
+$decisions
+EOF
+  return 0
+}
+
 fm_sup_secondmate_needs_supervision() {  # <state-dir> <task-id>
   local state=$1 task_id=$2 status line prefix rest token verb key corr saw=0 decisions activities last have_key=0 have_corr=0
   status="$state/$task_id.status"
@@ -138,15 +171,16 @@ fm_sup_secondmate_needs_supervision() {  # <state-dir> <task-id>
   done < "$status" || return 0
   [ "$saw" = 1 ] || return 0
 
-  decisions=$(status_open_decisions "$status")
-  [ -z "$decisions" ] || return 0
-  activities=$(status_open_activities "$status")
-  [ -z "$activities" ] || return 0
   last=$(last_status_line "$status")
   case "$(status_line_verb "$last")" in
     done|resolved|captain-held) ;;
     *) return 0 ;;
   esac
+  fm_sup_reconcile_secondmate_ghost_decisions "$status" || return 0
+  decisions=$(status_open_decisions "$status")
+  [ -z "$decisions" ] || return 0
+  activities=$(status_open_activities "$status")
+  [ -z "$activities" ] || return 0
   fm_sup_pending_reply_task_has_open "$state" "$task_id" && return 0
   return 1
 }

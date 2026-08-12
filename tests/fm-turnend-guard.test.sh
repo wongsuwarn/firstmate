@@ -92,7 +92,7 @@ test_predicate_idle_secondmate_with_corr_tokens_needs_no_supervision() {
   pass "fm_supervision_needed: corr-token done lines settle secondmate idle"
 }
 
-test_predicate_secondmate_work_and_parent_attention_need_supervision() {
+test_predicate_secondmate_live_work_and_parent_attention_need_supervision() {
   local state="$TMP_ROOT/pred-active-secondmate/state"
   mkdir -p "$state"
   printf 'kind=secondmate\n' > "$state/mate.meta"
@@ -106,15 +106,42 @@ test_predicate_secondmate_work_and_parent_attention_need_supervision() {
   fm_supervision_needed "$state" 300 || fail "an open parent pending reply must need supervision"
 
   rm -f "$state/pending-replies/request"
-  printf 'needs-decision [key=scope]: choose the next route\ndone: waiting\n' > "$state/mate.status"
-  fm_supervision_needed "$state" 300 || fail "a buried open secondmate decision must need supervision"
+  printf 'needs-decision [key=scope]: choose the next route\n' > "$state/mate.status"
+  fm_supervision_needed "$state" 300 || fail "a latest needs-decision must need supervision"
 
-  printf 'blocked [key=scope]: credential required\ndone: waiting\n' > "$state/mate.status"
-  fm_supervision_needed "$state" 300 || fail "a buried open secondmate blocker must need supervision"
+  printf 'blocked [key=scope]: credential required\n' > "$state/mate.status"
+  fm_supervision_needed "$state" 300 || fail "a latest blocked status must need supervision"
 
   printf 'failed [key=scope]: recovery required\n' > "$state/mate.status"
   fm_supervision_needed "$state" 300 || fail "a failed secondmate must need supervision until the parent reconciles it"
-  pass "fm_supervision_needed: active secondmate work, parent replies, and open decisions stay watched"
+  pass "fm_supervision_needed: live secondmate work, parent replies, decisions, blockers, and failures stay watched"
+}
+
+test_predicate_secondmate_terminal_status_heals_open_decisions() {
+  local state="$TMP_ROOT/pred-secondmate-terminal-heal/state" blocked_state="$TMP_ROOT/pred-secondmate-blocked-heal/state"
+  mkdir -p "$state" "$blocked_state"
+  printf 'kind=secondmate\n' > "$state/mate.meta"
+  printf 'needs-decision [key=scope]: choose the next route\ndone [corr=0123456789abcdef]: route completed\n' > "$state/mate.status"
+  if fm_supervision_needed "$state" 300; then
+    fail "a terminal done status must heal an earlier secondmate decision and become idle"
+  fi
+  [ "$FM_SUP_IN_FLIGHT" -eq 0 ] || fail "a healed secondmate must be excluded from the in-flight banner count"
+  grep -Fx 'resolved [key=scope]: terminal done closed an earlier decision' "$state/mate.status" >/dev/null \
+    || fail "terminal done must append a keyed resolution for the earlier decision"
+  if fm_supervision_needed "$state" 300; then
+    fail "a second supervision pass must leave the healed secondmate idle"
+  fi
+  [ "$(grep -Fc 'resolved [key=scope]: terminal done closed an earlier decision' "$state/mate.status")" -eq 1 ] \
+    || fail "reconciling a healed decision must not append a duplicate resolution"
+
+  printf 'kind=secondmate\n' > "$blocked_state/mate.meta"
+  printf 'blocked: credential required\ndone: credential supplied\n' > "$blocked_state/mate.status"
+  if fm_supervision_needed "$blocked_state" 300; then
+    fail "a terminal done status must heal an earlier secondmate blocker and become idle"
+  fi
+  grep -Fx 'resolved: terminal done closed an earlier decision' "$blocked_state/mate.status" >/dev/null \
+    || fail "terminal done must append a bare resolution for the default blocker"
+  pass "fm_supervision_needed: terminal secondmate statuses heal ghost decisions and blockers"
 }
 
 test_predicate_secondmate_pending_reply_evidence_fails_closed() {
@@ -1681,7 +1708,8 @@ test_predicate_unhealthy_stale_beacon
 test_predicate_healthy_fresh_beacon
 test_predicate_idle_secondmate_needs_no_supervision
 test_predicate_idle_secondmate_with_corr_tokens_needs_no_supervision
-test_predicate_secondmate_work_and_parent_attention_need_supervision
+test_predicate_secondmate_live_work_and_parent_attention_need_supervision
+test_predicate_secondmate_terminal_status_heals_open_decisions
 test_predicate_secondmate_pending_reply_evidence_fails_closed
 test_predicate_secondmate_status_evidence_fails_closed
 test_predicate_queue_pending_flag
