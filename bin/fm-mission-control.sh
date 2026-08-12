@@ -2561,7 +2561,7 @@ footer{color:var(--faint);font-size:12px;text-align:center;margin-top:10px;overf
 + health_block
 + "    </div>
     <div class=\"pane allowance-pane\" id=\"allowance\">
-      <h3>Allowance</h3><p class=\"system-link\"><a href=\"#dispatch\">Dispatch assignments above use quota-axi's provider budgets.</a></p>"
+      <h3>Allowance</h3><p class=\"system-link\"><a href=\"#dispatch\">Dispatch assignments above use these provider budgets.</a></p>"
 + quota_block
 + "    </div>
   </section>
