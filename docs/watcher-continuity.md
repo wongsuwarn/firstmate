@@ -53,6 +53,7 @@ A matching PID and identity lets an attached arm report the delivered reason and
 Only a cycle with no matching delivery record emits `watcher: FAILED - cycle ended without an actionable reason` and exits nonzero.
 
 The arm layer appends one tab-separated record per observed cycle to `state/.watch-cycle-exits.log`.
+A redundant owner-arm no-op observes no cycle, so it writes no lifecycle row and does not link a predecessor to a successor.
 Each record includes arm and watcher PIDs, start and end timestamps, exit code and signal, classified reason, beacon age, lock identity before and after close, and successor disposition.
 The file is size-capped through `FM_WATCH_CYCLE_LOG_MAX_BYTES` and `FM_WATCH_CYCLE_LOG_KEEP_LINES`.
 `state/.watch-triage.log` remains only the watcher's bounded absorbed-wake debug log and carries no lifecycle semantics.
@@ -64,7 +65,7 @@ Only the watcher process touches `state/.last-watcher-beat`; no helper process c
 
 `tests/fm-pi-watch-extension.test.sh` checks the linked-worktree inert path for both Pi primary extensions, Pi's first-cycle-or-explicit-repair tool metadata and ownership-based redundant-call no-ops, then simulates actionable and empty child closes against the actual Pi and OpenCode close handlers, blocks prompt delivery to prove the successor launches first, verifies single-flight behavior, changes the session lock before close to prove ownership is rechecked, and hangs each successor arm to prove bounded fallback delivery includes the typed restoration failure.
 The same suite covers ordinary same-process session replacement for `/new`, `/resume`, and `/fork`, same-instance shutdown-plus-start, stale prior-generation callbacks, repeated transitions with exactly one live cycle, disappearance of the shutting-down refusal after a valid replacement activates, and terminal quit still refusing late rearm.
-`tests/fm-watch-arm.test.sh` covers redundant owner-arm no-ops and orphaned-watcher attachment through the public arm interface.
+`tests/fm-watch-arm.test.sh` covers redundant owner-arm no-ops, the no-op lifecycle boundary, command-line ancestry lookalikes, and orphaned-watcher attachment through the public arm interface.
 `tests/fm-watcher-lock.test.sh` covers verified-successor attach, restart peer attachment, the typed self-eviction failure, bounded and successor-linked lifecycle rows, and a SIGSTOP counterfactual that distinguishes a live PID from a stale beacon before classifying termination.
 `tests/fm-subagent-pretool-check.test.sh` proves Claude retains only the non-status Bash seatbelts.
 `tests/fm-claude-stop-autoarm.test.sh` covers the auto-arm's primary and inherited-path linked-worktree scope, stale and live session owners, unchanged AFK and need boundaries, single-flight, bounded failure retries, benign live-watcher cycle ends, one-notice failure episodes, and exit-2 translation.

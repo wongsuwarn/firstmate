@@ -28,6 +28,7 @@ When you see a background-task-completed system reminder for the arm:
 4. Ordinary wake: re-arm the next cycle with the same background `bin/fm-watch-arm.sh` call if work remains in flight or X mode still needs polling.
 5. Do not invent a wake from an attach-status line alone.
    Drain the queue and act only on real wake records, the drain's `OPEN DECISIONS` entries, or a real watcher reason line.
+   If the completed task contains only `watcher: attached ...` and the drain is empty, the existing owner arm remains the live wait; do not re-arm from that completion.
    Re-arm reports and exits when an existing healthy cycle already has a live owner arm.
    It follows a verified successor chain only for an orphaned watcher that needs a waiting arm.
    See [`watcher-continuity.md`](../watcher-continuity.md) for the arm-layer successor and clean-close failure contract.

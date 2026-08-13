@@ -11,6 +11,9 @@
 # bin/fm-watch.sh holds the singleton, a real bin/fm-watch-arm.sh attaches to it,
 # and a real status change drives a real wake through the watcher-bound delivery
 # record and durable queue.
+if [ "${FM_WATCH_ARM_TEST_ANCESTRY_NOISE:-0}" != 1 ]; then
+  FM_WATCH_ARM_TEST_ANCESTRY_NOISE=1 exec bash "$0" fm-watch-arm.sh
+fi
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
@@ -28,7 +31,9 @@ TMP_ROOT=$(fm_test_tmproot fm-watch-arm-tests)
 SEED_PID=
 ARM_PID=
 
-# Start the real watcher as the singleton holder.
+# Start the real watcher as the singleton holder. The test shell's trailing
+# fm-watch-arm.sh argument pins the public ancestry classifier: a prompt,
+# wrapper, or controller that merely names the arm script is not its owner.
 start_seed_watcher() {  # <state> <fakebin> <watch-out>
   local state=$1 fakebin=$2 out=$3 i
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 \

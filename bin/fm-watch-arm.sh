@@ -79,7 +79,7 @@ case "${OSTYPE:-}" in
   *) ARM_CONFIRM_DEFAULT=10 ;;
 esac
 CONFIRM_TIMEOUT=${FM_ARM_CONFIRM_TIMEOUT:-$ARM_CONFIRM_DEFAULT}
-# Poll interval while attached to an existing healthy watcher.
+# Poll interval while waiting on an orphaned healthy watcher or restart peer.
 ATTACH_POLL=${FM_ARM_ATTACH_POLL:-0.5}
 CYCLE_LOG="$STATE/.watch-cycle-exits.log"
 CYCLE_LOG_LOCK="$STATE/.watch-cycle-exits.lock"
@@ -270,9 +270,14 @@ watch_parent_pid() {
 
 watch_arm_process() {
   local pid=$1 args
-  args=$(LC_ALL=C ps -p "$pid" -o args= 2>/dev/null) || return 1
+  args=$(LC_ALL=C ps -ww -p "$pid" -o args= 2>/dev/null) || return 1
   case "$args" in
-    *'/fm-watch-arm.sh'*|*' fm-watch-arm.sh'*|fm-watch-arm.sh*) return 0 ;;
+    *' --restart') args=${args% --restart} ;;
+    *' --arm') args=${args% --arm} ;;
+    *' arm') args=${args% arm} ;;
+  esac
+  case "$args" in
+    bash\ fm-watch-arm.sh|bash\ */fm-watch-arm.sh|*/bash\ fm-watch-arm.sh|*/bash\ */fm-watch-arm.sh|fm-watch-arm.sh|*/fm-watch-arm.sh) return 0 ;;
     *) return 1 ;;
   esac
 }
