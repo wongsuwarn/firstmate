@@ -450,13 +450,15 @@ fi
 # watcher still needs this arm to attach and wait. (--restart skips this: it just
 # stopped this home's watcher and wants a fresh one.)
 if [ "$mode" = arm ] && healthy_watcher; then
-  report_attached
   if healthy_watcher_has_live_owner_arm; then
+    report_attached
     exit 0
   fi
   cycle_begin "$HEALTHY_PID" attached "$HEALTHY_IDENTITY"
   # Only a waiting arm observes a cycle, so only it may link a predecessor row.
   cycle_mark_predecessor_successor "attached:$HEALTHY_PID"
+  # Publish attachment only after lifecycle state and signal handling are ready.
+  report_attached
   attach_and_wait "$HEALTHY_PID"
   exit $?
 fi
