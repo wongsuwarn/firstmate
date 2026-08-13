@@ -61,6 +61,45 @@ start_attached_arm() {  # <state> <fakebin> <arm-out> <confirm-timeout>
     || fail "arm did not attach to the live watcher: $(cat "$armout")"
 }
 
+test_redundant_arm_exits_when_live_owner_arm_waits() {
+  local dir state fakebin owner_out rearm_out owner_pid rearm_pid watcher_pid status i
+  dir=$(make_case redundant-owner-arm)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  owner_out="$dir/owner-arm.out"
+  rearm_out="$dir/rearm.out"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH_ARM" > "$owner_out" &
+  owner_pid=$!
+  i=0
+  while [ "$i" -lt 80 ]; do
+    grep -qF 'watcher: started pid=' "$owner_out" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -qF 'watcher: started pid=' "$owner_out" || fail "owner arm did not start a watcher: $(cat "$owner_out")"
+  watcher_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  is_live_non_zombie "$owner_pid" || fail "owner arm did not remain live with its watcher"
+
+  # A second public arm call must acknowledge the healthy cycle without becoming
+  # another long-lived waiter, while leaving the original owner and watcher alone.
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ARM_ATTACH_POLL=0.1 \
+    FM_ARM_CONFIRM_TIMEOUT=1 "$WATCH_ARM" > "$rearm_out" &
+  rearm_pid=$!
+  wait_for_exit "$rearm_pid" 80
+  status=$?
+  expect_code 0 "$status" "redundant arm must exit successfully"
+  grep -qF "watcher: attached pid=$watcher_pid" "$rearm_out" \
+    || fail "redundant arm did not report the healthy watcher: $(cat "$rearm_out")"
+  is_live_non_zombie "$owner_pid" || fail "redundant arm disturbed the live owner arm"
+  is_live_non_zombie "$watcher_pid" || fail "redundant arm disturbed the live watcher"
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$watcher_pid" ] \
+    || fail "redundant arm changed the healthy watcher's lock"
+  kill "$owner_pid" 2>/dev/null || true
+  wait "$owner_pid" 2>/dev/null || true
+  pass "watch-arm: redundant arm exits after attached while the live owner waits"
+}
+
 test_attached_arm_reports_the_delivered_wake() {
   local dir state fakebin out armout status
   dir=$(make_case attached-delivered-wake)
@@ -146,6 +185,7 @@ test_attached_arm_still_fails_on_a_wake_it_did_not_deliver() {
   pass "watch-arm: a cycle that delivered no wake of its own still fails loudly"
 }
 
+test_redundant_arm_exits_when_live_owner_arm_waits
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver
