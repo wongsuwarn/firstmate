@@ -81,10 +81,14 @@ test_redundant_arm_exits_when_live_owner_arm_waits() {
   watcher_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
   is_live_non_zombie "$owner_pid" || fail "owner arm did not remain live with its watcher"
 
+  # A redundant call observes no cycle, so it must not link a supplied prior
+  # arm record as though it had become the watcher's successor.
+  printf 'arm_pid=4242\twatcher_pid=none\torigin=started\tstarted_at=0\tended_at=0\texit_code=0\tsignal=none\treason=actionable-check\tbeacon_age=0\tlock_before=none\tlock_after=none\tsuccessor=none\n' \
+    > "$state/.watch-cycle-exits.log"
   # A second public arm call must acknowledge the healthy cycle without becoming
   # another long-lived waiter, while leaving the original owner and watcher alone.
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ARM_ATTACH_POLL=0.1 \
-    FM_ARM_CONFIRM_TIMEOUT=1 "$WATCH_ARM" > "$rearm_out" &
+    FM_ARM_CONFIRM_TIMEOUT=1 FM_WATCH_PREDECESSOR_ARM_PID=4242 "$WATCH_ARM" > "$rearm_out" &
   rearm_pid=$!
   wait_for_exit "$rearm_pid" 80
   status=$?
@@ -95,6 +99,10 @@ test_redundant_arm_exits_when_live_owner_arm_waits() {
   is_live_non_zombie "$watcher_pid" || fail "redundant arm disturbed the live watcher"
   [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$watcher_pid" ] \
     || fail "redundant arm changed the healthy watcher's lock"
+  grep -qF 'arm_pid=4242' "$state/.watch-cycle-exits.log" \
+    || fail "redundant arm rewrote the predecessor ledger row"
+  grep -qF 'successor=none' "$state/.watch-cycle-exits.log" \
+    || fail "redundant arm linked a predecessor without observing a cycle"
   kill "$owner_pid" 2>/dev/null || true
   wait "$owner_pid" 2>/dev/null || true
   pass "watch-arm: redundant arm exits after attached while the live owner waits"
