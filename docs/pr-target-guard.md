@@ -10,6 +10,8 @@ This document is the authoritative contract and verification record for firstmat
 
 The script accepts only an origin that identifies `wongsuwarn/firstmate`, runs `gh repo set-default origin`, and verifies the resulting default with `gh repo set-default --view`.
 
+It does not rewrite the origin URL or read, rewrite, or remove the upstream remote.
+
 It is idempotent because `gh repo set-default origin` repeatedly writes the same `remote.origin.gh-resolved=base` repository configuration value.
 
 On 2026-08-20, gh 2.97.0 was verified in a scratch Git repository carrying `origin=https://github.com/wongsuwarn/firstmate.git` and the third-party upstream remote.
@@ -40,9 +42,11 @@ Because enforcement occurs when `gh` or `gh-axi` executes, dynamic command names
 
 `bin/fm-pr-create-pretool-check.sh` verifies that both wrapper entry points are active before every harness Bash tool call and rejects directly detectable top-level `gh` or `gh-axi` PR creation that uses a command-local PATH or literal executable path without the required repository.
 
-Malformed hook payloads, unavailable checker dependencies, checker failures, adapter spawn failures, signal termination, invalid checker responses, and missing adapter preconditions refuse the unverified shell command.
+Malformed checker payloads, unavailable checker dependencies, checker failures, invalid checker responses, and the tested Codex, OpenCode, and Pi adapter failures refuse the unverified shell command.
 
 The tracked adapters cover Claude, Codex, Grok, OpenCode, Pi, and pi-signed, with pi-signed sharing Pi's extension path.
+
+The Grok adapter depends on Grok supplying `GROK_WORKSPACE_ROOT`; when that adapter precondition is absent, its hook exits without running the checker.
 
 The default repository binding means an ordinary bare, unqualified PR creation resolves to `wongsuwarn/firstmate`, so the accidental inferred-upstream path that prompted this change does not recur in a converged checkout.
 
@@ -50,7 +54,7 @@ The wrapper and PreToolUse checks are defence in depth for invocations they obse
 
 An absolute executable path always bypasses the PATH shim.
 
-The supported Bash hooks check only directly visible top-level literal paths and do not recurse into shell payloads or compound nodes, while dynamic path construction or execution outside those observed Bash transports can also bypass local interception.
+The supported Bash hooks check directly visible literal paths across top-level shell-list nodes but do not recurse into nested shell payloads, while dynamic path construction or execution outside those observed Bash transports can also bypass local interception.
 
 The portable regression drives the Claude and Codex stdin payloads, the Grok stdin payload, and the OpenCode and Pi CLI transports through the executable checker.
 
@@ -60,6 +64,22 @@ Run it with:
 
 ```sh
 tests/fm-pr-create-pretool-check.test.sh
+```
+
+On 2026-08-20, that portable regression completed with:
+
+```text
+ok - gh and gh-axi wrappers enforce expanded PR arguments without matching quoted text or comments
+ok - private boundary verification does not reserve the public gh verify command
+ok - detectable top-level literal-path and command-local-PATH PR calls receive target checks
+ok - every primary harness transport allows only an attested execution boundary
+ok - PR target wrapper remains active when the checkout origin changes
+ok - malformed PR-target hook transport denies the unverified command
+ok - OpenCode blocks checker spawn failure and signal termination
+ok - Pi and pi-signed block checker spawn failure and signal termination
+ok - Codex blocks missing checker and hook self-validation failures
+ok - PR target binding converges a clone and remains idempotent through its executable interface
+ok - bootstrap root override binds and verifies the selected checkout
 ```
 
 The adapter wiring uses the same established hook mechanisms that were live-validated for the watcher-arm and cd guards: Claude's stderr-only deny hook, Codex's exit-2 hook, Grok's stdout decision object, OpenCode's thrown `tool.execute.before` error, and Pi's `{ block: true }` tool-call result.
