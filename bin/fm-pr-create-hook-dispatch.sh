@@ -45,8 +45,7 @@ checker_args=(--command "$CMD")
 [ "$CLAUDE_MODE" -eq 0 ] || checker_args+=(--claude)
 output=$("$CHECKER" "${checker_args[@]}")
 status=$?
-printf '%s' "$output"
 case "$status" in
-  0|2) exit "$status" ;;
+  0|2) printf '%s' "$output"; exit "$status" ;;
   *) allow_unclassified "the checker exited abnormally" ;;
 esac

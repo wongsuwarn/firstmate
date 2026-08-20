@@ -52,6 +52,8 @@ When the wrapper, Node runtime, policy file, checker executable, or checker proc
 
 The same loud allowance applies when the hook payload cannot be classified or the parser exits abnormally.
 
+Checker output is replayed only after a recognized success or denial status, so an incomplete checker run cannot publish a denial verdict.
+
 The guard does not approximate shell parsing when the tracked parser is unavailable.
 
 When parsing succeeds, a visible target violation is refused, and an unavailable tracked PATH-shim execution boundary refuses only the visible PR creation that needs it.
@@ -92,6 +94,7 @@ ok - unavailable parser prerequisites allow commands with a loud diagnostic
 ok - every primary harness transport scopes boundary enforcement to visible PR creation
 ok - PR target wrapper remains active when the checkout origin changes
 ok - malformed PR-target hook transport allows with a loud diagnostic
+ok - checker output is replayed only for recognized statuses across harnesses
 ok - OpenCode allows checker failures with a loud diagnostic
 ok - Claude and Grok allow checker failures with a loud diagnostic
 ok - Pi and pi-signed allow checker failures with a loud diagnostic

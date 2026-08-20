@@ -224,6 +224,79 @@ test_malformed_transport_allows_with_diagnostic() {
   pass "malformed PR-target hook transport allows with a loud diagnostic"
 }
 
+make_dispatch_result_fixture() {
+  local dir=$1
+  mkdir -p "$dir/.codex" "$dir/bin"
+  : > "$dir/AGENTS.md"
+  cp "$ROOT/.codex/hooks.json" "$dir/.codex/hooks.json"
+  cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$dir/bin/"
+  cat > "$dir/bin/fm-pr-create-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+case "${2-}" in
+  *'gh pr create'*)
+    printf '%s\n' '{"decision":"deny","reason":"synthetic denial"}'
+    case "${FM_TEST_CHECKER_RESULT:?}" in
+      abnormal) exit 3 ;;
+      deny) exit 2 ;;
+    esac
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/bin/fm-pr-create-hook-dispatch.sh" "$dir/bin/fm-pr-create-pretool-check.sh"
+}
+
+run_dispatch_result_case() {
+  local entry=$1 mode=$2 command=$3 fixture=$4 out=$5 err=$6
+  case "$entry" in
+    codex)
+      jq -cn --arg command "$command" '{tool_input:{command:$command}}' \
+        | (cd "$fixture" && env FM_TEST_CHECKER_RESULT="$mode" "$fixture/bin/fm-pr-create-hook-dispatch.sh" --codex) >"$out" 2>"$err"
+      ;;
+    claude)
+      jq -cn --arg command "$command" '{tool_input:{command:$command}}' \
+        | env FM_TEST_CHECKER_RESULT="$mode" "$fixture/bin/fm-pr-create-hook-dispatch.sh" --claude >"$out" 2>"$err"
+      ;;
+    grok)
+      jq -cn --arg command "$command" '{toolInput:{command:$command}}' \
+        | env FM_TEST_CHECKER_RESULT="$mode" "$fixture/bin/fm-pr-create-hook-dispatch.sh" >"$out" 2>"$err"
+      ;;
+    opencode|pi)
+      env FM_TEST_CHECKER_RESULT="$mode" "$fixture/bin/fm-pr-create-hook-dispatch.sh" \
+        --command "$command" >"$out" 2>"$err"
+      ;;
+  esac
+}
+
+test_checker_output_requires_recognized_status() {
+  local command entry err fixture mode out rc
+  fixture="$TMP_ROOT/dispatch-result"
+  make_dispatch_result_fixture "$fixture"
+  for entry in codex claude grok opencode pi; do
+    for mode in abnormal deny; do
+      out="$TMP_ROOT/$entry-$mode.out"
+      err="$TMP_ROOT/$entry-$mode.err"
+      rc=0
+      run_dispatch_result_case "$entry" "$mode" 'git status' "$fixture" "$out" "$err" || rc=$?
+      [ "$rc" -eq 0 ] || fail "$entry $mode checker changed an ordinary command result: $rc"
+      [ ! -s "$out" ] && [ ! -s "$err" ] || fail "$entry $mode checker changed ordinary command output"
+
+      rc=0
+      command='gh pr create --repo wongsuwarn/firstmate --base main'
+      run_dispatch_result_case "$entry" "$mode" "$command" "$fixture" "$out" "$err" || rc=$?
+      if [ "$mode" = abnormal ]; then
+        [ "$rc" -eq 0 ] || fail "$entry abnormal checker must allow, got $rc"
+        [ ! -s "$out" ] || fail "$entry abnormal checker replayed an incomplete denial: $(cat "$out")"
+        assert_grep 'pr-target-classification-unavailable' "$err" "$entry abnormal checker omitted its diagnostic"
+      else
+        [ "$rc" -eq 2 ] || fail "$entry completed denial must refuse, got $rc"
+        assert_grep 'synthetic denial' "$out" "$entry completed denial output was not replayed"
+      fi
+    done
+  done
+  pass "checker output is replayed only for recognized statuses across harnesses"
+}
+
 test_opencode_adapter_failures_allow_with_diagnostic() {
   local plugin=$ROOT/.opencode/plugins/fm-pr-create-pretool-check.js missing signal out root status=0
   missing="$TMP_ROOT/opencode-missing"
@@ -511,6 +584,7 @@ test_unavailable_dependencies_allow_with_diagnostic
 test_all_harness_transports_scope_boundary_enforcement
 test_guard_survives_origin_change
 test_malformed_transport_allows_with_diagnostic
+test_checker_output_requires_recognized_status
 test_opencode_adapter_failures_allow_with_diagnostic
 test_direct_hook_adapter_failures_allow_with_diagnostic
 test_pi_adapter_failures_allow_with_diagnostic
