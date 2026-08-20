@@ -26,11 +26,19 @@ EOF
 }
 
 emit_deny() {
-  local escaped
-  escaped=$(printf '%s' "[pr-target-boundary-unavailable] cannot verify the PR execution guard; relaunch with PATH=<firstmate>/bin/shims:\$PATH, then pass --repo $TARGET (and --base main) to PR creation." | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')
+  local detail=$1 escaped
+  escaped=$(printf '%s' "$detail" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"%s"}\n' "$escaped" >&2
   [ "$CLAUDE_MODE" -eq 1 ] || printf '{"decision":"deny","reason":"%s"}\n' "$escaped"
   exit 2
+}
+
+deny_boundary() {
+  emit_deny "[pr-target-boundary-unavailable] cannot verify the PR execution guard; relaunch with PATH=<firstmate>/bin/shims:\$PATH, then pass --repo $TARGET (and --base main) to PR creation."
+}
+
+deny_target() {
+  emit_deny "[pr-target-required] a firstmate PR must explicitly pass --repo $TARGET (and --base main)."
 }
 
 while [ "$#" -gt 0 ]; do
@@ -44,15 +52,21 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$CMD_SET" -eq 0 ]; then
-  PAYLOAD=$(cat 2>/dev/null) || emit_deny
-  [ -n "$PAYLOAD" ] || emit_deny
-  command -v jq >/dev/null 2>&1 || emit_deny
-  CMD=$(printf '%s' "$PAYLOAD" | jq -er '(.toolInput.command // .tool_input.command) | select(type == "string" and length > 0)' 2>/dev/null) || emit_deny
+  PAYLOAD=$(cat 2>/dev/null) || deny_boundary
+  [ -n "$PAYLOAD" ] || deny_boundary
+  command -v jq >/dev/null 2>&1 || deny_boundary
+  CMD=$(printf '%s' "$PAYLOAD" | jq -er '(.toolInput.command // .tool_input.command) | select(type == "string" and length > 0)' 2>/dev/null) || deny_boundary
 fi
-[ -n "$CMD" ] || emit_deny
+[ -n "$CMD" ] || deny_boundary
 
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || emit_deny
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || deny_boundary
 WRAPPER="$SCRIPT_DIR/fm-pr-create-wrapper.sh"
-[ -x "$WRAPPER" ] || emit_deny
-"$WRAPPER" verify >/dev/null 2>&1 || emit_deny
-exit 0
+[ -x "$WRAPPER" ] || deny_boundary
+FM_PR_CREATE_TOOL= FM_PR_CREATE_WRAPPER_INTERNAL=verify "$WRAPPER" >/dev/null 2>&1 || deny_boundary
+POLICY="$SCRIPT_DIR/fm-pr-create-explicit-path-policy.mjs"
+command -v node >/dev/null 2>&1 || deny_boundary
+[ -f "$POLICY" ] || deny_boundary
+POLICY_RESULT=$(node "$POLICY" --wrapper "$WRAPPER" --command "$CMD" 2>/dev/null) || deny_boundary
+[ "$POLICY_RESULT" = allow ] && exit 0
+[ "$POLICY_RESULT" = deny ] || deny_boundary
+deny_target

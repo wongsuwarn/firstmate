@@ -12,7 +12,8 @@ TARGET=wongsuwarn/firstmate
 make_fixture() {
   local dir=$1
   mkdir -p "$dir/bin/shims" "$dir/fakebin"
-  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$ROOT/bin/fm-pr-create-wrapper.sh" "$dir/bin/"
+  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$ROOT/bin/fm-pr-create-wrapper.sh" \
+    "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$dir/bin/"
   cp "$ROOT/bin/shims/gh" "$ROOT/bin/shims/gh-axi" "$dir/bin/shims/"
   chmod +x "$dir/bin/fm-pr-create-pretool-check.sh" "$dir/bin/fm-pr-create-wrapper.sh" \
     "$dir/bin/shims/gh" "$dir/bin/shims/gh-axi"
@@ -49,9 +50,13 @@ expect_entry() {
   out="$TMP_ROOT/$entry.out"
   err="$TMP_ROOT/$entry.err"
   run_entry "$entry" "$command" "$out" "$err" "$checker" "$path" || rc=$?
-  if [ "$expected" = deny ]; then
+  if [ "$expected" = deny ] || [ "$expected" = deny-target ]; then
     [ "$rc" -eq 2 ] || fail "$entry must deny an unavailable boundary, got $rc"
-    assert_grep 'pr-target-boundary-unavailable' "$err" "$entry deny must include a stable boundary reason"
+    if [ "$expected" = deny-target ]; then
+      assert_grep 'pr-target-required' "$err" "$entry deny must include the stable target reason"
+    else
+      assert_grep 'pr-target-boundary-unavailable' "$err" "$entry deny must include a stable boundary reason"
+    fi
     if [ "$entry" = claude ]; then
       [ ! -s "$out" ] || fail "Claude deny must keep stdout empty"
     fi
@@ -97,6 +102,27 @@ test_wrapper_boundary_matrix() {
   [ ! -s "$GH_LOG" ] || fail "commented PR text unexpectedly executed gh"
   expect_shell allow 'git status --short'
   pass "gh and gh-axi wrappers enforce expanded PR arguments without matching quoted text or comments"
+}
+
+test_private_verify_mode_preserves_public_command() {
+  local rc=0
+  env PATH="$GUARD_PATH" FM_PR_CREATE_TOOL= FM_PR_CREATE_WRAPPER_INTERNAL=verify \
+    "$FIXTURE/bin/fm-pr-create-wrapper.sh" || rc=$?
+  [ "$rc" -eq 0 ] || fail "private wrapper verification mode failed with $rc"
+  expect_shell allow 'gh verify'
+  [ "$(cat "$GH_LOG")" = 'gh verify' ] || fail "public gh verify did not reach the real executable"
+  expect_shell allow 'FM_PR_CREATE_WRAPPER_INTERNAL=verify gh verify'
+  [ "$(cat "$GH_LOG")" = 'gh verify' ] || fail "a caller environment shadowed the public gh verify command"
+  pass "private boundary verification does not reserve the public gh verify command"
+}
+
+test_detectable_explicit_paths_are_checked() {
+  local literal_path=$FIXTURE/fakebin/gh
+  expect_entry deny-target codex "$literal_path pr create --title test"
+  expect_entry allow codex "$literal_path pr create --repo wongsuwarn/firstmate --base main"
+  expect_entry deny-target codex "PATH=$FIXTURE/fakebin:\$PATH gh pr create --title test"
+  expect_entry allow codex "PATH=$FIXTURE/fakebin:\$PATH gh pr create --repo wongsuwarn/firstmate --base main"
+  pass "detectable literal-path and command-local-PATH PR calls receive target checks"
 }
 
 test_all_harness_transports_attest_boundary() {
@@ -268,6 +294,8 @@ test_binding_converges_idempotently() {
 }
 
 test_wrapper_boundary_matrix
+test_private_verify_mode_preserves_public_command
+test_detectable_explicit_paths_are_checked
 test_all_harness_transports_attest_boundary
 test_guard_survives_origin_change
 test_malformed_transport_fails_closed

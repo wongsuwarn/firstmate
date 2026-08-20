@@ -1,6 +1,6 @@
 # Firstmate PR target guard
 
-This document is the authoritative contract and verification record for preventing a firstmate checkout from creating a PR against an inferred upstream repository.
+This document is the authoritative contract and verification record for firstmate's default PR repository binding and observable PR-target defences.
 
 ## Configuration convergence
 
@@ -26,9 +26,9 @@ wongsuwarn/firstmate
 
 `gh repo set-default --help` identifies this default as the repository used for creating pull requests, so this is the installed CLI's demonstrated bare-PR resolution path rather than an assumed configuration key.
 
-## Execution-boundary refusal
+## Defence-in-depth refusal
 
-`bin/fm-pr-create-wrapper.sh` is the sole PR-target decision owner.
+`bin/fm-pr-create-wrapper.sh` owns the PR-target decision for calls that reach the tracked PATH shims.
 
 The tracked `bin/shims/gh` and `bin/shims/gh-axi` entry points validate the actual expanded argument vector and refuse `pr create` unless every `--repo` occurrence names `wongsuwarn/firstmate`.
 
@@ -38,15 +38,23 @@ The refusal tells the worker to pass `--repo wongsuwarn/firstmate --base main`.
 
 Because enforcement occurs when `gh` or `gh-axi` executes, dynamic command names reach the same guard while quoted examples, comments, and other non-executed text remain unrelated commands.
 
-`bin/fm-pr-create-pretool-check.sh` verifies that both wrapper entry points are active before every harness Bash tool call.
+`bin/fm-pr-create-pretool-check.sh` verifies that both wrapper entry points are active before every harness Bash tool call and rejects directly detectable `gh` or `gh-axi` PR creation that uses a command-local PATH or literal executable path without the required repository.
 
 Malformed hook payloads, unavailable checker dependencies, checker failures, adapter spawn failures, signal termination, invalid checker responses, and missing adapter preconditions refuse the unverified shell command.
 
 The tracked adapters cover Claude, Codex, Grok, OpenCode, Pi, and pi-signed, with pi-signed sharing Pi's extension path.
 
+The default repository binding means an ordinary bare, unqualified PR creation resolves to `wongsuwarn/firstmate`, so the accidental inferred-upstream path that prompted this change does not recur in a converged checkout.
+
+The wrapper and PreToolUse checks are defence in depth for invocations they observe, not a guarantee against a deliberately qualified invocation.
+
+An absolute executable path always bypasses the PATH shim.
+
+The supported Bash hooks still check a directly visible literal path, but dynamic path construction or execution outside those observed Bash transports can bypass local interception.
+
 The portable regression drives the Claude and Codex stdin payloads, the Grok stdin payload, and the OpenCode and Pi CLI transports through the executable checker.
 
-It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied at the wrapper boundary, explicit correct-target creation is allowed, quoted text and comments do not misfire, mutable origin changes do not disable enforcement, every harness transport verifies the boundary, Codex, OpenCode, Pi, and pi-signed refuse adapter failures, and binding application is idempotent.
+It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, mutable origin changes do not disable the wrapper, every harness transport verifies the boundary, Codex, OpenCode, Pi, and pi-signed refuse adapter failures, and binding application is idempotent.
 
 Run it with:
 
@@ -60,4 +68,4 @@ The adapter wiring uses the same established hook mechanisms that were live-vali
 
 Firstmate-repository brief scaffolds retain one short instruction that every PR must explicitly pass `--repo wongsuwarn/firstmate --base main`.
 
-The configuration binding is the default safety layer and the PreToolUse guard is the refusal layer, so this instruction is only the discoverability layer.
+The configuration binding is the default safety layer and the wrapper plus PreToolUse checks are observable defence-in-depth layers, so this instruction is only the discoverability layer.

@@ -6,7 +6,6 @@
 #
 # Usage:
 #   gh <args>... or gh-axi <args>... through bin/shims
-#   bin/fm-pr-create-wrapper.sh verify
 set -u
 
 TARGET=wongsuwarn/firstmate
@@ -98,15 +97,23 @@ refuse_target() {
   exit 2
 }
 
-case "${1-}" in
-  verify)
-    [ "$#" -eq 1 ] || exit 2
-    verify_boundary
-    exit $?
-    ;;
-esac
-
 TOOL=${FM_PR_CREATE_TOOL-}
+if [ -z "$TOOL" ]; then
+  case "${FM_PR_CREATE_WRAPPER_INTERNAL-}" in
+    verify)
+      [ "$#" -eq 0 ] || exit 2
+      verify_boundary
+      exit $?
+      ;;
+    check)
+      case "${1-}" in gh|gh-axi) shift ;; *) exit 2 ;; esac
+      if is_pr_create "$@" && ! has_required_repo "$@"; then
+        refuse_target
+      fi
+      exit 0
+      ;;
+  esac
+fi
 case "$TOOL" in
   gh|gh-axi) ;;
   *) echo "error: fm-pr-create-wrapper.sh must be reached through the gh or gh-axi shim" >&2; exit 2 ;;
