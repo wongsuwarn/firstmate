@@ -35,11 +35,29 @@ export FM_BACKEND_CMUX_BUNDLE_BIN="$TMP_ROOT/no-bundled-cmux"
 unset TMUX TMUX_PANE HERDR_ENV HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH \
   CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_SOCKET_PATH CMUX_TAB_ID CMUX_PANEL_ID 2>/dev/null || true
 
+seed_firstmate_origin() {
+  local root=$1
+  mkdir -p "$root"
+  git -C "$root" rev-parse --git-dir >/dev/null 2>&1 || git init -q -b main "$root"
+  git -C "$root" remote get-url origin >/dev/null 2>&1 \
+    || git -C "$root" remote add origin https://github.com/wongsuwarn/firstmate.git
+}
+
 # A fake toolchain where every required tool is present and gh is authenticated.
 # treehouse's `get --help` advertises --lease only when FM_FAKE_TREEHOUSE_LEASE_HELP=1.
 make_fake_toolchain() {
-  local dir=$1 fakebin
+  local dir=$1 fakebin real_git
+  seed_firstmate_origin "$dir/home"
   fakebin=$(fm_fakebin "$dir")
+  real_git=$(command -v git)
+  cat > "$fakebin/git" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *' fetch origin '*) exit 0 ;;
+esac
+exec '$real_git' "\$@"
+SH
+  chmod +x "$fakebin/git"
   fm_fake_exit0 "$fakebin" tmux node chrome-devtools-axi
   fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.45
   cat > "$fakebin/gh-axi" <<'SH'
@@ -55,6 +73,12 @@ SH
 #!/usr/bin/env bash
 if [ "${1:-}" = auth ] && [ "${2:-}" = status ]; then
   exit 0
+fi
+if [ "${1:-}" = repo ] && [ "${2:-}" = set-default ]; then
+  case "${3:-}" in
+    origin) exit 0 ;;
+    --view) printf '%s\n' wongsuwarn/firstmate; exit 0 ;;
+  esac
 fi
 exit 0
 SH
@@ -140,6 +164,7 @@ make_fake_fleet_sync_root() {
   local dir=$1 fake_root
   fake_root="$dir/fake-root"
   mkdir -p "$fake_root/bin"
+  seed_firstmate_origin "$fake_root"
   cat > "$fake_root/bin/fm-fleet-sync.sh" <<'SH'
 #!/usr/bin/env bash
 [ -z "${FM_FAKE_FLEET_SYNC_STARTED_MARKER:-}" ] || : > "$FM_FAKE_FLEET_SYNC_STARTED_MARKER"
@@ -821,6 +846,8 @@ make_routine_bootstrap_fixture() {
   printf '%s\n' 'skill' > "$root/.agents/skills/example.md"
   git -C "$root" add -A
   git -C "$root" commit -qm initial
+  git -C "$root" remote add origin https://github.com/wongsuwarn/firstmate.git
+  git -C "$root" update-ref refs/remotes/origin/main HEAD
   c1=$(git -C "$root" rev-parse HEAD)
   git -C "$root" worktree add -q --detach "$sm" "$c1"
   printf '%s\n' sm > "$sm/.fm-secondmate-home"
