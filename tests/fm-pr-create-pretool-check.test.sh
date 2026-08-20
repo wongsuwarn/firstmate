@@ -60,11 +60,38 @@ test_guard_matrix() {
   for entry in codex claude grok opencode pi; do
     expect_entry deny "$entry" 'gh-axi pr create --title test'
     expect_entry deny "$entry" 'gh pr create --repo kunchenguid/firstmate --title test'
+    expect_entry deny "$entry" 'gh pr create --repo wongsuwarn/firstmate --repo kunchenguid/firstmate'
     expect_entry deny "$entry" 'gh pr create --repo wongsuwarn/firstmate; gh-axi pr create --title test'
+    expect_entry deny "$entry" "bash -lc 'gh pr create --title test'"
     expect_entry allow "$entry" 'gh-axi pr create --repo wongsuwarn/firstmate --base main --title test'
+    expect_entry allow "$entry" "bash -lc 'gh pr create --repo wongsuwarn/firstmate --base main'"
     expect_entry allow "$entry" 'git status --short'
   done
   pass "PR target guard denies bare and wrong-target creation, permits explicit correct target and unrelated commands through every harness transport"
+}
+
+test_guard_survives_origin_change() {
+  git -C "$FIXTURE" remote set-url origin https://github.com/kunchenguid/firstmate.git
+  expect_entry deny codex 'gh pr create --title test'
+  expect_entry allow codex 'git status --short'
+  pass "PR target guard remains active when the checkout origin changes"
+}
+
+test_transport_and_classifier_fail_closed() {
+  local broken check out err rc=0
+  broken=$(make_fixture "$TMP_ROOT/broken")
+  check="$broken/bin/fm-pr-create-pretool-check.sh"
+  out="$TMP_ROOT/broken.out"
+  err="$TMP_ROOT/broken.err"
+  printf '%s' '{' | "$check" >"$out" 2>"$err" || rc=$?
+  [ "$rc" -eq 2 ] || fail "malformed hook transport must deny, got $rc"
+  assert_grep 'pr-target-unclassifiable' "$err" "malformed hook transport deny must name its reason"
+  printf '%s\n' 'invalid javascript' > "$broken/bin/fm-pr-create-command-policy.mjs"
+  rc=0
+  "$check" --command 'git status --short' >"$out" 2>"$err" || rc=$?
+  [ "$rc" -eq 2 ] || fail "classifier failure must deny, got $rc"
+  assert_grep 'pr-target-unclassifiable' "$err" "classifier failure deny must name its reason"
+  pass "PR target hook transport and classifier failures deny unverified commands"
 }
 
 test_policy_refuses_ambiguous_pr_create() {
@@ -108,5 +135,7 @@ test_binding_converges_idempotently() {
 }
 
 test_guard_matrix
+test_guard_survives_origin_change
+test_transport_and_classifier_fail_closed
 test_policy_refuses_ambiguous_pr_create
 test_binding_converges_idempotently

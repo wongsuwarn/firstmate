@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Stable PreToolUse transport for firstmate-repository PR target enforcement.
 #
-# It scopes the guard to a checkout whose origin is wongsuwarn/firstmate,
-# forwards the exact shell command to the semantic policy, and renders the
+# The tracked hook wiring scopes this guard to firstmate checkouts. This script
+# forwards the exact shell command to the semantic policy and renders the
 # established harness-specific deny responses. See docs/pr-target-guard.md.
 #
 # Usage:
@@ -21,10 +21,22 @@ Usage: fm-pr-create-pretool-check.sh [--command <cmd>] [--claude]
 
 With no --command, reads a PreToolUse-style JSON payload on stdin (Grok
 .toolInput.command, or Claude/Codex .tool_input.command).
-In a wongsuwarn/firstmate checkout, refuses gh or gh-axi PR creation unless it
-passes --repo wongsuwarn/firstmate explicitly.
+In a firstmate checkout, refuses gh or gh-axi PR creation unless it passes
+--repo wongsuwarn/firstmate explicitly.
 Exits 0 to allow and 2 to deny.
 EOF
+}
+
+emit_deny() {
+  local code=$1 reason=$2 escaped
+  escaped=$(printf '%s' "[$code] $reason" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"%s"}\n' "$escaped" >&2
+  [ "$CLAUDE_MODE" -eq 1 ] || printf '{"decision":"deny","reason":"%s"}\n' "$escaped"
+  exit 2
+}
+
+deny_unclassifiable() {
+  emit_deny pr-target-unclassifiable "cannot safely verify the PR target: pass --repo $TARGET (and --base main) in a direct gh or gh-axi pr create command."
 }
 
 while [ "$#" -gt 0 ]; do
@@ -38,47 +50,30 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$CMD_SET" -eq 0 ]; then
-  PAYLOAD=$(cat 2>/dev/null || true)
-  [ -n "$PAYLOAD" ] || exit 0
-  command -v jq >/dev/null 2>&1 || exit 0
-  CMD=$(printf '%s' "$PAYLOAD" | jq -r '(.toolInput.command // .tool_input.command // empty)' 2>/dev/null) || exit 0
+  PAYLOAD=$(cat 2>/dev/null) || deny_unclassifiable
+  [ -n "$PAYLOAD" ] || deny_unclassifiable
+  command -v jq >/dev/null 2>&1 || deny_unclassifiable
+  CMD=$(printf '%s' "$PAYLOAD" | jq -er '(.toolInput.command // .tool_input.command) | select(type == "string" and length > 0)' 2>/dev/null) || deny_unclassifiable
 fi
 [ -n "$CMD" ] || exit 0
 
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || exit 0
-ROOT=$(CDPATH='' cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd -P) || exit 0
-command -v git >/dev/null 2>&1 || exit 0
-ORIGIN=$(git -C "$ROOT" remote get-url origin 2>/dev/null) || exit 0
-case "$ORIGIN" in
-  "https://github.com/$TARGET"|"https://github.com/$TARGET.git"|"git@github.com:$TARGET"|"git@github.com:$TARGET.git"|"ssh://git@github.com/$TARGET"|"ssh://git@github.com/$TARGET.git") ;;
-  *) exit 0 ;;
-esac
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || deny_unclassifiable
+ROOT=$(CDPATH='' cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd -P) || deny_unclassifiable
 
 POLICY="$ROOT/bin/fm-pr-create-command-policy.mjs"
 if ! command -v node >/dev/null 2>&1 || [ ! -f "$POLICY" ]; then
-  case "$CMD" in
-    *gh*|*pr*)
-      DETAIL="[pr-target-unclassifiable] cannot safely verify the PR target: pass --repo $TARGET (and --base main) in a direct gh or gh-axi pr create command."
-      ESCAPED=$(printf '%s' "$DETAIL" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')
-      printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"%s"}\n' "$ESCAPED" >&2
-      [ "$CLAUDE_MODE" -eq 1 ] || printf '{"decision":"deny","reason":"%s"}\n' "$ESCAPED"
-      exit 2
-      ;;
-    *) exit 0 ;;
-  esac
+  deny_unclassifiable
 fi
 
-POLICY_OUTPUT=$(node "$POLICY" --command "$CMD" 2>/dev/null) || exit 0
+POLICY_OUTPUT=$(node "$POLICY" --command "$CMD" 2>/dev/null) || deny_unclassifiable
+[ "$POLICY_OUTPUT" = allow ] && exit 0
 TAB=$(printf '\t')
 DECISION=${POLICY_OUTPUT%%"$TAB"*}
-[ "$DECISION" = deny ] || exit 0
+[ "$DECISION" = deny ] || deny_unclassifiable
 REST=${POLICY_OUTPUT#*"$TAB"}
-[ "$REST" != "$POLICY_OUTPUT" ] || exit 0
+[ "$REST" != "$POLICY_OUTPUT" ] || deny_unclassifiable
 CODE=${REST%%"$TAB"*}
 REASON=${REST#*"$TAB"}
-[ -n "$CODE" ] && [ -n "$REASON" ] && [ "$REASON" != "$REST" ] || exit 0
+[ -n "$CODE" ] && [ -n "$REASON" ] && [ "$REASON" != "$REST" ] || deny_unclassifiable
 
-ESCAPED=$(printf '%s' "[$CODE] $REASON" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')
-printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"%s"}\n' "$ESCAPED" >&2
-[ "$CLAUDE_MODE" -eq 1 ] || printf '{"decision":"deny","reason":"%s"}\n' "$ESCAPED"
-exit 2
+emit_deny "$CODE" "$REASON"
