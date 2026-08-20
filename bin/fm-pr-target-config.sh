@@ -7,25 +7,31 @@
 # linked worktree whose repository config lacks that gitignored binding repairs
 # itself on its next ordinary session start. Repeated runs are idempotent.
 #
-# Usage: fm-pr-target-config.sh [--check]
+# Usage: fm-pr-target-config.sh [--check] [--root <path>]
 #   With no flag, applies and verifies the origin binding.
 #   --check verifies the binding without modifying repository config.
+#   --root selects the checkout to bind instead of the script's checkout.
 set -u
 
 TARGET=wongsuwarn/firstmate
 CHECK_ONLY=0
-case "${1:-}" in
-  "") ;;
-  --check) CHECK_ONLY=1 ;;
-  -h|--help)
-    sed -n '2,/^set -u$/p' "$0" | sed 's/^# \{0,1\}//'
-    exit 0
-    ;;
-  *) echo "error: unknown argument: $1" >&2; exit 2 ;;
-esac
+ROOT_INPUT=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check) CHECK_ONLY=1; shift ;;
+    --root) [ "$#" -gt 1 ] || { echo "error: --root requires a value" >&2; exit 2; }; ROOT_INPUT=$2; shift 2 ;;
+    --root=*) ROOT_INPUT=${1#--root=}; shift ;;
+    -h|--help)
+      sed -n '2,/^set -u$/p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) echo "error: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || exit 1
-ROOT=$(CDPATH='' cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd -P) || exit 1
+[ -n "$ROOT_INPUT" ] || ROOT_INPUT=$SCRIPT_DIR/..
+ROOT=$(CDPATH='' cd -- "$ROOT_INPUT" 2>/dev/null && pwd -P) || { echo "error: repository root is unavailable: $ROOT_INPUT" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "error: git is required" >&2; exit 1; }
 ORIGIN=$(git -C "$ROOT" remote get-url origin 2>/dev/null) || { echo "error: origin remote is required" >&2; exit 1; }
 case "$ORIGIN" in

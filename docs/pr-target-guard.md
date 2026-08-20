@@ -6,7 +6,7 @@ This document is the authoritative contract and verification record for firstmat
 
 `bin/fm-pr-target-config.sh` owns the gitignored `gh` repository binding.
 
-`bin/fm-bootstrap.sh` invokes it only on its locked mutable path, which makes an ordinary session start repair a missing binding without mutating configuration from a read-only session.
+`bin/fm-bootstrap.sh` invokes it with the effective bootstrap root only on its locked mutable path, which makes an ordinary session start repair a missing binding in the selected checkout without mutating configuration from a read-only session.
 
 The script accepts only an origin that identifies `wongsuwarn/firstmate`, runs `gh repo set-default origin`, and verifies the resulting default with `gh repo set-default --view`.
 
@@ -38,7 +38,7 @@ The refusal tells the worker to pass `--repo wongsuwarn/firstmate --base main`.
 
 Because enforcement occurs when `gh` or `gh-axi` executes, dynamic command names reach the same guard while quoted examples, comments, and other non-executed text remain unrelated commands.
 
-`bin/fm-pr-create-pretool-check.sh` verifies that both wrapper entry points are active before every harness Bash tool call and rejects directly detectable `gh` or `gh-axi` PR creation that uses a command-local PATH or literal executable path without the required repository.
+`bin/fm-pr-create-pretool-check.sh` verifies that both wrapper entry points are active before every harness Bash tool call and rejects directly detectable top-level `gh` or `gh-axi` PR creation that uses a command-local PATH or literal executable path without the required repository.
 
 Malformed hook payloads, unavailable checker dependencies, checker failures, adapter spawn failures, signal termination, invalid checker responses, and missing adapter preconditions refuse the unverified shell command.
 
@@ -50,11 +50,11 @@ The wrapper and PreToolUse checks are defence in depth for invocations they obse
 
 An absolute executable path always bypasses the PATH shim.
 
-The supported Bash hooks still check a directly visible literal path, but dynamic path construction or execution outside those observed Bash transports can bypass local interception.
+The supported Bash hooks check only directly visible top-level literal paths and do not recurse into shell payloads or compound nodes, while dynamic path construction or execution outside those observed Bash transports can also bypass local interception.
 
 The portable regression drives the Claude and Codex stdin payloads, the Grok stdin payload, and the OpenCode and Pi CLI transports through the executable checker.
 
-It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, mutable origin changes do not disable the wrapper, every harness transport verifies the boundary, Codex, OpenCode, Pi, and pi-signed refuse adapter failures, and binding application is idempotent.
+It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable top-level literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, mutable origin changes do not disable the wrapper, every harness transport verifies the boundary, Codex, OpenCode, Pi, and pi-signed refuse adapter failures, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
 
 Run it with:
 

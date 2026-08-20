@@ -116,13 +116,13 @@ test_private_verify_mode_preserves_public_command() {
   pass "private boundary verification does not reserve the public gh verify command"
 }
 
-test_detectable_explicit_paths_are_checked() {
+test_detectable_top_level_explicit_paths_are_checked() {
   local literal_path=$FIXTURE/fakebin/gh
   expect_entry deny-target codex "$literal_path pr create --title test"
   expect_entry allow codex "$literal_path pr create --repo wongsuwarn/firstmate --base main"
   expect_entry deny-target codex "PATH=$FIXTURE/fakebin:\$PATH gh pr create --title test"
   expect_entry allow codex "PATH=$FIXTURE/fakebin:\$PATH gh pr create --repo wongsuwarn/firstmate --base main"
-  pass "detectable literal-path and command-local-PATH PR calls receive target checks"
+  pass "detectable top-level literal-path and command-local-PATH PR calls receive target checks"
 }
 
 test_all_harness_transports_attest_boundary() {
@@ -293,9 +293,46 @@ test_binding_converges_idempotently() {
   pass "PR target binding converges a clone and remains idempotent through its executable interface"
 }
 
+test_bootstrap_root_override_binds_selected_checkout() {
+  local case_dir=$TMP_ROOT/bootstrap-root source_root selected_root fakebin out
+  source_root=$case_dir/source
+  selected_root=$case_dir/selected
+  fakebin=$case_dir/fakebin
+  mkdir -p "$source_root" "$selected_root" "$fakebin"
+  cp -R "$ROOT/bin" "$source_root/"
+  git init -q -b main "$source_root"
+  git -C "$source_root" remote add origin "https://github.com/$TARGET.git"
+  git init -q -b main "$selected_root"
+  git -C "$selected_root" remote add origin "https://github.com/$TARGET.git"
+  : > "$selected_root/.fm-secondmate-home"
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case "${1-} ${2-}" in
+  'auth status') exit 0 ;;
+  'repo set-default')
+    case "${3-}" in
+      origin) git config remote.origin.gh-resolved base ;;
+      --view) git config --get remote.origin.gh-resolved >/dev/null && printf '%s\n' wongsuwarn/firstmate ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  *) exit 0 ;;
+esac
+SH
+  chmod +x "$fakebin/gh"
+  out=$(PATH="$fakebin:/usr/bin:/bin:/usr/sbin:/sbin" FM_HOME="$selected_root" \
+    FM_ROOT_OVERRIDE="$selected_root" "$source_root/bin/fm-bootstrap.sh" 2>&1) \
+    || fail "bootstrap with an overridden root failed: $out"
+  [ "$(git -C "$selected_root" config --get remote.origin.gh-resolved)" = base ] \
+    || fail "bootstrap did not bind the selected checkout"
+  [ -z "$(git -C "$source_root" config --get remote.origin.gh-resolved || true)" ] \
+    || fail "bootstrap bound its invoking checkout instead of the selected checkout"
+  pass "bootstrap root override binds and verifies the selected checkout"
+}
+
 test_wrapper_boundary_matrix
 test_private_verify_mode_preserves_public_command
-test_detectable_explicit_paths_are_checked
+test_detectable_top_level_explicit_paths_are_checked
 test_all_harness_transports_attest_boundary
 test_guard_survives_origin_change
 test_malformed_transport_fails_closed
@@ -303,3 +340,4 @@ test_opencode_adapter_failures_block
 test_pi_adapter_failures_block
 test_codex_adapter_preconditions_block
 test_binding_converges_idempotently
+test_bootstrap_root_override_binds_selected_checkout
