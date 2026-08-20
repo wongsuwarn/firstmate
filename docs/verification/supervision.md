@@ -86,7 +86,7 @@ Firstmate-written project hooks under `<worktree>/.codex/hooks.json` fired for n
 Codex also exposes no `StopFailure` hook, so an API-error turn end would need separate coverage even after hook discovery works.
 The app-server protocol schema does define the required lifecycle (`turn/started`, plus a `turn/completed` status of `completed`, `interrupted`, `failed`, or `inProgress`), so the gate is a reachability problem rather than a protocol gap.
 
-Deterministic entry points:
+Deterministic and live entry points:
 
 ```sh
 tests/fm-busy-state.test.sh
@@ -214,7 +214,7 @@ fm-claude-stop-autoarm: ok
 
 ## Watcher continuity
 
-The cross-harness evidence combines the 2026-07-17 live pass with Claude's replacement Stop-owned path revalidated on 2026-07-24, all against isolated project and home state.
+The cross-harness evidence combines the 2026-07-17 live pass, Claude's replacement Stop-owned path revalidated on 2026-07-24, and Grok's Stop-owned path verified on 2026-08-20, all against isolated project and home state.
 No credential material was copied into a fixture.
 
 ```text
@@ -222,7 +222,7 @@ Claude Code 2.1.219
 codex-cli 0.144.4
 OpenCode 1.17.18
 Pi 0.80.10
-grok 0.2.103 (89c3d36fb6f1) [stable]
+grok 1.0.5 (5115b46bc909) [stable]
 ```
 
 | Harness | Exact opt-in command | Observed guarantee |

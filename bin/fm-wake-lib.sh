@@ -117,9 +117,9 @@ fm_watcher_healthy() {
 
 # fm_watcher_healthy above is the PID-STRICT primitive: true only when a live,
 # identity-matched watcher PROCESS holds this home's lock with a fresh beacon. The
-# arm layer (bin/fm-watch-arm.sh, bin/fm-claude-stop-autoarm.sh) needs exactly
-# that - it decides whether to start, attach to, or replace a real watcher
-# process, so a leftover beacon must never satisfy it. bin/fm-turnend-guard.sh
+# arm layer (bin/fm-watch-arm.sh and the Claude and Grok Stop auto-arms) needs
+# exactly that - it decides whether to start, attach to, or replace a real
+# watcher process, so a leftover beacon must never satisfy it. bin/fm-turnend-guard.sh
 # also keeps this strict check because it fires at the turn boundary where the
 # auto-arm brings a fresh watcher up. The pull warning (bin/fm-guard.sh) fires
 # mid-turn, where the auto-arm model runs no watcher at all, so it wants a
@@ -130,9 +130,10 @@ fm_watcher_healthy() {
 #   autoarm     Claude Stop-hook auto-arm: the watcher is armed at each turn end
 #               and exits on its wake, so it runs only BETWEEN turns. Mid-turn a
 #               fresh beacon with no live watcher process is the healthy state.
-#   persistent  every other harness (codex foreground checkpoint, opencode/pi/grok
-#               background arm, tmux, unknown): the watcher runs as a tracked live
-#               process, so a live identity-matched pid is the real liveness signal.
+#   persistent  every other harness (Codex foreground checkpoint, OpenCode/Pi
+#               managed arm, Grok Stop-owned foreground arm, tmux, unknown): the
+#               watcher runs as a tracked live process, so a live identity-matched
+#               pid is the real liveness signal.
 # FM_SUPERVISION_MODEL overrides detection (tests, and callers that already know
 # the harness). Otherwise bin/fm-harness.sh is the single detection owner, so this
 # stays consistent with the harness-specific repair line the guards already emit.
