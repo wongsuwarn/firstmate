@@ -11,10 +11,18 @@ TARGET=wongsuwarn/firstmate
 
 make_fixture() {
   local dir=$1
-  mkdir -p "$dir/bin"
-  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$ROOT/bin/fm-pr-create-command-policy.mjs" \
-    "$ROOT/bin/fm-arm-command-policy.mjs" "$dir/bin/"
-  chmod +x "$dir/bin/fm-pr-create-pretool-check.sh"
+  mkdir -p "$dir/bin/shims" "$dir/fakebin"
+  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$ROOT/bin/fm-pr-create-wrapper.sh" "$dir/bin/"
+  cp "$ROOT/bin/shims/gh" "$ROOT/bin/shims/gh-axi" "$dir/bin/shims/"
+  chmod +x "$dir/bin/fm-pr-create-pretool-check.sh" "$dir/bin/fm-pr-create-wrapper.sh" \
+    "$dir/bin/shims/gh" "$dir/bin/shims/gh-axi"
+  for tool in gh gh-axi; do
+    cat > "$dir/fakebin/$tool" <<'SH'
+#!/usr/bin/env bash
+printf '%s %s\n' "$(basename "$0")" "$*" >> "${FM_GH_LOG:?}"
+SH
+    chmod +x "$dir/fakebin/$tool"
+  done
   git -C "$dir" init -q
   git -C "$dir" remote add origin "https://github.com/$TARGET.git"
   printf '%s\n' "$dir"
@@ -22,83 +30,208 @@ make_fixture() {
 
 FIXTURE=$(make_fixture "$TMP_ROOT/fixture")
 CHECK="$FIXTURE/bin/fm-pr-create-pretool-check.sh"
+GUARD_PATH="$FIXTURE/bin/shims:$FIXTURE/fakebin:$PATH"
+GH_LOG="$TMP_ROOT/gh.log"
 
 run_entry() {
-  local entry=$1 command=$2 out=$3 err=$4
+  local entry=$1 command=$2 out=$3 err=$4 checker=${5:-$CHECK} path=${6:-$GUARD_PATH}
   case "$entry" in
-    codex) jq -cn --arg command "$command" '{tool_input:{command:$command}}' | "$CHECK" >"$out" 2>"$err" ;;
-    claude) jq -cn --arg command "$command" '{tool_input:{command:$command}}' | "$CHECK" --claude >"$out" 2>"$err" ;;
-    grok) jq -cn --arg command "$command" '{toolInput:{command:$command}}' | "$CHECK" >"$out" 2>"$err" ;;
-    opencode|pi) "$CHECK" --command "$command" >"$out" 2>"$err" ;;
+    codex) jq -cn --arg command "$command" '{tool_input:{command:$command}}' | env PATH="$path" "$checker" >"$out" 2>"$err" ;;
+    claude) jq -cn --arg command "$command" '{tool_input:{command:$command}}' | env PATH="$path" "$checker" --claude >"$out" 2>"$err" ;;
+    grok) jq -cn --arg command "$command" '{toolInput:{command:$command}}' | env PATH="$path" "$checker" >"$out" 2>"$err" ;;
+    opencode|pi) env PATH="$path" "$checker" --command "$command" >"$out" 2>"$err" ;;
     *) fail "unknown harness entry: $entry" ;;
   esac
 }
 
 expect_entry() {
-  local expected entry command out err rc=0
-  expected=$1
-  entry=$2
-  command=$3
+  local expected=$1 entry=$2 command=$3 checker=${4:-$CHECK} path=${5:-$GUARD_PATH} out err rc=0
   out="$TMP_ROOT/$entry.out"
   err="$TMP_ROOT/$entry.err"
-  run_entry "$entry" "$command" "$out" "$err" || rc=$?
+  run_entry "$entry" "$command" "$out" "$err" "$checker" "$path" || rc=$?
   if [ "$expected" = deny ]; then
-    [ "$rc" -eq 2 ] || fail "$entry must deny '$command', got $rc"
-    assert_grep 'pr-target-' "$err" "$entry deny must include a stable PR-target reason"
-    assert_grep '--repo wongsuwarn/firstmate' "$err" "$entry deny must name the exact repair"
+    [ "$rc" -eq 2 ] || fail "$entry must deny an unavailable boundary, got $rc"
+    assert_grep 'pr-target-boundary-unavailable' "$err" "$entry deny must include a stable boundary reason"
     if [ "$entry" = claude ]; then
       [ ! -s "$out" ] || fail "Claude deny must keep stdout empty"
     fi
   else
-    [ "$rc" -eq 0 ] || fail "$entry must allow '$command', got $rc: $(cat "$err")"
-    [ ! -s "$out" ] && [ ! -s "$err" ] || fail "$entry allow must be silent"
+    [ "$rc" -eq 0 ] || fail "$entry must accept a healthy boundary, got $rc: $(cat "$err")"
+    [ ! -s "$out" ] && [ ! -s "$err" ] || fail "$entry healthy-boundary allow must be silent"
   fi
 }
 
-test_guard_matrix() {
-  local entry
+run_guarded_shell() {
+  local command=$1 rc=0
+  : > "$GH_LOG"
+  RUN_OUT=$(cd "$FIXTURE" && env PATH="$GUARD_PATH" FM_GH_LOG="$GH_LOG" bash -c "$command" 2>&1) || rc=$?
+  return "$rc"
+}
+
+expect_shell() {
+  local expected=$1 command=$2 rc=0
+  run_guarded_shell "$command" || rc=$?
+  if [ "$expected" = deny ]; then
+    [ "$rc" -eq 2 ] || fail "wrapper must deny '$command', got $rc: $RUN_OUT"
+    assert_contains "$RUN_OUT" 'pr-target-required' "wrapper denial must name its stable reason"
+  else
+    [ "$rc" -eq 0 ] || fail "wrapper must allow '$command', got $rc: $RUN_OUT"
+  fi
+}
+
+test_wrapper_boundary_matrix() {
+  expect_shell deny 'gh pr create --title test'
+  expect_shell deny 'gh-axi pr create --title test'
+  expect_shell deny 'gh pr create --repo kunchenguid/firstmate --title test'
+  expect_shell deny 'gh pr create --repo wongsuwarn/firstmate --repo kunchenguid/firstmate'
+  expect_shell deny 'gh pr create --repo wongsuwarn/firstmate -R kunchenguid/firstmate'
+  expect_shell deny 'gh pr create --repo wongsuwarn/firstmate; gh-axi pr create --title test'
+  expect_shell deny "bash -c 'gh pr create --title test'"
+  expect_shell deny 'G=gh; "$G" pr create --title test'
+  expect_shell deny 'gh pr create --repo'
+  expect_shell allow 'gh-axi pr create --repo wongsuwarn/firstmate --base main --title test'
+  expect_shell allow "bash -c 'gh pr create --repo wongsuwarn/firstmate --base main'"
+  expect_shell allow "echo 'gh pr create documentation'"
+  [ ! -s "$GH_LOG" ] || fail "quoted PR documentation text unexpectedly executed gh"
+  expect_shell allow 'true # gh pr create'
+  [ ! -s "$GH_LOG" ] || fail "commented PR text unexpectedly executed gh"
+  expect_shell allow 'git status --short'
+  pass "gh and gh-axi wrappers enforce expanded PR arguments without matching quoted text or comments"
+}
+
+test_all_harness_transports_attest_boundary() {
+  local entry broken broken_check broken_path
   for entry in codex claude grok opencode pi; do
-    expect_entry deny "$entry" 'gh-axi pr create --title test'
-    expect_entry deny "$entry" 'gh pr create --repo kunchenguid/firstmate --title test'
-    expect_entry deny "$entry" 'gh pr create --repo wongsuwarn/firstmate --repo kunchenguid/firstmate'
-    expect_entry deny "$entry" 'gh pr create --repo wongsuwarn/firstmate; gh-axi pr create --title test'
-    expect_entry deny "$entry" "bash -lc 'gh pr create --title test'"
-    expect_entry allow "$entry" 'gh-axi pr create --repo wongsuwarn/firstmate --base main --title test'
-    expect_entry allow "$entry" "bash -lc 'gh pr create --repo wongsuwarn/firstmate --base main'"
-    expect_entry allow "$entry" 'git status --short'
+    expect_entry allow "$entry" 'echo "gh pr create documentation"'
   done
-  pass "PR target guard denies bare and wrong-target creation, permits explicit correct target and unrelated commands through every harness transport"
+  broken=$(make_fixture "$TMP_ROOT/broken-boundary")
+  broken_check="$broken/bin/fm-pr-create-pretool-check.sh"
+  chmod -x "$broken/bin/shims/gh"
+  broken_path="$broken/bin/shims:$broken/fakebin:$PATH"
+  for entry in codex claude grok opencode pi; do
+    expect_entry deny "$entry" 'git status --short' "$broken_check" "$broken_path"
+  done
+  pass "every primary harness transport allows only an attested execution boundary"
 }
 
 test_guard_survives_origin_change() {
   git -C "$FIXTURE" remote set-url origin https://github.com/kunchenguid/firstmate.git
-  expect_entry deny codex 'gh pr create --title test'
-  expect_entry allow codex 'git status --short'
-  pass "PR target guard remains active when the checkout origin changes"
+  expect_shell deny 'gh pr create --title test'
+  expect_shell allow 'gh pr create --repo wongsuwarn/firstmate --base main'
+  pass "PR target wrapper remains active when the checkout origin changes"
 }
 
-test_transport_and_classifier_fail_closed() {
-  local broken check out err rc=0
-  broken=$(make_fixture "$TMP_ROOT/broken")
-  check="$broken/bin/fm-pr-create-pretool-check.sh"
-  out="$TMP_ROOT/broken.out"
-  err="$TMP_ROOT/broken.err"
-  printf '%s' '{' | "$check" >"$out" 2>"$err" || rc=$?
+test_malformed_transport_fails_closed() {
+  local out="$TMP_ROOT/malformed.out" err="$TMP_ROOT/malformed.err" rc=0
+  printf '%s' '{' | env PATH="$GUARD_PATH" "$CHECK" >"$out" 2>"$err" || rc=$?
   [ "$rc" -eq 2 ] || fail "malformed hook transport must deny, got $rc"
-  assert_grep 'pr-target-unclassifiable' "$err" "malformed hook transport deny must name its reason"
-  printf '%s\n' 'invalid javascript' > "$broken/bin/fm-pr-create-command-policy.mjs"
-  rc=0
-  "$check" --command 'git status --short' >"$out" 2>"$err" || rc=$?
-  [ "$rc" -eq 2 ] || fail "classifier failure must deny, got $rc"
-  assert_grep 'pr-target-unclassifiable' "$err" "classifier failure deny must name its reason"
-  pass "PR target hook transport and classifier failures deny unverified commands"
+  assert_grep 'pr-target-boundary-unavailable' "$err" "malformed hook transport deny must name its reason"
+  pass "malformed PR-target hook transport denies the unverified command"
 }
 
-test_policy_refuses_ambiguous_pr_create() {
-  local out
-  out=$(node "$FIXTURE/bin/fm-pr-create-command-policy.mjs" --command "gh pr create 'unterminated" 2>&1) || true
-  assert_contains "$out" 'deny	pr-target-unclassifiable' "malformed PR create must refuse rather than allow"
-  pass "PR target policy refuses an unclassifiable PR-create command"
+test_opencode_adapter_failures_block() {
+  local plugin=$ROOT/.opencode/plugins/fm-pr-create-pretool-check.js missing signal out status=0
+  missing="$TMP_ROOT/opencode-missing"
+  signal="$TMP_ROOT/opencode-signal"
+  mkdir -p "$missing/bin" "$signal/bin"
+  cat > "$signal/bin/fm-pr-create-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+kill -TERM $$
+SH
+  chmod +x "$signal/bin/fm-pr-create-pretool-check.sh"
+  out=$(PLUGIN="$plugin" MISSING="$missing" SIGNAL="$signal" node --input-type=module 2>&1 <<'JS'
+import { pathToFileURL } from "node:url";
+const mod = await import(`${pathToFileURL(process.env.PLUGIN).href}?failure=${Date.now()}`);
+for (const root of [process.env.MISSING, process.env.SIGNAL]) {
+  const hooks = await mod.FmPrCreatePretoolCheck({ worktree: root });
+  let blocked = false;
+  try {
+    await hooks["tool.execute.before"]({ tool: "bash" }, { args: { command: "git status" } });
+  } catch {
+    blocked = true;
+  }
+  if (!blocked) throw new Error(`OpenCode allowed checker failure for ${root}`);
+}
+JS
+  ) || status=$?
+  [ "$status" -eq 0 ] || fail "OpenCode adapter failure test failed: $out"
+  [ -z "$out" ] || fail "OpenCode adapter failure test printed output: $out"
+  pass "OpenCode blocks checker spawn failure and signal termination"
+}
+
+make_pi_adapter_fixture() {
+  local repo=$1 mode=$2
+  mkdir -p "$repo/.pi/extensions/lib" "$repo/bin" "$repo/state"
+  git -C "$repo" init -q
+  : > "$repo/AGENTS.md"
+  cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$repo/.pi/extensions/"
+  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$ROOT/.pi/extensions/lib/fm-primary-scope.ts" "$repo/.pi/extensions/lib/"
+  cp "$ROOT/bin/fm-primary-scope.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$repo/bin/"
+  cat > "$repo/bin/fm-cd-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$repo/bin/fm-arm-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  if [ "$mode" = signal ]; then
+    cat > "$repo/bin/fm-pr-create-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+kill -TERM $$
+SH
+    chmod +x "$repo/bin/fm-pr-create-pretool-check.sh"
+  fi
+  chmod +x "$repo/bin/fm-cd-pretool-check.sh" "$repo/bin/fm-arm-pretool-check.sh" "$repo/bin/fm-primary-scope.sh"
+}
+
+run_pi_adapter_case() {
+  local repo=$1 out status=0
+  out=$(PLUGIN="$repo/.pi/extensions/fm-primary-turnend-guard.ts" FM_HOME="$repo" node --input-type=module 2>&1 <<'JS'
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const pi = { on(event, handler) { handlers.set(event, handler); } };
+const mod = await import(`${pathToFileURL(process.env.PLUGIN).href}?failure=${Date.now()}`);
+mod.default(pi);
+const handler = handlers.get("tool_call");
+if (!handler) throw new Error("Pi tool_call handler was not registered");
+const result = await handler({ type: "tool_call", toolName: "bash", input: { command: "git status" } });
+if (result?.block !== true) throw new Error("Pi allowed an unverified PR checker result");
+JS
+  ) || status=$?
+  [ "$status" -eq 0 ] || fail "Pi adapter failure test failed: $out"
+  [ -z "$out" ] || fail "Pi adapter failure test printed output: $out"
+}
+
+test_pi_adapter_failures_block() {
+  local missing="$TMP_ROOT/pi-missing" signal="$TMP_ROOT/pi-signal"
+  make_pi_adapter_fixture "$missing" missing
+  make_pi_adapter_fixture "$signal" signal
+  run_pi_adapter_case "$missing"
+  run_pi_adapter_case "$signal"
+  pass "Pi and pi-signed block checker spawn failure and signal termination"
+}
+
+test_codex_adapter_preconditions_block() {
+  local hook fixture payload out status=0
+  hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-pretool-check.sh")) | .command' "$ROOT/.codex/hooks.json")
+  [ -n "$hook" ] || fail "Codex PR-target hook command is missing"
+  payload=$(jq -cn --arg command 'git status' '{tool_input:{command:$command}}')
+  fixture="$TMP_ROOT/codex-precondition"
+  mkdir -p "$fixture/.codex" "$fixture/bin"
+  : > "$fixture/AGENTS.md"
+  cp "$ROOT/.codex/hooks.json" "$fixture/.codex/hooks.json"
+  out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 2 ] || fail "Codex missing-checker precondition must deny, got $status: $out"
+  assert_contains "$out" 'pr-target-boundary-unavailable' "Codex missing-checker denial omitted its reason"
+  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$fixture/bin/"
+  chmod +x "$fixture/bin/fm-pr-create-pretool-check.sh"
+  printf '%s\n' '{}' > "$fixture/.codex/hooks.json"
+  status=0
+  out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 2 ] || fail "Codex hook self-validation failure must deny, got $status: $out"
+  assert_contains "$out" 'pr-target-boundary-unavailable' "Codex self-validation denial omitted its reason"
+  pass "Codex blocks missing checker and hook self-validation failures"
 }
 
 make_config_fixture() {
@@ -134,8 +267,11 @@ test_binding_converges_idempotently() {
   pass "PR target binding converges a clone and remains idempotent through its executable interface"
 }
 
-test_guard_matrix
+test_wrapper_boundary_matrix
+test_all_harness_transports_attest_boundary
 test_guard_survives_origin_change
-test_transport_and_classifier_fail_closed
-test_policy_refuses_ambiguous_pr_create
+test_malformed_transport_fails_closed
+test_opencode_adapter_failures_block
+test_pi_adapter_failures_block
+test_codex_adapter_preconditions_block
 test_binding_converges_idempotently

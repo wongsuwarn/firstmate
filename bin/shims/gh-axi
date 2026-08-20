@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+FM_PR_CREATE_TOOL=gh-axi exec "$(dirname -- "${BASH_SOURCE[0]}")/../fm-pr-create-wrapper.sh" "$@"

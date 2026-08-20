@@ -26,25 +26,27 @@ wongsuwarn/firstmate
 
 `gh repo set-default --help` identifies this default as the repository used for creating pull requests, so this is the installed CLI's demonstrated bare-PR resolution path rather than an assumed configuration key.
 
-## PreToolUse refusal
+## Execution-boundary refusal
 
-`bin/fm-pr-create-command-policy.mjs` is the sole command classifier.
+`bin/fm-pr-create-wrapper.sh` is the sole PR-target decision owner.
 
-It reuses the shell lexer from `bin/fm-arm-command-policy.mjs` and refuses direct `gh` or `gh-axi` `pr create` calls unless they include the literal `--repo wongsuwarn/firstmate` target.
+The tracked `bin/shims/gh` and `bin/shims/gh-axi` entry points validate the actual expanded argument vector and refuse `pr create` unless every `--repo` occurrence names `wongsuwarn/firstmate`.
 
 The refusal tells the worker to pass `--repo wongsuwarn/firstmate --base main`.
 
-The tracked harness wiring scopes `bin/fm-pr-create-pretool-check.sh` to firstmate checkouts, independently of mutable remote configuration, and the script renders the existing harness-specific deny responses.
+`bin/fm-spawn.sh` already places `bin/shims` first on every spawned harness PATH, and the primary launch instructions export the same tracked PATH entry before starting any supported primary harness.
 
-A malformed or otherwise unclassifiable command that appears to create a PR is refused rather than allowed.
+Because enforcement occurs when `gh` or `gh-axi` executes, dynamic command names reach the same guard while quoted examples, comments, and other non-executed text remain unrelated commands.
 
-Malformed hook payloads, unavailable classifier dependencies, classifier failures, and invalid classifier responses also refuse the unverified shell command.
+`bin/fm-pr-create-pretool-check.sh` verifies that both wrapper entry points are active before every harness Bash tool call.
+
+Malformed hook payloads, unavailable checker dependencies, checker failures, adapter spawn failures, signal termination, invalid checker responses, and missing adapter preconditions refuse the unverified shell command.
 
 The tracked adapters cover Claude, Codex, Grok, OpenCode, Pi, and pi-signed, with pi-signed sharing Pi's extension path.
 
 The portable regression drives the Claude and Codex stdin payloads, the Grok stdin payload, and the OpenCode and Pi CLI transports through the executable checker.
 
-It proves bare, nested, conflicting, and wrong-target PR creation are denied, explicit correct-target creation is allowed directly and through a literal shell payload, unrelated commands are allowed, mutable origin changes do not disable enforcement, transport and classifier failures refuse unverified commands, malformed PR creation is refused, and binding application is idempotent.
+It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied at the wrapper boundary, explicit correct-target creation is allowed, quoted text and comments do not misfire, mutable origin changes do not disable enforcement, every harness transport verifies the boundary, Codex, OpenCode, Pi, and pi-signed refuse adapter failures, and binding application is idempotent.
 
 Run it with:
 

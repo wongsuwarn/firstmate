@@ -80,6 +80,7 @@ Codex and OpenCode are also verified and supported as primary harnesses; Codex u
 gh auth login
 git clone https://github.com/kunchenguid/firstmate
 cd firstmate
+export PATH="$PWD/bin/shims:$PATH"
 ```
 
 Then launch one of the co-primary harnesses; AGENTS.md takes over from there:

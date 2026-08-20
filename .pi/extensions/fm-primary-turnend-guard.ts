@@ -116,8 +116,8 @@ function runChecker(script: string, command: string): Promise<{ code: number; st
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
-    child.on("error", () => resolveResult({ code: 0, stderr: "" }));
-    child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
+    child.on("error", (error) => resolveResult({ code: -1, stderr: error.message }));
+    child.on("close", (code) => resolveResult({ code: code ?? -1, stderr }));
   });
 }
 
@@ -181,7 +181,7 @@ export default function (pi: ExtensionAPI) {
       return { block: true, reason: cdResult.stderr.trim() || "denied by the cd-guard PreToolUse seatbelt" };
     }
     const prResult = await runPrCreateCheck(command);
-    if (prResult.code === 2) {
+    if (prResult.code !== 0) {
       return { block: true, reason: prResult.stderr.trim() || "denied by the PR target PreToolUse seatbelt" };
     }
     const result = await runPretoolCheck(command);

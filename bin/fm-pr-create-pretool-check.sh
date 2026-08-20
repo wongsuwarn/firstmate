@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Stable PreToolUse transport for firstmate-repository PR target enforcement.
+# Verify the execution-boundary guard for firstmate-repository PR creation.
 #
-# The tracked hook wiring scopes this guard to firstmate checkouts. This script
-# forwards the exact shell command to the semantic policy and renders the
-# established harness-specific deny responses. See docs/pr-target-guard.md.
+# The gh and gh-axi shims own the target decision after shell expansion.
+# This hook transport refuses every Bash tool call unless those tracked shims
+# are the active executable boundary. See docs/pr-target-guard.md.
 #
 # Usage:
 #   <PreToolUse JSON on stdin> | bin/fm-pr-create-pretool-check.sh
@@ -19,24 +19,18 @@ usage() {
   cat <<'EOF'
 Usage: fm-pr-create-pretool-check.sh [--command <cmd>] [--claude]
 
-With no --command, reads a PreToolUse-style JSON payload on stdin (Grok
-.toolInput.command, or Claude/Codex .tool_input.command).
-In a firstmate checkout, refuses gh or gh-axi PR creation unless it passes
---repo wongsuwarn/firstmate explicitly.
-Exits 0 to allow and 2 to deny.
+With no --command, reads a PreToolUse-style JSON payload on stdin.
+Refuses the shell command unless firstmate's gh and gh-axi execution wrappers
+are active on PATH. Exits 0 to allow and 2 to deny.
 EOF
 }
 
 emit_deny() {
-  local code=$1 reason=$2 escaped
-  escaped=$(printf '%s' "[$code] $reason" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')
+  local escaped
+  escaped=$(printf '%s' "[pr-target-boundary-unavailable] cannot verify the PR execution guard; relaunch with PATH=<firstmate>/bin/shims:\$PATH, then pass --repo $TARGET (and --base main) to PR creation." | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"%s"}\n' "$escaped" >&2
   [ "$CLAUDE_MODE" -eq 1 ] || printf '{"decision":"deny","reason":"%s"}\n' "$escaped"
   exit 2
-}
-
-deny_unclassifiable() {
-  emit_deny pr-target-unclassifiable "cannot safely verify the PR target: pass --repo $TARGET (and --base main) in a direct gh or gh-axi pr create command."
 }
 
 while [ "$#" -gt 0 ]; do
@@ -50,30 +44,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$CMD_SET" -eq 0 ]; then
-  PAYLOAD=$(cat 2>/dev/null) || deny_unclassifiable
-  [ -n "$PAYLOAD" ] || deny_unclassifiable
-  command -v jq >/dev/null 2>&1 || deny_unclassifiable
-  CMD=$(printf '%s' "$PAYLOAD" | jq -er '(.toolInput.command // .tool_input.command) | select(type == "string" and length > 0)' 2>/dev/null) || deny_unclassifiable
+  PAYLOAD=$(cat 2>/dev/null) || emit_deny
+  [ -n "$PAYLOAD" ] || emit_deny
+  command -v jq >/dev/null 2>&1 || emit_deny
+  CMD=$(printf '%s' "$PAYLOAD" | jq -er '(.toolInput.command // .tool_input.command) | select(type == "string" and length > 0)' 2>/dev/null) || emit_deny
 fi
-[ -n "$CMD" ] || exit 0
+[ -n "$CMD" ] || emit_deny
 
-SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || deny_unclassifiable
-ROOT=$(CDPATH='' cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd -P) || deny_unclassifiable
-
-POLICY="$ROOT/bin/fm-pr-create-command-policy.mjs"
-if ! command -v node >/dev/null 2>&1 || [ ! -f "$POLICY" ]; then
-  deny_unclassifiable
-fi
-
-POLICY_OUTPUT=$(node "$POLICY" --command "$CMD" 2>/dev/null) || deny_unclassifiable
-[ "$POLICY_OUTPUT" = allow ] && exit 0
-TAB=$(printf '\t')
-DECISION=${POLICY_OUTPUT%%"$TAB"*}
-[ "$DECISION" = deny ] || deny_unclassifiable
-REST=${POLICY_OUTPUT#*"$TAB"}
-[ "$REST" != "$POLICY_OUTPUT" ] || deny_unclassifiable
-CODE=${REST%%"$TAB"*}
-REASON=${REST#*"$TAB"}
-[ -n "$CODE" ] && [ -n "$REASON" ] && [ "$REASON" != "$REST" ] || deny_unclassifiable
-
-emit_deny "$CODE" "$REASON"
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || emit_deny
+WRAPPER="$SCRIPT_DIR/fm-pr-create-wrapper.sh"
+[ -x "$WRAPPER" ] || emit_deny
+"$WRAPPER" verify >/dev/null 2>&1 || emit_deny
+exit 0

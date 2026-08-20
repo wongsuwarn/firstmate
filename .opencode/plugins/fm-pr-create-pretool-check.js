@@ -9,8 +9,8 @@ function runProcess(command, args) {
     let stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
     child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.on("error", () => resolvePromise({ code: 0, stdout: "", stderr: "" }));
-    child.on("close", (code) => resolvePromise({ code: code ?? 0, stdout, stderr }));
+    child.on("error", (error) => resolvePromise({ code: -1, stdout: "", stderr: error.message }));
+    child.on("close", (code) => resolvePromise({ code: code ?? -1, stdout, stderr }));
   });
 }
 
@@ -29,11 +29,12 @@ export const FmPrCreatePretoolCheck = async ({ directory, worktree }) => {
 
   return {
     "tool.execute.before": async (input, output) => {
-      if (!root || input?.tool !== "bash") return;
+      if (input?.tool !== "bash") return;
+      if (!root) throw new Error("PR target execution guard root is unavailable");
       const command = output?.args?.command;
-      if (!command || typeof command !== "string") return;
+      if (!command || typeof command !== "string") throw new Error("PR target execution guard received an invalid Bash command");
       const result = await runProcess(`${root}/bin/fm-pr-create-pretool-check.sh`, ["--command", command]);
-      if (result.code !== 2) return;
+      if (result.code === 0) return;
       throw new Error(result.stderr.trim() || "denied by the PR target PreToolUse seatbelt");
     },
   };
