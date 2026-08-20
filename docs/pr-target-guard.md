@@ -1,6 +1,6 @@
 # Firstmate PR target guard
 
-This document is the authoritative contract and verification record for firstmate's default PR repository binding and observable PR-target defences.
+This document records maintainer verification for firstmate's default PR repository binding and observable PR-target defences.
 
 ## Configuration convergence
 
@@ -46,11 +46,13 @@ Malformed checker payloads, unavailable checker dependencies, checker failures, 
 
 The tracked adapters cover Claude, Codex, Grok, OpenCode, Pi, and pi-signed, with pi-signed sharing Pi's extension path.
 
+Kimi has no project-level hook configuration and therefore has no tracked primary PreToolUse transport; [`turnend-guard.md`](turnend-guard.md) owns that hook-surface limit.
+
 The Grok adapter depends on Grok supplying `GROK_WORKSPACE_ROOT`; when that adapter precondition is absent, its hook exits without running the checker.
 
 The default repository binding means an ordinary bare, unqualified PR creation resolves to `wongsuwarn/firstmate`, so the accidental inferred-upstream path that prompted this change does not recur in a converged checkout.
 
-The wrapper and PreToolUse checks are defence in depth for invocations they observe, not a guarantee against a deliberately qualified invocation.
+The wrapper and PreToolUse checks are defence in depth for invocations they observe, not a guarantee against execution that bypasses both the observed hooks and the tracked PATH shims.
 
 An absolute executable path always bypasses the PATH shim.
 
@@ -58,7 +60,7 @@ The supported Bash hooks check directly visible literal paths across top-level s
 
 The portable regression drives the Claude and Codex stdin payloads, the Grok stdin payload, and the OpenCode and Pi CLI transports through the executable checker.
 
-It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable top-level literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, mutable origin changes do not disable the wrapper, every harness transport verifies the boundary, Codex, OpenCode, Pi, and pi-signed refuse adapter failures, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
+It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable top-level literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, mutable origin changes do not disable the wrapper, every tracked primary PreToolUse transport verifies the boundary, Codex, OpenCode, Pi, and pi-signed refuse adapter failures, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
 
 Run it with:
 
