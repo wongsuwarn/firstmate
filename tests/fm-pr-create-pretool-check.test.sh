@@ -12,6 +12,7 @@ TARGET=wongsuwarn/firstmate
 make_fixture() {
   local dir=$1
   mkdir -p "$dir/bin/shims" "$dir/fakebin"
+  # shellcheck disable=SC2153 # ROOT is provided by tests/lib.sh.
   cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$ROOT/bin/fm-pr-create-hook-dispatch.sh" \
     "$ROOT/bin/fm-pr-create-visible-check.sh" "$ROOT/bin/fm-pr-create-wrapper.sh" \
     "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$dir/bin/"
