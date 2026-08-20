@@ -62,7 +62,7 @@ fi
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || deny_boundary
 WRAPPER="$SCRIPT_DIR/fm-pr-create-wrapper.sh"
 [ -x "$WRAPPER" ] || deny_boundary
-FM_PR_CREATE_TOOL= FM_PR_CREATE_WRAPPER_INTERNAL=verify "$WRAPPER" >/dev/null 2>&1 || deny_boundary
+FM_PR_CREATE_TOOL='' FM_PR_CREATE_WRAPPER_INTERNAL=verify "$WRAPPER" >/dev/null 2>&1 || deny_boundary
 POLICY="$SCRIPT_DIR/fm-pr-create-explicit-path-policy.mjs"
 command -v node >/dev/null 2>&1 || deny_boundary
 [ -f "$POLICY" ] || deny_boundary

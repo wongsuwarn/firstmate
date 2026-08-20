@@ -92,6 +92,7 @@ test_wrapper_boundary_matrix() {
   expect_shell deny 'gh pr create --repo wongsuwarn/firstmate -R kunchenguid/firstmate'
   expect_shell deny 'gh pr create --repo wongsuwarn/firstmate; gh-axi pr create --title test'
   expect_shell deny "bash -c 'gh pr create --title test'"
+  # shellcheck disable=SC2016 # The command must expand G only when the checked shell evaluates it.
   expect_shell deny 'G=gh; "$G" pr create --title test'
   expect_shell deny 'gh pr create --repo'
   expect_shell allow 'gh-axi pr create --repo wongsuwarn/firstmate --base main --title test'
