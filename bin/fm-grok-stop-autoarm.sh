@@ -18,6 +18,11 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 GRACE=${FM_GUARD_GRACE:-300}
 OWNER_LOCK="$STATE/.grok-autoarm.lock"
+AUTOARM_ATTEMPTS=${FM_GROK_AUTOARM_ATTEMPTS:-2}
+case "$AUTOARM_ATTEMPTS" in
+  1|2|3) : ;;
+  *) AUTOARM_ATTEMPTS=2 ;;
+esac
 
 # shellcheck source=bin/fm-primary-scope-lib.sh
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
@@ -77,19 +82,38 @@ trap 'fm_lock_release "$OWNER_LOCK"' EXIT
 # shellcheck source=/dev/null
 [ -f "$CONFIG/x-mode.env" ] && . "$CONFIG/x-mode.env"
 
-OUT=$(mktemp "$STATE/.grok-autoarm-output.XXXXXX") || {
-  printf '%s\n' 'firstmate watcher auto-arm FAILED - no output file could be created for the Stop-owned supervision cycle.' >&2
-  exit 2
-}
-trap 'rm -f "$OUT" 2>/dev/null || true; fm_lock_release "$OWNER_LOCK"' EXIT
+OUT=
+ACTIONABLE=0
+attempt=0
+trap '[ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true; fm_lock_release "$OWNER_LOCK"' EXIT
+while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
+  attempt=$((attempt + 1))
+  OUT=$(mktemp "$STATE/.grok-autoarm-output.XXXXXX" 2>/dev/null) || OUT=
+  if [ -n "$OUT" ]; then
+    "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
+  else
+    "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 || true
+  fi
 
-"$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
+  [ -e "$STATE/.afk" ] && exit 0
+  need_supervision || exit 0
 
-# AFK or completion can happen while the owner waits.
-[ -e "$STATE/.afk" ] && exit 0
-need_supervision || exit 0
+  ACTIONABLE=0
+  if [ -n "$OUT" ] && grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null; then
+    ACTIONABLE=1
+    break
+  fi
 
-if grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null; then
+  if fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME"; then
+    exit 0
+  fi
+
+  [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ] || break
+  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+  OUT=
+done
+
+if [ "$ACTIONABLE" -eq 1 ]; then
   {
     printf '%s\n' 'firstmate watcher wake - one supervision event needs a handling turn now.'
     grep -E '^(signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
@@ -98,17 +122,9 @@ if grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null; then
   exit 2
 fi
 
-# fm-watch-arm only exits a successful attached call after it found a live owner
-# arm in this watcher's ancestry.  Recheck the watcher before accepting that
-# short attach as a safe redundant call rather than the only remaining wait.
-if grep -q '^watcher: attached pid=' "$OUT" 2>/dev/null \
-  && fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME"; then
-  exit 0
-fi
-
 {
-  printf '%s\n' 'firstmate watcher auto-arm FAILED - the Stop-owned supervision cycle ended without a verified live successor.'
-  grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
-  printf '%s\n' 'Do not launch a manual background arm from this notice; the next Stop retries the automatic mechanism before the turn can end blind.'
+  printf 'firstmate watcher auto-arm FAILED - the Stop-owned supervision cycle exhausted %s bounded attempts without a verified live successor.\n' "$attempt"
+  [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
+  printf '%s\n' 'Do not launch a manual background arm from this notice; automatic recovery is exhausted and supervision remains visibly unwatched.'
 } >&2
 exit 2

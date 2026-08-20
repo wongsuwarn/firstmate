@@ -56,6 +56,36 @@ printf '%s\n' "$$" >> "$FM_HOME/state/arm-ran"
 printf 'watcher: attached pid=%s (beacon 0s)\n' "$$"
 SH
       ;;
+    failed)
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$$" >> "$FM_HOME/state/arm-ran"
+printf '%s\n' 'watcher: FAILED - no live watcher with a fresh beacon'
+exit 1
+SH
+      ;;
+    fail-then-verified)
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$$" >> "$FM_HOME/state/arm-ran"
+attempt=$(wc -l < "$FM_HOME/state/arm-ran" | tr -d ' ')
+if [ "$attempt" -eq 1 ]; then
+  printf '%s\n' 'watcher: FAILED - no live watcher with a fresh beacon'
+  exit 1
+fi
+. "$FM_HOME/bin/fm-wake-lib.sh"
+watcher_pid=$(cat "$FM_HOME/state/recovery-watcher-pid")
+watcher_identity=$(fm_pid_identity "$watcher_pid") || exit 1
+watcher_path=$(cd "$FM_HOME/bin" && pwd)/fm-watch.sh
+mkdir -p "$FM_HOME/state/.watch.lock"
+printf '%s\n' "$watcher_pid" > "$FM_HOME/state/.watch.lock/pid"
+printf '%s\n' "$FM_HOME" > "$FM_HOME/state/.watch.lock/fm-home"
+printf '%s\n' "$watcher_path" > "$FM_HOME/state/.watch.lock/watcher-path"
+printf '%s\n' "$watcher_identity" > "$FM_HOME/state/.watch.lock/pid-identity"
+touch "$FM_HOME/state/.last-watcher-beat"
+printf 'watcher: attached pid=%s (beacon 0s)\n' "$watcher_pid"
+SH
+      ;;
     *) fail "unknown arm fixture $kind" ;;
   esac
   chmod +x "$dir/bin/fm-watch-arm.sh"
@@ -162,6 +192,38 @@ test_bare_attach_is_not_accepted_as_a_live_wait() {
   pass "grok auto-arm: an immediate unverified attach cannot become the only wait"
 }
 
+test_failed_successor_retries_and_verifies_recovery() {
+  local dir out status watcher_pid
+  dir=$(make_primary "$TMP_ROOT/retry-success")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" fail-then-verified
+  sleep 60 &
+  watcher_pid=$!
+  printf '%s\n' "$watcher_pid" > "$dir/state/recovery-watcher-pid"
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  expect_code 0 "$status" "a failed successor start must recover within the same Stop invocation"
+  [ -z "$out" ] || fail "verified successor recovery produced unexpected feedback: $out"
+  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 2 ] || fail "successor recovery did not retry exactly once"
+  kill -0 "$watcher_pid" 2>/dev/null || fail "the verified recovery wait was not live when the hook reported success"
+  kill "$watcher_pid" 2>/dev/null || true
+  wait "$watcher_pid" 2>/dev/null || true
+  pass "grok auto-arm: failed successor retries and verifies recovery in the same invocation"
+}
+
+test_exhausted_recovery_stays_loud_and_unverified() {
+  local dir out status
+  dir=$(make_primary "$TMP_ROOT/retry-exhausted")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" failed
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  expect_code 2 "$status" "exhausted successor recovery must block with visible failure feedback"
+  assert_contains "$out" "exhausted 2 bounded attempts" "exhausted recovery did not report its in-invocation attempts"
+  assert_contains "$out" "without a verified live successor" "exhausted recovery appeared watched without verification"
+  assert_contains "$out" "supervision remains visibly unwatched" "exhausted recovery did not surface the blind session state"
+  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 2 ] || fail "exhausted recovery did not consume both bounded attempts"
+  pass "grok auto-arm: exhausted recovery remains loud and visibly unwatched"
+}
+
 test_completion_does_not_rewake_after_supervision_ends() {
   local dir out status
   dir=$(make_primary "$TMP_ROOT/completion")
@@ -179,4 +241,6 @@ test_afk_remains_daemon_owned
 test_linked_task_worktree_is_inert
 test_redundant_attach_keeps_existing_owner_wait
 test_bare_attach_is_not_accepted_as_a_live_wait
+test_failed_successor_retries_and_verifies_recovery
+test_exhausted_recovery_stays_loud_and_unverified
 test_completion_does_not_rewake_after_supervision_ends
