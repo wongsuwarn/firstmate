@@ -8,42 +8,71 @@ function basename(value) {
   return value.split(/[\\/]/).at(-1) || "";
 }
 
-function inspect(command, wrapper) {
+function isPrCreate(args) {
+  let positional = 0;
+  let expectValue = false;
+  for (const arg of args) {
+    if (expectValue) {
+      expectValue = false;
+      continue;
+    }
+    if (["--repo", "--hostname", "-R"].includes(arg)) {
+      expectValue = true;
+      continue;
+    }
+    if (arg.startsWith("--repo=") || arg.startsWith("--hostname=") || /^-R.+/.test(arg)) continue;
+    if (arg === "--" || arg.startsWith("-")) continue;
+    positional += 1;
+    if (positional === 1 && arg !== "pr") return false;
+    if (positional === 2) return arg === "create";
+  }
+  return false;
+}
+
+function visiblePrInvocations(command) {
   const lexed = new Lexer(command).tokenize();
-  if (lexed.error) return "allow";
+  if (lexed.error) return [];
   const { nodes } = splitProgram(lexed.tokens);
+  const invocations = [];
   for (const tokens of nodes) {
     const position = commandPosition(tokens);
     const tool = basename(position.command?.value || "");
     if (!["gh", "gh-axi"].includes(tool) || !position.command.literal) continue;
     const words = position.words.slice(position.index);
-    const result = spawnSync(wrapper, [tool, ...words.slice(1).map((word) => word.value)], {
+    const args = words.slice(1).map((word) => word.value);
+    if (isPrCreate(args)) invocations.push({ tool, args });
+  }
+  return invocations;
+}
+
+function inspect(command, wrapper) {
+  const invocations = visiblePrInvocations(command);
+  if (invocations.length === 0) return "not-pr";
+  for (const { tool, args } of invocations) {
+    const result = spawnSync(wrapper, [tool, ...args], {
       env: { ...process.env, FM_PR_CREATE_TOOL: "", FM_PR_CREATE_WRAPPER_INTERNAL: "check" },
       stdio: "ignore",
     });
     if (result.error || result.status === null) throw result.error || new Error("wrapper check terminated by signal");
     if (result.status === 2) return "deny";
     if (result.status !== 0) throw new Error(`wrapper check exited ${result.status}`);
-    const prResult = spawnSync(wrapper, [tool, ...words.slice(1).map((word) => word.value)], {
-      env: { ...process.env, FM_PR_CREATE_TOOL: "", FM_PR_CREATE_WRAPPER_INTERNAL: "is-pr-create" },
-      stdio: "ignore",
-    });
-    if (prResult.error || prResult.status === null) throw prResult.error || new Error("PR detection terminated by signal");
-    if (prResult.status === 0) return "pr-allowed";
-    if (prResult.status !== 1) throw new Error(`PR detection exited ${prResult.status}`);
   }
-  return "not-pr";
+  return "pr-allowed";
 }
 
 function parseArguments(argv) {
-  const result = { command: "", wrapper: "" };
+  const result = { classify: false, command: "", wrapper: "" };
   for (let index = 0; index < argv.length; index += 1) {
     const name = argv[index];
+    if (name === "--classify") {
+      result.classify = true;
+      continue;
+    }
     if (!["--command", "--wrapper"].includes(name) || index + 1 >= argv.length) throw new Error(`invalid argument: ${name}`);
     result[name.slice(2)] = argv[index + 1];
     index += 1;
   }
-  if (!result.command || !result.wrapper) throw new Error("--command and --wrapper are required");
+  if (!result.command || (!result.classify && !result.wrapper)) throw new Error("--command and --wrapper are required");
   return result;
 }
 
@@ -61,11 +90,15 @@ function invokedDirectly() {
 if (invokedDirectly()) {
   try {
     const args = parseArguments(process.argv.slice(2));
-    process.stdout.write(`${inspect(args.command, args.wrapper)}\n`);
+    if (args.classify) {
+      process.exitCode = visiblePrInvocations(args.command).length > 0 ? 0 : 1;
+    } else {
+      process.stdout.write(`${inspect(args.command, args.wrapper)}\n`);
+    }
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;
   }
 }
 
-export { inspect };
+export { inspect, visiblePrInvocations };

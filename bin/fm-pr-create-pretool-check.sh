@@ -61,16 +61,25 @@ fi
 [ -n "$CMD" ] || exit 0
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || exit 0
+VISIBLE="$SCRIPT_DIR/fm-pr-create-visible-check.sh"
+[ -x "$VISIBLE" ] || exit 0
+"$VISIBLE" --command "$CMD" >/dev/null 2>&1
+VISIBLE_RESULT=$?
+case "$VISIBLE_RESULT" in
+  0) ;;
+  1) exit 0 ;;
+  *) exit 0 ;;
+esac
 WRAPPER="$SCRIPT_DIR/fm-pr-create-wrapper.sh"
-[ -x "$WRAPPER" ] || exit 0
+[ -x "$WRAPPER" ] || deny_boundary
 POLICY="$SCRIPT_DIR/fm-pr-create-explicit-path-policy.mjs"
-command -v node >/dev/null 2>&1 || exit 0
-[ -f "$POLICY" ] || exit 0
-POLICY_RESULT=$(node "$POLICY" --wrapper "$WRAPPER" --command "$CMD" 2>/dev/null) || exit 0
+command -v node >/dev/null 2>&1 || deny_boundary
+[ -f "$POLICY" ] || deny_boundary
+POLICY_RESULT=$(node "$POLICY" --wrapper "$WRAPPER" --command "$CMD" 2>/dev/null) || deny_boundary
 case "$POLICY_RESULT" in
   not-pr) exit 0 ;;
   deny) deny_target ;;
   pr-allowed) ;;
-  *) exit 0 ;;
+  *) deny_boundary ;;
 esac
 FM_PR_CREATE_TOOL='' FM_PR_CREATE_WRAPPER_INTERNAL=verify "$WRAPPER" >/dev/null 2>&1 || deny_boundary

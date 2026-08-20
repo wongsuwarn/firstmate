@@ -130,7 +130,7 @@ function runCdCheck(command: string): Promise<{ code: number; stderr: string }> 
 }
 
 function runPrCreateCheck(command: string): Promise<{ code: number; stderr: string }> {
-  return runChecker("fm-pr-create-pretool-check.sh", command);
+  return runChecker("fm-pr-create-hook-dispatch.sh", command);
 }
 
 export default function (pi: ExtensionAPI) {

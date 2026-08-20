@@ -12,10 +12,12 @@ TARGET=wongsuwarn/firstmate
 make_fixture() {
   local dir=$1
   mkdir -p "$dir/bin/shims" "$dir/fakebin"
-  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$ROOT/bin/fm-pr-create-wrapper.sh" \
+  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$ROOT/bin/fm-pr-create-hook-dispatch.sh" \
+    "$ROOT/bin/fm-pr-create-visible-check.sh" "$ROOT/bin/fm-pr-create-wrapper.sh" \
     "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$dir/bin/"
   cp "$ROOT/bin/shims/gh" "$ROOT/bin/shims/gh-axi" "$dir/bin/shims/"
-  chmod +x "$dir/bin/fm-pr-create-pretool-check.sh" "$dir/bin/fm-pr-create-wrapper.sh" \
+  chmod +x "$dir/bin/fm-pr-create-pretool-check.sh" "$dir/bin/fm-pr-create-hook-dispatch.sh" \
+    "$dir/bin/fm-pr-create-visible-check.sh" "$dir/bin/fm-pr-create-wrapper.sh" \
     "$dir/bin/shims/gh" "$dir/bin/shims/gh-axi"
   for tool in gh gh-axi; do
     cat > "$dir/fakebin/$tool" <<'SH'
@@ -125,7 +127,36 @@ test_detectable_top_level_explicit_paths_are_checked() {
   expect_entry allow codex "$literal_path pr create --repo wongsuwarn/firstmate --base main"
   expect_entry deny-target codex "PATH=$FIXTURE/fakebin:\$PATH gh pr create --title test"
   expect_entry allow codex "PATH=$FIXTURE/fakebin:\$PATH gh pr create --repo wongsuwarn/firstmate --base main"
+  expect_entry deny-target codex 'gh pr create --repo wongsuwarn/firstmate --base main; /usr/bin/gh pr create --repo wrong/repo --base main'
   pass "detectable top-level literal-path and command-local-PATH PR calls receive target checks"
+}
+
+test_unavailable_dependencies_refuse_only_visible_pr_creation() {
+  local fixture checker path
+  fixture=$(make_fixture "$TMP_ROOT/missing-wrapper")
+  checker="$fixture/bin/fm-pr-create-pretool-check.sh"
+  path="$fixture/bin/shims:$fixture/fakebin:$PATH"
+  chmod -x "$fixture/bin/fm-pr-create-wrapper.sh"
+  expect_entry allow codex 'echo hello' "$checker" "$path"
+  expect_entry allow codex 'echo "gh pr create documentation"' "$checker" "$path"
+  expect_entry deny codex 'gh pr create --repo wongsuwarn/firstmate --base main' "$checker" "$path"
+
+  fixture=$(make_fixture "$TMP_ROOT/missing-node")
+  checker="$fixture/bin/fm-pr-create-pretool-check.sh"
+  path="$fixture/bin/shims:$fixture/fakebin:/usr/bin:/bin"
+  expect_entry allow codex 'echo hello' "$checker" "$path"
+  expect_entry allow codex 'echo "gh pr create documentation"' "$checker" "$path"
+  expect_entry deny codex 'gh pr create --repo wongsuwarn/firstmate --base main' "$checker" "$path"
+  expect_entry deny codex 'command /usr/bin/gh-axi pr create --repo wongsuwarn/firstmate --base main' "$checker" "$path"
+
+  fixture=$(make_fixture "$TMP_ROOT/missing-policy")
+  checker="$fixture/bin/fm-pr-create-pretool-check.sh"
+  path="$fixture/bin/shims:$fixture/fakebin:$PATH"
+  rm "$fixture/bin/fm-pr-create-explicit-path-policy.mjs"
+  expect_entry allow codex 'echo hello' "$checker" "$path"
+  expect_entry allow codex 'echo "gh pr create documentation"' "$checker" "$path"
+  expect_entry deny codex 'gh pr create --repo wongsuwarn/firstmate --base main' "$checker" "$path"
+  pass "unavailable wrapper, Node, and policy refuse only visible PR creation"
 }
 
 test_all_harness_transports_scope_boundary_enforcement() {
@@ -163,11 +194,16 @@ test_malformed_transport_leaves_unrelated_commands_alone() {
   pass "malformed PR-target hook transport leaves unrelated commands alone"
 }
 
-test_opencode_adapter_failures_leave_unrelated_commands_alone() {
-  local plugin=$ROOT/.opencode/plugins/fm-pr-create-pretool-check.js missing signal out status=0
+test_opencode_adapter_failures_scope_refusal_to_visible_pr_creation() {
+  local plugin=$ROOT/.opencode/plugins/fm-pr-create-pretool-check.js missing signal out root status=0
   missing="$TMP_ROOT/opencode-missing"
   signal="$TMP_ROOT/opencode-signal"
   mkdir -p "$missing/bin" "$signal/bin"
+  for root in "$missing" "$signal"; do
+    cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$ROOT/bin/fm-pr-create-visible-check.sh" \
+      "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$root/bin/"
+    chmod +x "$root/bin/fm-pr-create-hook-dispatch.sh" "$root/bin/fm-pr-create-visible-check.sh"
+  done
   cat > "$signal/bin/fm-pr-create-pretool-check.sh" <<'SH'
 #!/usr/bin/env bash
 kill -TERM $$
@@ -179,12 +215,68 @@ const mod = await import(`${pathToFileURL(process.env.PLUGIN).href}?failure=${Da
 for (const root of [process.env.MISSING, process.env.SIGNAL]) {
   const hooks = await mod.FmPrCreatePretoolCheck({ worktree: root });
   await hooks["tool.execute.before"]({ tool: "bash" }, { args: { command: "git status" } });
+  let blocked = false;
+  try {
+    await hooks["tool.execute.before"]({ tool: "bash" }, { args: { command: "gh pr create --repo wongsuwarn/firstmate --base main" } });
+  } catch {
+    blocked = true;
+  }
+  if (!blocked) throw new Error(`OpenCode allowed visible PR creation after checker failure for ${root}`);
 }
 JS
   ) || status=$?
   [ "$status" -eq 0 ] || fail "OpenCode adapter failure test failed: $out"
   [ -z "$out" ] || fail "OpenCode adapter failure test printed output: $out"
-  pass "OpenCode leaves unrelated commands alone on checker spawn failure and signal termination"
+  pass "OpenCode scopes checker-failure refusal to visible PR creation"
+}
+
+test_direct_hook_adapter_failures_scope_refusal_to_visible_pr_creation() {
+  local adapter hook mode fixture payload out status
+  for mode in missing signal; do
+    fixture="$TMP_ROOT/direct-$mode"
+    mkdir -p "$fixture/bin"
+    cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$ROOT/bin/fm-pr-create-visible-check.sh" \
+      "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$fixture/bin/"
+    chmod +x "$fixture/bin/fm-pr-create-hook-dispatch.sh" "$fixture/bin/fm-pr-create-visible-check.sh"
+    if [ "$mode" = signal ]; then
+      cat > "$fixture/bin/fm-pr-create-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+kill -TERM $$
+SH
+      chmod +x "$fixture/bin/fm-pr-create-pretool-check.sh"
+    fi
+    for adapter in claude grok; do
+      case "$adapter" in
+        claude)
+          hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-hook-dispatch.sh")) | .command' "$ROOT/.claude/settings.json")
+          payload=$(jq -cn --arg command 'git status' '{tool_input:{command:$command}}')
+          status=0
+          out=$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$fixture" bash -c "$hook" 2>&1) || status=$?
+          ;;
+        grok)
+          hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-hook-dispatch.sh")) | .command' "$ROOT/.grok/hooks/fm-pr-create-pretool-check.json")
+          payload=$(jq -cn --arg command 'git status' '{toolInput:{command:$command}}')
+          status=0
+          out=$(printf '%s' "$payload" | GROK_WORKSPACE_ROOT="$fixture" bash -c "$hook" 2>&1) || status=$?
+          ;;
+      esac
+      [ "$status" -eq 0 ] || fail "$adapter $mode checker blocked an unrelated command: $out"
+      [ -z "$out" ] || fail "$adapter $mode checker printed output for an unrelated command: $out"
+      case "$adapter" in
+        claude) payload=$(jq -cn --arg command 'gh pr create --repo wongsuwarn/firstmate --base main' '{tool_input:{command:$command}}') ;;
+        grok) payload=$(jq -cn --arg command 'gh pr create --repo wongsuwarn/firstmate --base main' '{toolInput:{command:$command}}') ;;
+      esac
+      status=0
+      if [ "$adapter" = claude ]; then
+        out=$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$fixture" bash -c "$hook" 2>&1) || status=$?
+      else
+        out=$(printf '%s' "$payload" | GROK_WORKSPACE_ROOT="$fixture" bash -c "$hook" 2>&1) || status=$?
+      fi
+      [ "$status" -eq 2 ] || fail "$adapter $mode checker allowed visible PR creation: $out"
+      assert_contains "$out" 'pr-target-boundary-unavailable' "$adapter $mode checker denial omitted its reason"
+    done
+  done
+  pass "Claude and Grok scope checker-failure refusal to visible PR creation"
 }
 
 make_pi_adapter_fixture() {
@@ -195,6 +287,8 @@ make_pi_adapter_fixture() {
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$repo/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$ROOT/.pi/extensions/lib/fm-primary-scope.ts" "$repo/.pi/extensions/lib/"
   cp "$ROOT/bin/fm-primary-scope.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$repo/bin/"
+  cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$ROOT/bin/fm-pr-create-visible-check.sh" \
+    "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$repo/bin/"
   cat > "$repo/bin/fm-cd-pretool-check.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -210,7 +304,9 @@ kill -TERM $$
 SH
     chmod +x "$repo/bin/fm-pr-create-pretool-check.sh"
   fi
-  chmod +x "$repo/bin/fm-cd-pretool-check.sh" "$repo/bin/fm-arm-pretool-check.sh" "$repo/bin/fm-primary-scope.sh"
+  chmod +x "$repo/bin/fm-cd-pretool-check.sh" "$repo/bin/fm-arm-pretool-check.sh" \
+    "$repo/bin/fm-primary-scope.sh" "$repo/bin/fm-pr-create-hook-dispatch.sh" \
+    "$repo/bin/fm-pr-create-visible-check.sh"
 }
 
 run_pi_adapter_case() {
@@ -225,41 +321,55 @@ const handler = handlers.get("tool_call");
 if (!handler) throw new Error("Pi tool_call handler was not registered");
 const result = await handler({ type: "tool_call", toolName: "bash", input: { command: "git status" } });
 if (result?.block === true) throw new Error("Pi blocked an unrelated command after PR checker failure");
+const prResult = await handler({ type: "tool_call", toolName: "bash", input: { command: "gh pr create --repo wongsuwarn/firstmate --base main" } });
+if (prResult?.block !== true) throw new Error("Pi allowed visible PR creation after PR checker failure");
 JS
   ) || status=$?
   [ "$status" -eq 0 ] || fail "Pi adapter failure test failed: $out"
   [ -z "$out" ] || fail "Pi adapter failure test printed output: $out"
 }
 
-test_pi_adapter_failures_leave_unrelated_commands_alone() {
+test_pi_adapter_failures_scope_refusal_to_visible_pr_creation() {
   local missing="$TMP_ROOT/pi-missing" signal="$TMP_ROOT/pi-signal"
   make_pi_adapter_fixture "$missing" missing
   make_pi_adapter_fixture "$signal" signal
   run_pi_adapter_case "$missing"
   run_pi_adapter_case "$signal"
-  pass "Pi and pi-signed leave unrelated commands alone on checker spawn failure and signal termination"
+  pass "Pi and pi-signed scope checker-failure refusal to visible PR creation"
 }
 
-test_codex_adapter_preconditions_leave_unrelated_commands_alone() {
+test_codex_adapter_preconditions_scope_refusal_to_visible_pr_creation() {
   local hook fixture payload out status=0
-  hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-pretool-check.sh")) | .command' "$ROOT/.codex/hooks.json")
+  hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-hook-dispatch.sh")) | .command' "$ROOT/.codex/hooks.json")
   [ -n "$hook" ] || fail "Codex PR-target hook command is missing"
   payload=$(jq -cn --arg command 'git status' '{tool_input:{command:$command}}')
   fixture="$TMP_ROOT/codex-precondition"
   mkdir -p "$fixture/.codex" "$fixture/bin"
   : > "$fixture/AGENTS.md"
   cp "$ROOT/.codex/hooks.json" "$fixture/.codex/hooks.json"
+  cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$ROOT/bin/fm-pr-create-visible-check.sh" \
+    "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$fixture/bin/"
+  chmod +x "$fixture/bin/fm-pr-create-hook-dispatch.sh" "$fixture/bin/fm-pr-create-visible-check.sh"
   out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
   [ "$status" -eq 0 ] || fail "Codex missing-checker precondition must allow unrelated commands, got $status: $out"
   [ -z "$out" ] || fail "Codex missing-checker precondition printed output: $out"
-  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$fixture/bin/"
-  chmod +x "$fixture/bin/fm-pr-create-pretool-check.sh"
+  payload=$(jq -cn --arg command 'gh pr create --repo wongsuwarn/firstmate --base main' '{tool_input:{command:$command}}')
+  status=0
+  out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 2 ] || fail "Codex missing-checker precondition must deny visible PR creation, got $status: $out"
+  assert_contains "$out" 'pr-target-boundary-unavailable' "Codex missing-checker denial omitted its reason"
   printf '%s\n' '{}' > "$fixture/.codex/hooks.json"
+  payload=$(jq -cn --arg command 'git status' '{tool_input:{command:$command}}')
   status=0
   out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
   [ "$status" -eq 0 ] || fail "Codex hook self-validation failure must allow unrelated commands, got $status: $out"
   [ -z "$out" ] || fail "Codex hook self-validation failure printed output: $out"
-  pass "Codex leaves unrelated commands alone when checker preconditions are unavailable"
+  payload=$(jq -cn --arg command 'gh pr create --repo wongsuwarn/firstmate --base main' '{tool_input:{command:$command}}')
+  status=0
+  out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 2 ] || fail "Codex self-validation failure must deny visible PR creation, got $status: $out"
+  assert_contains "$out" 'pr-target-boundary-unavailable' "Codex self-validation denial omitted its reason"
+  pass "Codex scopes unavailable precondition refusal to visible PR creation"
 }
 
 make_config_fixture() {
@@ -335,11 +445,13 @@ SH
 test_wrapper_boundary_matrix
 test_private_verify_mode_preserves_public_command
 test_detectable_top_level_explicit_paths_are_checked
+test_unavailable_dependencies_refuse_only_visible_pr_creation
 test_all_harness_transports_scope_boundary_enforcement
 test_guard_survives_origin_change
 test_malformed_transport_leaves_unrelated_commands_alone
-test_opencode_adapter_failures_leave_unrelated_commands_alone
-test_pi_adapter_failures_leave_unrelated_commands_alone
-test_codex_adapter_preconditions_leave_unrelated_commands_alone
+test_opencode_adapter_failures_scope_refusal_to_visible_pr_creation
+test_direct_hook_adapter_failures_scope_refusal_to_visible_pr_creation
+test_pi_adapter_failures_scope_refusal_to_visible_pr_creation
+test_codex_adapter_preconditions_scope_refusal_to_visible_pr_creation
 test_binding_converges_idempotently
 test_bootstrap_root_override_binds_selected_checkout

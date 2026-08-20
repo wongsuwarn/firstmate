@@ -40,13 +40,17 @@ The refusal tells the worker to pass `--repo wongsuwarn/firstmate --base main`.
 
 Because enforcement occurs when `gh` or `gh-axi` executes, dynamic command names reach the same guard while quoted examples, comments, and other non-executed text remain unrelated commands.
 
-`bin/fm-pr-create-pretool-check.sh` first identifies directly detectable top-level `gh` or `gh-axi` PR creation, including a command-local PATH or literal executable path.
+`bin/fm-pr-create-visible-check.sh` identifies directly detectable top-level `gh` or `gh-axi` PR creation, including a command-local PATH or literal executable path, without depending on the execution wrapper.
+
+`bin/fm-pr-create-hook-dispatch.sh` gives every tracked harness the same checker-failure behavior.
 
 It allows unrelated shell commands without requiring shims on PATH.
 
 For visible PR creation, it rejects a missing or wrong `--repo wongsuwarn/firstmate` or `--base main`, then verifies both wrapper entry points before allowing the command.
 
-An unavailable boundary therefore refuses only the visible PR creation that needs it, while malformed checker payloads, unavailable checker dependencies, checker failures, and invalid checker responses leave unrelated shell commands alone.
+An unavailable wrapper, Node runtime, policy file, checker executable, or checker process therefore refuses visible PR creation while leaving unrelated shell commands alone.
+
+When the hook payload itself cannot be classified, the transport leaves it alone rather than denying an unknown command.
 
 The tracked adapters cover Claude, Codex, Grok, OpenCode, Pi, and pi-signed, with pi-signed sharing Pi's extension path.
 
@@ -66,7 +70,7 @@ The portable regression drives the Claude and Codex stdin payloads, the Grok std
 
 It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable top-level literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, and ordinary shell commands remain allowed when no shims are first on PATH or the boundary is unavailable.
 
-It also proves mutable origin changes do not disable the wrapper, every tracked primary PreToolUse transport scopes boundary enforcement to visible PR creation, Codex, OpenCode, Pi, and pi-signed leave unrelated commands alone on adapter failures, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
+It also proves mutable origin changes do not disable the wrapper, every tracked primary PreToolUse transport scopes boundary enforcement to visible PR creation, every tracked adapter refuses visible PR creation but leaves unrelated commands alone when its checker is missing or terminated, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
 
 Run it with:
 
@@ -80,12 +84,14 @@ On 2026-08-20, that portable regression completed with:
 ok - gh and gh-axi wrappers enforce expanded PR arguments without matching quoted text or comments
 ok - private boundary verification does not reserve the public gh verify command
 ok - detectable top-level literal-path and command-local-PATH PR calls receive target checks
+ok - unavailable wrapper, Node, and policy refuse only visible PR creation
 ok - every primary harness transport scopes boundary enforcement to visible PR creation
 ok - PR target wrapper remains active when the checkout origin changes
 ok - malformed PR-target hook transport leaves unrelated commands alone
-ok - OpenCode leaves unrelated commands alone on checker spawn failure and signal termination
-ok - Pi and pi-signed leave unrelated commands alone on checker spawn failure and signal termination
-ok - Codex leaves unrelated commands alone when checker preconditions are unavailable
+ok - OpenCode scopes checker-failure refusal to visible PR creation
+ok - Claude and Grok scope checker-failure refusal to visible PR creation
+ok - Pi and pi-signed scope checker-failure refusal to visible PR creation
+ok - Codex scopes unavailable precondition refusal to visible PR creation
 ok - PR target binding converges a clone and remains idempotent through its executable interface
 ok - bootstrap root override binds and verifies the selected checkout
 ```

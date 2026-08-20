@@ -27,7 +27,7 @@
           },
           {
             "type": "command",
-            "command": "bash -lc 'payload=$(cat 2>/dev/null) || exit 0; [ -n \"$payload\" ] || exit 0; command -v jq >/dev/null 2>&1 || exit 0; root=$(pwd -P) || exit 0; [ -x \"$root/bin/fm-pr-create-pretool-check.sh\" ] || exit 0; [ -f \"$root/AGENTS.md\" ] || exit 0; [ -f \"$root/.codex/hooks.json\" ] || exit 0; jq -e \"any(.hooks.PreToolUse[]?.hooks[]?.command?; type == \\\"string\\\" and contains(\\\"fm-pr-create-pretool-check.sh\\\"))\" \"$root/.codex/hooks.json\" >/dev/null 2>&1 || exit 0; printf \"%s\" \"$payload\" | \"$root/bin/fm-pr-create-pretool-check.sh\"'",
+            "command": "bash -lc 'root=$(pwd -P) || exit 0; [ -x \"$root/bin/fm-pr-create-hook-dispatch.sh\" ] || exit 0; exec \"$root/bin/fm-pr-create-hook-dispatch.sh\" --codex'",
             "timeout": 10
           }
         ]

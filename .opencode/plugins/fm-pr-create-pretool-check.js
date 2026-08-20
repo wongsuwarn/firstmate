@@ -33,7 +33,7 @@ export const FmPrCreatePretoolCheck = async ({ directory, worktree }) => {
       if (!root) throw new Error("PR target execution guard root is unavailable");
       const command = output?.args?.command;
       if (!command || typeof command !== "string") throw new Error("PR target execution guard received an invalid Bash command");
-      const result = await runProcess(`${root}/bin/fm-pr-create-pretool-check.sh`, ["--command", command]);
+      const result = await runProcess(`${root}/bin/fm-pr-create-hook-dispatch.sh`, ["--command", command]);
       if (result.code !== 2) return;
       throw new Error(result.stderr.trim() || "denied by the PR target PreToolUse seatbelt");
     },
