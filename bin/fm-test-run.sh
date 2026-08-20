@@ -136,7 +136,7 @@ family_for_basename() {
     fm-brief.test.sh|fm-vendor-auth-probe.test.sh|\
     fm-browser-session-guard.test.sh|\
     fm-calm-pi-extension.test.sh|fm-cd-pretool-check.test.sh|\
-    fm-composer-ghost.test.sh|fm-composer-lib.test.sh|\
+    fm-pr-create-pretool-check.test.sh|fm-composer-ghost.test.sh|fm-composer-lib.test.sh|\
     fm-crew-state.test.sh|fm-decision-hold-lifecycle.test.sh|\
     fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|fm-grok-harness.test.sh|\
     fm-kimi-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
@@ -907,6 +907,9 @@ families_for_changed_path() {
     bin/fm-gate-refuse*|bin/fm-lock*|bin/fm-quota-axi-lib.sh)
       printf '%s\n' session-bootstrap
       ;;
+    bin/fm-pr-create-*|bin/fm-pr-target-config.sh)
+      printf '%s\n' pure-contract-unit
+      ;;
     bin/fm-pr-*|bin/fm-merge-local.sh|bin/fm-teardown.sh|bin/fm-review-diff.sh|\
     bin/fm-x-*|bin/fm-check*)
       printf '%s\n' pr-forge
@@ -957,7 +960,9 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       ;;
     .github/*|.tasks.toml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
-    docs/configuration.md|docs/supervision-protocols/*)
+    .claude/settings.json|.codex/hooks.json|.grok/hooks/*|.opencode/plugins/*|\
+    .pi/extensions/fm-primary-turnend-guard.ts|docs/configuration.md|\
+    docs/documentation-audiences.json|docs/pr-target-guard.md|docs/supervision-protocols/*)
       printf '%s\n' pure-contract-unit
       ;;
     tests/lib.sh|tests/*-helpers.sh)

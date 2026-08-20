@@ -237,6 +237,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/pr-target-guard.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/cmux-backend.md",
       "audience": "operator-current"
     },
