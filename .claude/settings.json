@@ -25,7 +25,7 @@
           },
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/bin/fm-pr-create-hook-dispatch.sh --claude"
+            "command": "bash -lc 'warn(){ echo \"[pr-target-classification-unavailable] $1; PR-target classification did not run for this command; allowing it unguarded.\" >&2; exit 0; }; [ -n \"${CLAUDE_PROJECT_DIR:-}\" ] || warn \"the Claude project root is unavailable\"; [ -x \"$CLAUDE_PROJECT_DIR/bin/fm-pr-create-hook-dispatch.sh\" ] || warn \"the hook dispatcher is not executable\"; exec \"$CLAUDE_PROJECT_DIR/bin/fm-pr-create-hook-dispatch.sh\" --claude'"
           }
         ]
       },

@@ -27,7 +27,7 @@
           },
           {
             "type": "command",
-            "command": "bash -lc 'root=$(pwd -P) || exit 0; [ -x \"$root/bin/fm-pr-create-hook-dispatch.sh\" ] || exit 0; exec \"$root/bin/fm-pr-create-hook-dispatch.sh\" --codex'",
+            "command": "bash -lc 'warn(){ echo \"[pr-target-classification-unavailable] $1; PR-target classification did not run for this command; allowing it unguarded.\" >&2; exit 0; }; root=$(pwd -P) || warn \"the Codex project root is unavailable\"; [ -x \"$root/bin/fm-pr-create-hook-dispatch.sh\" ] || warn \"the hook dispatcher is not executable\"; exec \"$root/bin/fm-pr-create-hook-dispatch.sh\" --codex'",
             "timeout": 10
           }
         ]

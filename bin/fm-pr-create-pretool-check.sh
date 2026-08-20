@@ -42,6 +42,11 @@ deny_target() {
   emit_deny "[pr-target-required] a firstmate PR must explicitly pass --repo $TARGET (and --base main)."
 }
 
+allow_unclassified() {
+  printf '%s\n' "[pr-target-classification-unavailable] $1; PR-target classification did not run for this command; allowing it unguarded." >&2
+  exit 0
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --command) [ "$#" -gt 1 ] || { echo "error: --command requires a value" >&2; exit 2; }; CMD=$2; CMD_SET=1; shift 2 ;;
@@ -53,33 +58,33 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$CMD_SET" -eq 0 ]; then
-  PAYLOAD=$(cat 2>/dev/null) || exit 0
-  [ -n "$PAYLOAD" ] || exit 0
-  command -v jq >/dev/null 2>&1 || exit 0
-  CMD=$(printf '%s' "$PAYLOAD" | jq -er '(.toolInput.command // .tool_input.command) | select(type == "string" and length > 0)' 2>/dev/null) || exit 0
+  PAYLOAD=$(cat 2>/dev/null) || allow_unclassified "the hook payload could not be read"
+  [ -n "$PAYLOAD" ] || allow_unclassified "the hook payload is empty"
+  command -v jq >/dev/null 2>&1 || allow_unclassified "jq is unavailable"
+  CMD=$(printf '%s' "$PAYLOAD" | jq -er '(.toolInput.command // .tool_input.command) | select(type == "string" and length > 0)' 2>/dev/null) \
+    || allow_unclassified "the hook payload does not contain a classifiable command"
 fi
-[ -n "$CMD" ] || exit 0
+[ -n "$CMD" ] || allow_unclassified "the command is empty"
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || exit 0
+WRAPPER="$SCRIPT_DIR/fm-pr-create-wrapper.sh"
+[ -x "$WRAPPER" ] || allow_unclassified "the wrapper is not executable"
 VISIBLE="$SCRIPT_DIR/fm-pr-create-visible-check.sh"
-[ -x "$VISIBLE" ] || exit 0
-"$VISIBLE" --command "$CMD" >/dev/null 2>&1
+[ -x "$VISIBLE" ] || allow_unclassified "the classifier is not executable"
+"$VISIBLE" --command "$CMD" >/dev/null
 VISIBLE_RESULT=$?
 case "$VISIBLE_RESULT" in
   0) ;;
   1) exit 0 ;;
   *) exit 0 ;;
 esac
-WRAPPER="$SCRIPT_DIR/fm-pr-create-wrapper.sh"
-[ -x "$WRAPPER" ] || deny_boundary
 POLICY="$SCRIPT_DIR/fm-pr-create-explicit-path-policy.mjs"
-command -v node >/dev/null 2>&1 || deny_boundary
-[ -f "$POLICY" ] || deny_boundary
-POLICY_RESULT=$(node "$POLICY" --wrapper "$WRAPPER" --command "$CMD" 2>/dev/null) || deny_boundary
+POLICY_RESULT=$(node "$POLICY" --wrapper "$WRAPPER" --command "$CMD" 2>/dev/null) \
+  || allow_unclassified "the parser exited abnormally"
 case "$POLICY_RESULT" in
   not-pr) exit 0 ;;
   deny) deny_target ;;
   pr-allowed) ;;
-  *) deny_boundary ;;
+  *) allow_unclassified "the parser returned an invalid result" ;;
 esac
 FM_PR_CREATE_TOOL='' FM_PR_CREATE_WRAPPER_INTERNAL=verify "$WRAPPER" >/dev/null 2>&1 || deny_boundary

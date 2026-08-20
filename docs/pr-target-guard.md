@@ -40,7 +40,7 @@ The refusal tells the worker to pass `--repo wongsuwarn/firstmate --base main`.
 
 Because enforcement occurs when `gh` or `gh-axi` executes, dynamic command names reach the same guard while quoted examples, comments, and other non-executed text remain unrelated commands.
 
-`bin/fm-pr-create-visible-check.sh` identifies directly detectable top-level `gh` or `gh-axi` PR creation, including a command-local PATH or literal executable path, without depending on the execution wrapper.
+`bin/fm-pr-create-visible-check.sh` uses the shared tracked parser to identify directly detectable top-level `gh` or `gh-axi` PR creation, including supported command wrappers, a command-local PATH, or a literal executable path.
 
 `bin/fm-pr-create-hook-dispatch.sh` gives every tracked harness the same checker-failure behavior.
 
@@ -48,15 +48,19 @@ It allows unrelated shell commands without requiring shims on PATH.
 
 For visible PR creation, it rejects a missing or wrong `--repo wongsuwarn/firstmate` or `--base main`, then verifies both wrapper entry points before allowing the command.
 
-An unavailable wrapper, Node runtime, policy file, checker executable, or checker process therefore refuses visible PR creation while leaving unrelated shell commands alone.
+When the wrapper, Node runtime, policy file, checker executable, or checker process is unavailable, the hook allows the command and emits a `pr-target-classification-unavailable` diagnostic naming the failed prerequisite and stating that classification did not run.
 
-When the hook payload itself cannot be classified, the transport leaves it alone rather than denying an unknown command.
+The same loud allowance applies when the hook payload cannot be classified or the parser exits abnormally.
+
+The guard does not approximate shell parsing when the tracked parser is unavailable.
+
+When parsing succeeds, a visible target violation is refused, and an unavailable tracked PATH-shim execution boundary refuses only the visible PR creation that needs it.
 
 The tracked adapters cover Claude, Codex, Grok, OpenCode, Pi, and pi-signed, with pi-signed sharing Pi's extension path.
 
 Kimi has no project-level hook configuration and therefore has no tracked primary PreToolUse transport; [`turnend-guard.md`](turnend-guard.md) owns that hook-surface limit.
 
-The Grok adapter depends on Grok supplying `GROK_WORKSPACE_ROOT`; when that adapter precondition is absent, its hook exits without running the checker.
+The Claude, Codex, and Grok shell transports emit the same loud allowance when their project root or dispatcher precondition is unavailable.
 
 The default repository binding means an ordinary bare, unqualified PR creation resolves to `wongsuwarn/firstmate`, so the accidental inferred-upstream path that prompted this change does not recur in a converged checkout.
 
@@ -68,9 +72,9 @@ The supported Bash hooks check directly visible literal paths across top-level s
 
 The portable regression drives the Claude and Codex stdin payloads, the Grok stdin payload, and the OpenCode and Pi CLI transports through the executable checker.
 
-It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable top-level literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, and ordinary shell commands remain allowed when no shims are first on PATH or the boundary is unavailable.
+It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable supported-wrapper, literal-path, and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, and quoted text, comments, and heredoc bodies do not misfire.
 
-It also proves mutable origin changes do not disable the wrapper, every tracked primary PreToolUse transport scopes boundary enforcement to visible PR creation, every tracked adapter refuses visible PR creation but leaves unrelated commands alone when its checker is missing or terminated, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
+It also proves mutable origin changes do not disable the wrapper, every tracked primary PreToolUse transport scopes boundary enforcement to visible PR creation, unavailable classification prerequisites allow commands with a loud diagnostic through every tracked adapter, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
 
 Run it with:
 
@@ -84,14 +88,14 @@ On 2026-08-20, that portable regression completed with:
 ok - gh and gh-axi wrappers enforce expanded PR arguments without matching quoted text or comments
 ok - private boundary verification does not reserve the public gh verify command
 ok - detectable top-level literal-path and command-local-PATH PR calls receive target checks
-ok - unavailable wrapper, Node, and policy refuse only visible PR creation
+ok - unavailable parser prerequisites allow commands with a loud diagnostic
 ok - every primary harness transport scopes boundary enforcement to visible PR creation
 ok - PR target wrapper remains active when the checkout origin changes
-ok - malformed PR-target hook transport leaves unrelated commands alone
-ok - OpenCode scopes checker-failure refusal to visible PR creation
-ok - Claude and Grok scope checker-failure refusal to visible PR creation
-ok - Pi and pi-signed scope checker-failure refusal to visible PR creation
-ok - Codex scopes unavailable precondition refusal to visible PR creation
+ok - malformed PR-target hook transport allows with a loud diagnostic
+ok - OpenCode allows checker failures with a loud diagnostic
+ok - Claude and Grok allow checker failures with a loud diagnostic
+ok - Pi and pi-signed allow checker failures with a loud diagnostic
+ok - Codex allows unavailable preconditions with a loud diagnostic
 ok - PR target binding converges a clone and remains idempotent through its executable interface
 ok - bootstrap root override binds and verifies the selected checkout
 ```

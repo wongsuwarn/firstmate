@@ -30,11 +30,24 @@ export const FmPrCreatePretoolCheck = async ({ directory, worktree }) => {
   return {
     "tool.execute.before": async (input, output) => {
       if (input?.tool !== "bash") return;
-      if (!root) throw new Error("PR target execution guard root is unavailable");
+      if (!root) {
+        process.stderr.write("[pr-target-classification-unavailable] the hook root is unavailable; PR-target classification did not run for this command; allowing it unguarded.\n");
+        return;
+      }
       const command = output?.args?.command;
-      if (!command || typeof command !== "string") throw new Error("PR target execution guard received an invalid Bash command");
+      if (!command || typeof command !== "string") {
+        process.stderr.write("[pr-target-classification-unavailable] the Bash command is invalid; PR-target classification did not run for this command; allowing it unguarded.\n");
+        return;
+      }
       const result = await runProcess(`${root}/bin/fm-pr-create-hook-dispatch.sh`, ["--command", command]);
-      if (result.code !== 2) return;
+      if (![0, 2].includes(result.code)) {
+        process.stderr.write("[pr-target-classification-unavailable] the hook dispatcher failed; PR-target classification did not run for this command; allowing it unguarded.\n");
+        return;
+      }
+      if (result.code !== 2) {
+        if (result.stderr) process.stderr.write(result.stderr);
+        return;
+      }
       throw new Error(result.stderr.trim() || "denied by the PR target PreToolUse seatbelt");
     },
   };

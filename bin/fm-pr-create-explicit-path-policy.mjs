@@ -91,7 +91,7 @@ if (invokedDirectly()) {
   try {
     const args = parseArguments(process.argv.slice(2));
     if (args.classify) {
-      process.exitCode = visiblePrInvocations(args.command).length > 0 ? 0 : 1;
+      process.stdout.write(`${visiblePrInvocations(args.command).length > 0 ? "pr" : "not-pr"}\n`);
     } else {
       process.stdout.write(`${inspect(args.command, args.wrapper)}\n`);
     }
