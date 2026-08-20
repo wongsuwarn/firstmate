@@ -101,12 +101,13 @@ test_cross_harness_ordinary_continuation_and_repair_matrix() {
 
   out=$("$RENDER" --harness grok)
   ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
-  assert_contains "$ordinary" "re-arm" "grok ordinary-wake line does not tell the model to re-arm"
-  assert_contains "$ordinary" "Grok tracked background task" "grok ordinary-wake line lost tracked background ownership"
-  assert_contains "$ordinary" "bin/fm-watch-arm.sh" "grok ordinary-wake line lost the background arm command"
+  assert_contains "$ordinary" "Grok Stop-owned auto-arm" "grok ordinary-wake line does not leave continuity to the Stop hook"
+  assert_contains "$ordinary" "bin/fm-grok-stop-autoarm.sh" "grok ordinary-wake line lost the auto-arm script name"
+  assert_contains "$ordinary" "do not arm another cycle" "grok ordinary-wake line still leaves routine re-arm to the model"
+  assert_not_contains "$ordinary" "Grok tracked background task" "grok ordinary-wake line retained the old model-driven background path"
   out=$("$RENDER" --harness grok --repair-line)
-  assert_contains "$out" "Grok tracked background task" "grok recovery line lost its tracked background repair"
-  assert_contains "$out" "bin/fm-watch-arm.sh" "grok recovery line lost the arm command"
+  assert_contains "$out" "Stop-owned automatic recovery" "grok recovery line lost automatic recovery guidance"
+  assert_not_contains "$out" "bin/fm-watch-arm.sh" "grok recovery line must not create a model-driven arm loop"
 
   out=$("$RENDER" --harness codex)
   ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
@@ -139,25 +140,16 @@ test_pi_signed_preserves_identity_with_pi_supervision_protocol() {
 test_grok_is_background_notify() {
   local out
   out=$("$RENDER" --harness grok)
-  assert_contains "$out" "Mode: Grok background-notify supervision." "grok snippet missing background-notify mode"
-  assert_contains "$out" "background: true" "grok snippet missing tracked background tool instruction"
-  assert_contains "$out" "synthetic_reason: task_completed" "grok snippet missing auto-wake synthetic prompt detail"
-  assert_contains "$out" "bin/fm-watch-arm.sh" "grok snippet missing watcher arm"
-  assert_not_contains "$out" "__FM_X_MODE_ENV" "renderer leaked an x-mode path placeholder"
+  assert_contains "$out" "Mode: Grok Stop-owned supervision." "grok snippet missing Stop-owned mode"
+  assert_contains "$out" "bin/fm-grok-stop-autoarm.sh" "grok snippet missing the Stop auto-arm"
+  assert_contains "$out" "Do not manually re-arm" "grok snippet still leaves ordinary continuity to the model"
+  assert_contains "$out" "fm-turnend-guard-grok.sh" "grok snippet lost the final alarm backstop"
+  assert_not_contains "$out" "background: true" "grok snippet retained the old tracked-background path"
+  assert_not_contains "$out" "synthetic_reason: task_completed" "grok snippet retained the old completion-notify path"
   assert_not_contains "$out" "foreground checkpoint" "grok snippet must not be Codex-style foreground checkpoint"
   out=$("$RENDER" --harness grok --repair-line)
-  assert_contains "$out" "Grok tracked background task" "grok repair line is not background-notify shaped"
-  pass "grok supervision is Claude-shaped background notify with passive Stop-hook backstop"
-}
-
-test_grok_command_sources_effective_config() {
-  local home config out
-  home="$TMP_ROOT/grok-home"
-  config="$TMP_ROOT/grok-config"
-  mkdir -p "$home/state" "$config"
-  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness grok --x-mode 1)
-  assert_contains "$out" "[ -f '$config/x-mode.env' ] && . '$config/x-mode.env'; exec bin/fm-watch-arm.sh" "grok arm command did not use the effective x-mode config path"
-  pass "grok rendered command sources the effective x-mode config"
+  assert_contains "$out" "Stop-owned automatic recovery" "grok repair line is not Stop-owned"
+  pass "grok supervision is Stop-owned with the turn-end guard as its alarm"
 }
 
 test_pi_snippet_uses_effective_extension_path() {
@@ -183,5 +175,4 @@ test_repair_lines
 test_cross_harness_ordinary_continuation_and_repair_matrix
 test_pi_signed_preserves_identity_with_pi_supervision_protocol
 test_grok_is_background_notify
-test_grok_command_sources_effective_config
 test_pi_snippet_uses_effective_extension_path

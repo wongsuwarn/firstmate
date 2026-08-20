@@ -1,41 +1,30 @@
-Mode: Grok background-notify supervision.
+Mode: Grok Stop-owned supervision.
 
 When this session owns supervision and away mode is not active:
 1. Drain first with `bin/fm-wake-drain.sh`.
 2. Source `__FM_X_MODE_ENV__` first when X mode is active.
-3. First cycle: arm with Grok's tracked background tool, as its own call:
+3. The Grok Stop hook runs `bin/fm-grok-stop-autoarm.sh` in the foreground between turns.
+4. The hook starts and verifies one home-scoped `bin/fm-watch-arm.sh` owner whenever work remains in flight or X mode needs polling.
+5. The hook keeps that owner live until an actionable watcher close, then exits 2 so Grok delivers the wake in the same session.
+6. After the handling turn stops, the hook starts the next owner without a model background-task call.
+7. A redundant attach may exit only after the arm layer verified an existing live owner for this home.
+8. An orphaned watcher remains attached in the Stop-owned arm rather than becoming an immediate attach completion.
+9. Failure or missing cycle only: the Stop hook blocks the turn with an automatic-recovery failure, and its next Stop retries the automatic mechanism.
+10. Never use shell `&` for firstmate supervision.
+11. Never bundle the arm onto another command.
+12. A shell `&`, a truncating pipe, or bundling is denied automatically by the PreToolUse seatbelt (`bin/fm-arm-pretool-check.sh`) whenever this project's Grok hooks are trusted.
 
-   `run_terminal_command` with `background: true` on:
-   `[ -f __FM_X_MODE_ENV_SH__ ] && . __FM_X_MODE_ENV_SH__; exec bin/fm-watch-arm.sh`
-
-4. Trust only the arm's one-line status.
-5. `watcher: started ...` or `watcher: attached ...` means a live cycle exists.
-   A redundant attach exits after that line when a live owner arm already waits for this home's watcher.
-   An orphaned watcher remains attached so the background task can report its close.
-6. Failure or missing cycle only: `watcher: FAILED ...` means supervision is down; fix and re-arm.
-7. After a successful start or attach status, end the turn.
-   The background arm remains the live wait only when it started the watcher or attached to an orphaned watcher.
-8. Waiting is silent.
-9. Never use shell `&` for firstmate supervision.
-10. Never bundle the arm onto another command.
-    A shell `&`, a truncating pipe, or bundling is denied automatically by the PreToolUse seatbelt (`bin/fm-arm-pretool-check.sh`) whenever this project's Grok hooks are trusted.
-
-Grok injects a synthetic user message with `synthetic_reason: task_completed` when the background arm completes.
-When you see a background-task-completed system reminder for the arm:
+When a Stop-hook wake resumes the session:
 1. Run `bin/fm-wake-drain.sh` first.
-2. Optionally fetch arm output with `get_command_or_subagent_output(<task_id>)` for the reason line.
-3. Handle `signal`, `stale`, `check`, or `heartbeat` using the harness-neutral contract in `AGENTS.md`.
-4. Ordinary wake: re-arm the next cycle with the same background `bin/fm-watch-arm.sh` call if work remains in flight or X mode still needs polling.
-5. Do not invent a wake from an attach-status line alone.
-   Drain the queue and act only on real wake records, the drain's `OPEN DECISIONS` entries, or a real watcher reason line.
-   If the completed task contains only `watcher: attached ...` and the drain is empty, the existing owner arm remains the live wait; do not re-arm from that completion.
-   Re-arm reports and exits when an existing healthy cycle already has a live owner arm.
-   It follows a verified successor chain only for an orphaned watcher that needs a waiting arm.
-   See [`watcher-continuity.md`](../watcher-continuity.md) for the arm-layer successor and clean-close failure contract.
+2. Handle `signal`, `stale`, `check`, or `heartbeat` using the harness-neutral contract in `AGENTS.md`.
+3. Do not manually re-arm after an ordinary wake.
+4. Do not invent a wake from an attach-status line alone.
+5. Drain the queue and act only on real wake records, the drain's `OPEN DECISIONS` entries, or a real watcher reason line.
+6. See [`watcher-continuity.md`](../watcher-continuity.md) for the arm-layer successor and clean-close failure contract.
 
 The primary project Stop hook runs `bin/fm-turnend-guard-grok.sh` as a backstop, not the normal wake path.
 [`turnend-guard.md`](../turnend-guard.md) owns its running-payload capability selection between native same-process blocking and the pre-native bounded resume fallback.
-After any forced continuation, arm the watcher with the background protocol above.
+The banner remains an alarm for a broken automatic mechanism, not a routine re-arm instruction.
 
 Interactive TUI primary sessions are the supported supervision host.
-Headless `grok -p` may wait for background process exit but does not reliably surface full auto-wake model output; do not run the primary firstmate as a one-shot headless process.
+Headless `grok -p` may wait for Stop-hook completion but does not reliably surface full auto-wake model output, so do not run the primary firstmate as a one-shot headless process.
