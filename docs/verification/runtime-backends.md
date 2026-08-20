@@ -228,22 +228,22 @@ The opt-in guard launches every installed verified harness in a private tmux ser
 It fails naming the harness and version if a raw capture changes without the watcher retaining a stable normalized stale hash.
 
 ```sh
-FM_WATCH_FOOTER_DRIFT=1 \
+FM_WATCH_FOOTER_DRIFT=1 FM_WATCH_FOOTER_DRIFT_WAIT_SECS=65 \
   tests/fm-watch-footer-drift-live-e2e.test.sh
 ```
 
 Verified 2026-08-20 on macOS arm64 with tmux 3.7b.
 
 ```text
-# claude 2.1.232 (Claude Code): no autonomous footer change observed in 70s
-# codex codex-cli 0.146.0: no autonomous footer change observed in 70s
-ok - pi 0.84.2: changed raw footer content retained normalized stale hash (count=31)
-# grok grok 1.0.5 (5115b46bc909) [stable]: no autonomous footer change observed in 70s
+# claude 2.1.232 (Claude Code): no autonomous footer change observed in 65s
+# codex codex-cli 0.146.0: no autonomous footer change observed in 65s
+ok - pi 0.84.2: changed raw footer content retained its exact normalized stale hash
+# grok grok 1.0.5 (5115b46bc909) [stable]: no autonomous footer change observed in 65s
 # checked 4 installed harness(es); raw footer drift observed on 1
 # unverified on this machine (not installed): opencode pi-signed kimi
 ```
 
-Pi changed the lowest status row from `ChatGPT used: 7d 3% ↻6h31m` to `ChatGPT used: 7d 3% ↻6h30m` while the worker was idle.
+Pi changed its rendered footer while idle, and the captures retained the same exact normalized stale hash.
 OpenCode, pi-signed, and Kimi were absent and were reported explicitly by the guard.
 
 ### Cleanup endpoint identity
