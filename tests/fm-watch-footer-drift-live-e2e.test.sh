@@ -6,8 +6,8 @@
 # footer, but only installed harnesses reveal which footer rows their current
 # releases redraw. This guard launches each installed verified harness in a
 # private tmux server, observes two captures at least 65 seconds apart, and
-# proves that a changed raw capture still accumulates a stable stale hash through
-# bin/fm-watch.sh's executable polling interface.
+# proves that changed raw captures retain the exact same hash through
+# bin/fm-watch.sh's production normalization path.
 set -u
 
 if [ "${FM_WATCH_FOOTER_DRIFT:-0}" != 1 ]; then
@@ -78,6 +78,10 @@ stat_sig() {
   if [ "$(uname)" = Darwin ]; then stat -f '%z:%Fm' "$1"; else stat -c '%s:%Y' "$1"; fi
 }
 
+normalized_hash() {
+  FM_STATE_OVERRIDE="$LAB/state" bash -c '. "$1"; hash_pane' _ "$WATCH"
+}
+
 CHECKED=0
 INSTALLED=0
 CHANGING=0
@@ -106,9 +110,11 @@ done
 sleep 15
 for harness in claude codex opencode pi pi-signed grok kimi; do
   resolve_harness_binary "$harness" >/dev/null 2>&1 || continue
-  "$REAL_TMUX" -L "$SOCKET" capture-pane -p -e -t "$SESSION:fm-footer-$harness" -S -40 > "$LAB/$harness.before" \
+  "$REAL_TMUX" -L "$SOCKET" capture-pane -p -t "$SESSION:fm-footer-$harness" -S -40 > "$LAB/$harness.before" \
     || fail "$harness: could not capture the private probe pane"
   [ -s "$LAB/$harness.before" ] || note "$harness: private probe pane has not rendered output yet"
+  normalized_hash < "$LAB/$harness.before" > "$LAB/$harness.before.hash" \
+    || fail "$harness: could not hash the first private probe capture"
 done
 
 PATH="$LAB/shim:$PATH" FM_STATE_OVERRIDE="$LAB/state" FM_CREW_STATE_BIN="$LAB/shim/fm-crew-state.sh" \
@@ -119,22 +125,20 @@ sleep "$WAIT_SECS"
 
 for harness in claude codex opencode pi pi-signed grok kimi; do
   resolve_harness_binary "$harness" >/dev/null 2>&1 || continue
-  "$REAL_TMUX" -L "$SOCKET" capture-pane -p -e -t "$SESSION:fm-footer-$harness" -S -40 > "$LAB/$harness.after" \
+  "$REAL_TMUX" -L "$SOCKET" capture-pane -p -t "$SESSION:fm-footer-$harness" -S -40 > "$LAB/$harness.after" \
     || fail "$harness: could not capture the second private probe pane"
+  normalized_hash < "$LAB/$harness.after" > "$LAB/$harness.after.hash" \
+    || fail "$harness: could not hash the second private probe capture"
   version=$("$(resolve_harness_binary "$harness")" --version 2>/dev/null | head -1 | tr -d '\r') || version=unknown
-  task="footer-$harness"
-  key=$(printf '%s' "$SESSION:fm-$task" | tr ':/. ' '____')
-  count=$(cat "$LAB/state/.count-$key" 2>/dev/null || echo 0)
   if [ ! -s "$LAB/$harness.before" ] || [ ! -s "$LAB/$harness.after" ]; then
     note "$harness $version: no rendered footer was available for a drift comparison"
   elif cmp -s "$LAB/$harness.before" "$LAB/$harness.after"; then
     note "$harness $version: no autonomous footer change observed in ${WAIT_SECS}s"
   else
     CHANGING=$((CHANGING + 1))
-    case "$count" in
-      ''|*[!0-9]*|0|1) fail "FOOTER DRIFT: $harness $version changed raw pane output but did not retain a stable normalized stale hash (count=$count)" ;;
-    esac
-    pass "$harness $version: changed raw footer content retained normalized stale hash (count=$count)"
+    cmp -s "$LAB/$harness.before.hash" "$LAB/$harness.after.hash" \
+      || fail "FOOTER DRIFT: $harness $version changed raw pane output and changed its normalized stale hash"
+    pass "$harness $version: changed raw footer content retained its exact normalized stale hash"
   fi
 done
 
