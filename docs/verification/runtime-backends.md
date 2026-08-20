@@ -218,6 +218,33 @@ tests/fm-tmux-submit-busy.test.sh
 Expected structural matrix: real text on any content row is pending; all-empty complete boxes are empty; unreadable, incomplete, or unsafe boxes are unknown; and non-bordered panes retain cursor-row compatibility.
 Expected submit matrix: proven pending plus busy is accepted as queued; proven pending plus idle remains pending; ambiguous pending is never converted by the busy exception; and only a proven empty composer succeeds directly.
 
+### Idle footer drift
+
+The stale-pane hash preserves substantive capture bytes and normalizes generic cost, percentage, and duration quantities only in the final four nonblank rendered rows.
+A field outside those forms remains hash-visible by design, so a new harness footer format fails toward the prior surface-on-change behavior until the guard identifies it.
+
+The opt-in guard launches every installed verified harness in a private tmux server, compares captures at least 65 seconds apart, and drives `bin/fm-watch.sh` against those real panes.
+It fails naming the harness and version if a raw capture changes without the watcher retaining a stable normalized stale hash.
+
+```sh
+FM_WATCH_FOOTER_DRIFT=1 \
+  tests/fm-watch-footer-drift-live-e2e.test.sh
+```
+
+Verified 2026-08-20 on macOS arm64 with tmux 3.7b.
+
+```text
+# claude 2.1.232 (Claude Code): no autonomous footer change observed in 70s
+# codex codex-cli 0.146.0: no autonomous footer change observed in 70s
+ok - pi 0.84.2: changed raw footer content retained normalized stale hash (count=31)
+# grok grok 1.0.5 (5115b46bc909) [stable]: no autonomous footer change observed in 70s
+# checked 4 installed harness(es); raw footer drift observed on 1
+# unverified on this machine (not installed): opencode pi-signed kimi
+```
+
+Pi changed the lowest status row from `ChatGPT used: 7d 3% ↻6h31m` to `ChatGPT used: 7d 3% ↻6h30m` while the worker was idle.
+OpenCode, pi-signed, and Kimi were absent and were reported explicitly by the guard.
+
 ### Cleanup endpoint identity
 
 The cleanup identity boundary was validated on 2026-07-28 with tmux 3.6a and metadata fixtures for every supported backend.
