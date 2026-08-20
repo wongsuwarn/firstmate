@@ -220,7 +220,8 @@ Expected submit matrix: proven pending plus busy is accepted as queued; proven p
 
 ### Idle footer drift
 
-The stale-pane hash preserves substantive capture bytes and normalizes generic cost, percentage, and duration quantities only in the final four nonblank rendered rows.
+The stale-pane hash preserves substantive capture bytes and normalizes generic cost, percentage, and duration quantities only below a structurally identified footer separator.
+A short capture, an absent separator, or more than one plausible separator retains its raw hash.
 A field outside those forms remains hash-visible by design, so a new harness footer format fails toward the prior surface-on-change behavior until the guard identifies it.
 
 The opt-in guard launches every installed verified harness in a private tmux server, compares captures at least 65 seconds apart, and drives `bin/fm-watch.sh` against those real panes.

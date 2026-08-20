@@ -569,6 +569,38 @@ test_frozen_nonterminal_ticking_footer_escalates_within_bounded_polls() {
   pass "a frozen non-terminal pane wedge-escalates on schedule despite a footer that changes every poll"
 }
 
+test_substantive_percentage_above_three_row_footer_resets_wedge_timer() {
+  local dir state fakebin out capture_file tick_file raw_log window statusf sig pid key progress
+  dir=$(make_case substantive-percentage-progress); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; tick_file="$dir/ticks"; raw_log="$dir/raw-ticks"
+  window="test:fm-substantive-progress"; key="test_fm-substantive-progress"
+  printf 'Downloaded 10%%\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/substantive-progress.meta"
+  statusf="$state/substantive-progress.status"
+  printf 'working: download is running\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-substantive-progress_status"
+  install_ticking_footer_tmux "$fakebin"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · downloading (running)'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_TICK_COUNT="$tick_file" FM_FAKE_TMUX_RAW_LOG="$raw_log" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=2 \
+    FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  progress=20
+  while [ "$progress" -le 70 ]; do
+    sleep 0.6
+    kill -0 "$pid" 2>/dev/null || { reap "$pid"; fail "substantive percentage progress was normalized as footer drift: $(cat "$out")"; }
+    printf 'Downloaded %d%%\n' "$progress" > "$capture_file"
+    progress=$((progress + 10))
+  done
+  wait_live "$pid" 10 || { reap "$pid"; fail "substantive percentage progress did not keep the wedge timer reset: $(cat "$out")"; }
+  [ -s "$state/.hash-$key" ] || { reap "$pid"; fail "progress fixture was not observed by stale hashing"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "substantive percentage progress above a three-row footer resets the wedge timer"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -1967,6 +1999,7 @@ test_actionable_signal_surfaced
 test_terminal_stale_surfaced
 test_terminal_stale_footer_drift_surfaces_once_and_new_status_surfaces
 test_frozen_nonterminal_ticking_footer_escalates_within_bounded_polls
+test_substantive_percentage_above_three_row_footer_resets_wedge_timer
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold

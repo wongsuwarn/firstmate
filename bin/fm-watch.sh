@@ -182,12 +182,11 @@ _event_cap_fails=0
 # digest/injection layer would never see the wake.
 afk_present() { [ -e "$STATE/.afk" ]; }
 
-# normalize_pane_for_stale_hash removes only volatile quantity fields from the
-# final four rendered rows before stale detection hashes a capture.
-# Fewer than four nonblank rows keep their raw hash, so a short capture fails
-# toward today's surface-on-change behavior rather than guessing it is a footer.
-# Harness footers occupy that bottom status band, while substantive agent output
-# remains byte-sensitive above it.
+# normalize_pane_for_stale_hash removes only volatile quantity fields from a
+# structurally delimited footer before stale detection hashes a capture.
+# A unique blank-prefixed horizontal rule with one to three nonblank rows below
+# it identifies the footer boundary; short or ambiguous captures keep their raw
+# hash rather than guessing which rows are substantive agent output.
 # A new footer field outside these generic duration, percentage, or cost forms
 # deliberately remains hash-visible, preserving today's surface-on-change safety
 # until the live drift guard names the harness and field for review.
@@ -195,8 +194,28 @@ normalize_pane_for_stale_hash() {
   awk '
     { rows[NR] = $0 }
     $0 ~ /[^[:space:]]/ { nonblank[++count] = NR }
+    function is_rule(row, compact) {
+      compact = row
+      gsub(/[[:space:]]/, "", compact)
+      return length(compact) >= 8 && compact ~ /^[-_=─━═]+$/
+    }
     END {
-      first = count >= 4 ? nonblank[count - 3] : NR + 1
+      first = NR + 1
+      if (count >= 4) {
+        for (j = 2; j < count; j++) {
+          candidate = nonblank[j]
+          below = count - j
+          if (below <= 3 && candidate > 1 && rows[candidate - 1] !~ /[^[:space:]]/ && is_rule(rows[candidate])) {
+            if (boundary) {
+              boundary = 0
+              ambiguous = 1
+              break
+            }
+            boundary = candidate
+          }
+        }
+        if (!ambiguous && boundary) first = boundary
+      }
       for (i = 1; i <= NR; i++) {
         row = rows[i]
         if (i >= first) {
