@@ -39,8 +39,9 @@ export FM_BACKEND=tmux
 # --- world builders --------------------------------------------------------
 
 # new_world <name>: a PRIMARY firstmate repo on `main` with one commit (the
-# instruction surface seeded) and a home dir with state/ and data/. NO origin
-# remote: the local-HEAD sync never needs one. Echoes the world dir.
+# instruction surface seeded) and a home dir with state/ and data/. The tracked
+# firstmate origin lets ordinary bootstrap converge its PR target binding, while
+# the local-HEAD sync remains independent of remote fetches. Echoes the world dir.
 new_world() {
   local name=$1 w
   w="$TMP_ROOT/$name"
@@ -59,6 +60,8 @@ new_world() {
   printf 's1\n' > "$w/main/.agents/skills/note.md"
   git -C "$w/main" add -A
   git -C "$w/main" commit -qm c1
+  git -C "$w/main" remote add origin https://github.com/wongsuwarn/firstmate.git
+  git -C "$w/main" update-ref refs/remotes/origin/main HEAD
   printf '%s\n' "$w"
 }
 
@@ -90,6 +93,7 @@ bump_primary() {
   fi
   git -C "$w/main" add -A
   git -C "$w/main" commit -qm "bump-$mode"
+  git -C "$w/main" update-ref refs/remotes/origin/main HEAD
 }
 
 head_of() { git -C "$1" rev-parse HEAD; }
@@ -104,6 +108,7 @@ ignore_marker_commit() {
   printf '.fm-secondmate-home\n' >> "$w/main/.gitignore"
   git -C "$w/main" add -A
   git -C "$w/main" commit -qm "gitignore seed marker"
+  git -C "$w/main" update-ref refs/remotes/origin/main HEAD
 }
 
 # seed_marked_home <w> <id> <commit>: a secondmate home matching what
@@ -288,9 +293,18 @@ test_sweep_nudge_requires_instruction_change() {
 
 # --- T8: bootstrap sweeps live homes, nudges only the real instruction change -
 make_fake_toolchain() {
-  local dir=$1 fakebin
+  local dir=$1 fakebin real_git
   fakebin="$dir/fakebin"
   mkdir -p "$fakebin"
+  real_git=$(command -v git)
+  cat > "$fakebin/git" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *' fetch origin '*) exit 0 ;;
+esac
+exec '$real_git' "\$@"
+SH
+  chmod +x "$fakebin/git"
   fm_fake_exit0 "$fakebin" node chrome-devtools-axi
   fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.45
   cat > "$fakebin/gh-axi" <<'SH'
@@ -325,6 +339,10 @@ SH
   chmod +x "$fakebin/tmux"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
+case "$*" in
+  'repo set-default origin') exit 0 ;;
+  'repo set-default --view') printf '%s\n' wongsuwarn/firstmate; exit 0 ;;
+esac
 exit 0
 SH
   chmod +x "$fakebin/gh"

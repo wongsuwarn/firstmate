@@ -13,8 +13,16 @@ BOOTSTRAP="$ROOT/bin/fm-bootstrap.sh"
 CONFIG_PUSH="$ROOT/bin/fm-config-push.sh"
 
 make_fake_toolchain() {
-  local dir=$1 fakebin
+  local dir=$1 fakebin real_git
   fakebin=$(fm_fakebin "$dir")
+  real_git=$(command -v git)
+  cat > "$fakebin/git" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *' fetch origin '*) exit 0 ;;
+esac
+exec '$real_git' "\$@"
+SH
   fm_fake_exit0 "$fakebin" node chrome-devtools-axi
   fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.45
   cat > "$fakebin/gh-axi" <<'SH'
@@ -33,6 +41,10 @@ exit 0
 SH
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
+case "$*" in
+  'repo set-default origin') exit 0 ;;
+  'repo set-default --view') printf '%s\n' wongsuwarn/firstmate; exit 0 ;;
+esac
 exit 0
 SH
   cat > "$fakebin/treehouse" <<'SH'
@@ -83,6 +95,8 @@ new_bootstrap_world() {
   chmod +x "$root/bin/placeholder.sh"
   git -C "$root" add -A
   git -C "$root" -c user.name=fmtest -c user.email=fmtest@example.invalid commit -qm initial
+  git -C "$root" remote add origin https://github.com/wongsuwarn/firstmate.git
+  git -C "$root" update-ref refs/remotes/origin/main HEAD
   printf '%s|%s\n' "$root" "$home"
 }
 

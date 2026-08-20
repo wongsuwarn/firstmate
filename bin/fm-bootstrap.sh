@@ -1104,6 +1104,10 @@ fi
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
   "$SCRIPT_DIR/fm-pr-check-migrate.sh" || true
   startup_memory_budget_setup
+  if command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1 \
+    && ! "$SCRIPT_DIR/fm-pr-target-config.sh" --root "$FM_ROOT"; then
+    echo "PR_TARGET_CONFIG: gh could not bind origin as the default repository for firstmate PRs"
+  fi
 fi
 
 if [ "$BACKEND_VALID" -eq 0 ]; then
