@@ -32,9 +32,11 @@ wongsuwarn/firstmate
 
 `bin/fm-pr-create-wrapper.sh` owns the PR-target decision for calls that reach the tracked PATH shims.
 
-The tracked `bin/shims/gh` and `bin/shims/gh-axi` entry points validate the actual expanded argument vector and refuse `pr create` unless every `--repo` occurrence names `wongsuwarn/firstmate`.
+The tracked `bin/shims/gh` and `bin/shims/gh-axi` entry points validate the actual expanded argument vector and refuse `pr create` unless it explicitly passes `--repo wongsuwarn/firstmate --base main`.
 
-The refusal tells the worker to pass `--repo wongsuwarn/firstmate --base main`.
+Every repeated repository or base option must carry that required value, and the repository shorthand `-R` does not satisfy the explicit-target contract.
+
+The refusal uses the stable `pr-target-required` reason.
 
 `bin/fm-spawn.sh` already places `bin/shims` first on every spawned harness PATH, and the primary launch instructions export the same tracked PATH entry before starting any supported primary harness.
 
@@ -48,7 +50,7 @@ It allows unrelated shell commands without requiring shims on PATH.
 
 For visible PR creation, it rejects a missing or wrong `--repo wongsuwarn/firstmate` or `--base main`, then verifies both wrapper entry points before allowing the command.
 
-When the wrapper, Node runtime, policy file, checker executable, or checker process is unavailable, the hook allows the command and emits a `pr-target-classification-unavailable` diagnostic naming the failed prerequisite and stating that classification did not run.
+When the wrapper program, Node runtime, policy file, checker executable, or checker process is unavailable, the hook cannot complete classification, so it allows the command and emits a `pr-target-classification-unavailable` diagnostic naming the failed prerequisite and stating that classification did not run.
 
 The same loud allowance applies when the hook payload cannot be classified or the parser exits abnormally.
 
@@ -56,7 +58,7 @@ Checker output is replayed only after a recognized success or denial status, so 
 
 The guard does not approximate shell parsing when the tracked parser is unavailable.
 
-When parsing succeeds, a visible target violation is refused, and an unavailable tracked PATH-shim execution boundary refuses only the visible PR creation that needs it.
+When parsing succeeds, a visible target violation is refused, and inactive tracked PATH shims refuse only the visible PR creation whose execution boundary cannot be verified.
 
 The tracked adapters cover Claude, Codex, Grok, OpenCode, Pi, and pi-signed, with pi-signed sharing Pi's extension path.
 
