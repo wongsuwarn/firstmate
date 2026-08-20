@@ -84,16 +84,20 @@ trap 'fm_lock_release "$OWNER_LOCK"' EXIT
 
 OUT=
 ACTIONABLE=0
+CAPTURE_FAILURES=0
 attempt=0
 trap '[ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true; fm_lock_release "$OWNER_LOCK"' EXIT
 while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
   attempt=$((attempt + 1))
-  OUT=$(mktemp "$STATE/.grok-autoarm-output.XXXXXX" 2>/dev/null) || OUT=
-  if [ -n "$OUT" ]; then
-    "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
-  else
-    "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 || true
+  if ! OUT=$(mktemp "$STATE/.grok-autoarm-output.XXXXXX" 2>/dev/null); then
+    OUT=
+    CAPTURE_FAILURES=$((CAPTURE_FAILURES + 1))
+    [ -e "$STATE/.afk" ] && exit 0
+    need_supervision || exit 0
+    [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ] && continue
+    break
   fi
+  "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
 
   [ -e "$STATE/.afk" ] && exit 0
   need_supervision || exit 0
@@ -124,6 +128,7 @@ fi
 
 {
   printf 'firstmate watcher auto-arm FAILED - the Stop-owned supervision cycle exhausted %s bounded attempts without a verified live successor.\n' "$attempt"
+  [ "$CAPTURE_FAILURES" -eq 0 ] || printf 'watcher: FAILED - output capture unavailable on %s attempt(s)\n' "$CAPTURE_FAILURES"
   [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
   printf '%s\n' 'Do not launch a manual background arm from this notice; automatic recovery is exhausted and supervision remains visibly unwatched.'
 } >&2

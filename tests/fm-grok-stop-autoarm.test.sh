@@ -224,6 +224,30 @@ test_exhausted_recovery_stays_loud_and_unverified() {
   pass "grok auto-arm: exhausted recovery remains loud and visibly unwatched"
 }
 
+test_capture_failure_never_starts_unobservable_arm() {
+  local dir capture_bin real_mktemp out status
+  dir=$(make_primary "$TMP_ROOT/capture-failure")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" actionable
+  capture_bin=$(fm_fakebin "$TMP_ROOT/capture-failure-bin")
+  real_mktemp=$(command -v mktemp)
+  cat > "$capture_bin/mktemp" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  *.grok-autoarm-output.*) exit 1 ;;
+esac
+exec "$real_mktemp" "\$@"
+SH
+  chmod +x "$capture_bin/mktemp"
+  out=$(PATH="$capture_bin:$PATH" run_autoarm "$dir" 2>/dev/null); status=$?
+  expect_code 2 "$status" "exhausted output capture recovery must block with visible failure feedback"
+  [ ! -e "$dir/state/arm-ran" ] || fail "output capture failure started an unobservable watcher arm"
+  assert_contains "$out" "exhausted 2 bounded attempts" "capture failure did not exhaust recovery inside the Stop invocation"
+  assert_contains "$out" "output capture unavailable on 2 attempt(s)" "capture failure did not surface its observability failure"
+  assert_contains "$out" "supervision remains visibly unwatched" "capture failure did not surface the blind session state"
+  pass "grok auto-arm: capture failure never starts an unobservable watcher arm"
+}
+
 test_completion_does_not_rewake_after_supervision_ends() {
   local dir out status
   dir=$(make_primary "$TMP_ROOT/completion")
@@ -243,4 +267,5 @@ test_redundant_attach_keeps_existing_owner_wait
 test_bare_attach_is_not_accepted_as_a_live_wait
 test_failed_successor_retries_and_verifies_recovery
 test_exhausted_recovery_stays_loud_and_unverified
+test_capture_failure_never_starts_unobservable_arm
 test_completion_does_not_rewake_after_supervision_ends
