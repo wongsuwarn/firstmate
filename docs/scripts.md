@@ -113,7 +113,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-pr-merge.sh`         | Record PR metadata, then merge a task's canonical full GitHub URL                    |
 | `fm-pr-target-config.sh` | Converge and verify `gh`'s default repository binding for this firstmate checkout    |
 | `fm-pr-create-wrapper.sh` | Refuse `gh` and `gh-axi` PR creation without firstmate's explicit repository target |
-| `fm-pr-create-pretool-check.sh` | Verify the tracked PR-creation execution boundary for primary harness Bash calls |
+| `fm-pr-create-pretool-check.sh` | Verify the tracked PR-creation execution boundary only for visible primary-harness PR creation |
 | `fm-pr-create-explicit-path-policy.mjs` | Classify directly visible `gh` and `gh-axi` calls that bypass the tracked PATH shims |
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |

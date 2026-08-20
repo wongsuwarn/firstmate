@@ -32,6 +32,7 @@ SH
 FIXTURE=$(make_fixture "$TMP_ROOT/fixture")
 CHECK="$FIXTURE/bin/fm-pr-create-pretool-check.sh"
 GUARD_PATH="$FIXTURE/bin/shims:$FIXTURE/fakebin:$PATH"
+NO_SHIM_PATH="$FIXTURE/fakebin:$(dirname "$(command -v node)"):/usr/bin:/bin"
 GH_LOG="$TMP_ROOT/gh.log"
 
 run_entry() {
@@ -88,6 +89,7 @@ test_wrapper_boundary_matrix() {
   expect_shell deny 'gh pr create --title test'
   expect_shell deny 'gh-axi pr create --title test'
   expect_shell deny 'gh pr create --repo kunchenguid/firstmate --title test'
+  expect_shell deny 'gh pr create --repo wongsuwarn/firstmate --title test'
   expect_shell deny 'gh pr create --repo wongsuwarn/firstmate --repo kunchenguid/firstmate'
   expect_shell deny 'gh pr create --repo wongsuwarn/firstmate -R kunchenguid/firstmate'
   expect_shell deny 'gh pr create --repo wongsuwarn/firstmate; gh-axi pr create --title test'
@@ -126,19 +128,24 @@ test_detectable_top_level_explicit_paths_are_checked() {
   pass "detectable top-level literal-path and command-local-PATH PR calls receive target checks"
 }
 
-test_all_harness_transports_attest_boundary() {
+test_all_harness_transports_scope_boundary_enforcement() {
   local entry broken broken_check broken_path
   for entry in codex claude grok opencode pi; do
-    expect_entry allow "$entry" 'echo "gh pr create documentation"'
+    expect_entry allow "$entry" 'echo hello' "$CHECK" "$NO_SHIM_PATH"
+    expect_entry allow "$entry" 'ls' "$CHECK" "$NO_SHIM_PATH"
+    expect_entry deny-target "$entry" 'gh pr create --title test' "$CHECK" "$NO_SHIM_PATH"
+    expect_entry allow "$entry" 'gh pr create --repo wongsuwarn/firstmate --base main --title test'
   done
   broken=$(make_fixture "$TMP_ROOT/broken-boundary")
   broken_check="$broken/bin/fm-pr-create-pretool-check.sh"
   chmod -x "$broken/bin/shims/gh"
   broken_path="$broken/bin/shims:$broken/fakebin:$PATH"
   for entry in codex claude grok opencode pi; do
-    expect_entry deny "$entry" 'git status --short' "$broken_check" "$broken_path"
+    expect_entry allow "$entry" 'git status --short' "$broken_check" "$broken_path"
+    expect_entry deny-target "$entry" 'gh pr create --title test' "$broken_check" "$broken_path"
+    expect_entry deny "$entry" 'gh pr create --repo wongsuwarn/firstmate --base main --title test' "$broken_check" "$broken_path"
   done
-  pass "every primary harness transport allows only an attested execution boundary"
+  pass "every primary harness transport scopes boundary enforcement to visible PR creation"
 }
 
 test_guard_survives_origin_change() {
@@ -148,15 +155,15 @@ test_guard_survives_origin_change() {
   pass "PR target wrapper remains active when the checkout origin changes"
 }
 
-test_malformed_transport_fails_closed() {
+test_malformed_transport_leaves_unrelated_commands_alone() {
   local out="$TMP_ROOT/malformed.out" err="$TMP_ROOT/malformed.err" rc=0
   printf '%s' '{' | env PATH="$GUARD_PATH" "$CHECK" >"$out" 2>"$err" || rc=$?
-  [ "$rc" -eq 2 ] || fail "malformed hook transport must deny, got $rc"
-  assert_grep 'pr-target-boundary-unavailable' "$err" "malformed hook transport deny must name its reason"
-  pass "malformed PR-target hook transport denies the unverified command"
+  [ "$rc" -eq 0 ] || fail "malformed hook transport must not deny an unknown command, got $rc"
+  [ ! -s "$out" ] && [ ! -s "$err" ] || fail "malformed hook transport must remain silent"
+  pass "malformed PR-target hook transport leaves unrelated commands alone"
 }
 
-test_opencode_adapter_failures_block() {
+test_opencode_adapter_failures_leave_unrelated_commands_alone() {
   local plugin=$ROOT/.opencode/plugins/fm-pr-create-pretool-check.js missing signal out status=0
   missing="$TMP_ROOT/opencode-missing"
   signal="$TMP_ROOT/opencode-signal"
@@ -171,19 +178,13 @@ import { pathToFileURL } from "node:url";
 const mod = await import(`${pathToFileURL(process.env.PLUGIN).href}?failure=${Date.now()}`);
 for (const root of [process.env.MISSING, process.env.SIGNAL]) {
   const hooks = await mod.FmPrCreatePretoolCheck({ worktree: root });
-  let blocked = false;
-  try {
-    await hooks["tool.execute.before"]({ tool: "bash" }, { args: { command: "git status" } });
-  } catch {
-    blocked = true;
-  }
-  if (!blocked) throw new Error(`OpenCode allowed checker failure for ${root}`);
+  await hooks["tool.execute.before"]({ tool: "bash" }, { args: { command: "git status" } });
 }
 JS
   ) || status=$?
   [ "$status" -eq 0 ] || fail "OpenCode adapter failure test failed: $out"
   [ -z "$out" ] || fail "OpenCode adapter failure test printed output: $out"
-  pass "OpenCode blocks checker spawn failure and signal termination"
+  pass "OpenCode leaves unrelated commands alone on checker spawn failure and signal termination"
 }
 
 make_pi_adapter_fixture() {
@@ -223,23 +224,23 @@ mod.default(pi);
 const handler = handlers.get("tool_call");
 if (!handler) throw new Error("Pi tool_call handler was not registered");
 const result = await handler({ type: "tool_call", toolName: "bash", input: { command: "git status" } });
-if (result?.block !== true) throw new Error("Pi allowed an unverified PR checker result");
+if (result?.block === true) throw new Error("Pi blocked an unrelated command after PR checker failure");
 JS
   ) || status=$?
   [ "$status" -eq 0 ] || fail "Pi adapter failure test failed: $out"
   [ -z "$out" ] || fail "Pi adapter failure test printed output: $out"
 }
 
-test_pi_adapter_failures_block() {
+test_pi_adapter_failures_leave_unrelated_commands_alone() {
   local missing="$TMP_ROOT/pi-missing" signal="$TMP_ROOT/pi-signal"
   make_pi_adapter_fixture "$missing" missing
   make_pi_adapter_fixture "$signal" signal
   run_pi_adapter_case "$missing"
   run_pi_adapter_case "$signal"
-  pass "Pi and pi-signed block checker spawn failure and signal termination"
+  pass "Pi and pi-signed leave unrelated commands alone on checker spawn failure and signal termination"
 }
 
-test_codex_adapter_preconditions_block() {
+test_codex_adapter_preconditions_leave_unrelated_commands_alone() {
   local hook fixture payload out status=0
   hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-pretool-check.sh")) | .command' "$ROOT/.codex/hooks.json")
   [ -n "$hook" ] || fail "Codex PR-target hook command is missing"
@@ -249,16 +250,16 @@ test_codex_adapter_preconditions_block() {
   : > "$fixture/AGENTS.md"
   cp "$ROOT/.codex/hooks.json" "$fixture/.codex/hooks.json"
   out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
-  [ "$status" -eq 2 ] || fail "Codex missing-checker precondition must deny, got $status: $out"
-  assert_contains "$out" 'pr-target-boundary-unavailable' "Codex missing-checker denial omitted its reason"
+  [ "$status" -eq 0 ] || fail "Codex missing-checker precondition must allow unrelated commands, got $status: $out"
+  [ -z "$out" ] || fail "Codex missing-checker precondition printed output: $out"
   cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$fixture/bin/"
   chmod +x "$fixture/bin/fm-pr-create-pretool-check.sh"
   printf '%s\n' '{}' > "$fixture/.codex/hooks.json"
   status=0
   out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
-  [ "$status" -eq 2 ] || fail "Codex hook self-validation failure must deny, got $status: $out"
-  assert_contains "$out" 'pr-target-boundary-unavailable' "Codex self-validation denial omitted its reason"
-  pass "Codex blocks missing checker and hook self-validation failures"
+  [ "$status" -eq 0 ] || fail "Codex hook self-validation failure must allow unrelated commands, got $status: $out"
+  [ -z "$out" ] || fail "Codex hook self-validation failure printed output: $out"
+  pass "Codex leaves unrelated commands alone when checker preconditions are unavailable"
 }
 
 make_config_fixture() {
@@ -334,11 +335,11 @@ SH
 test_wrapper_boundary_matrix
 test_private_verify_mode_preserves_public_command
 test_detectable_top_level_explicit_paths_are_checked
-test_all_harness_transports_attest_boundary
+test_all_harness_transports_scope_boundary_enforcement
 test_guard_survives_origin_change
-test_malformed_transport_fails_closed
-test_opencode_adapter_failures_block
-test_pi_adapter_failures_block
-test_codex_adapter_preconditions_block
+test_malformed_transport_leaves_unrelated_commands_alone
+test_opencode_adapter_failures_leave_unrelated_commands_alone
+test_pi_adapter_failures_leave_unrelated_commands_alone
+test_codex_adapter_preconditions_leave_unrelated_commands_alone
 test_binding_converges_idempotently
 test_bootstrap_root_override_binds_selected_checkout

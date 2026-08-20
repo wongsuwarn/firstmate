@@ -181,7 +181,7 @@ export default function (pi: ExtensionAPI) {
       return { block: true, reason: cdResult.stderr.trim() || "denied by the cd-guard PreToolUse seatbelt" };
     }
     const prResult = await runPrCreateCheck(command);
-    if (prResult.code !== 0) {
+    if (prResult.code === 2) {
       return { block: true, reason: prResult.stderr.trim() || "denied by the PR target PreToolUse seatbelt" };
     }
     const result = await runPretoolCheck(command);

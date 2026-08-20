@@ -24,8 +24,15 @@ function inspect(command, wrapper) {
     if (result.error || result.status === null) throw result.error || new Error("wrapper check terminated by signal");
     if (result.status === 2) return "deny";
     if (result.status !== 0) throw new Error(`wrapper check exited ${result.status}`);
+    const prResult = spawnSync(wrapper, [tool, ...words.slice(1).map((word) => word.value)], {
+      env: { ...process.env, FM_PR_CREATE_TOOL: "", FM_PR_CREATE_WRAPPER_INTERNAL: "is-pr-create" },
+      stdio: "ignore",
+    });
+    if (prResult.error || prResult.status === null) throw prResult.error || new Error("PR detection terminated by signal");
+    if (prResult.status === 0) return "pr-allowed";
+    if (prResult.status !== 1) throw new Error(`PR detection exited ${prResult.status}`);
   }
-  return "allow";
+  return "not-pr";
 }
 
 function parseArguments(argv) {

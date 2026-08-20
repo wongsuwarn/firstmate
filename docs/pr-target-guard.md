@@ -40,9 +40,13 @@ The refusal tells the worker to pass `--repo wongsuwarn/firstmate --base main`.
 
 Because enforcement occurs when `gh` or `gh-axi` executes, dynamic command names reach the same guard while quoted examples, comments, and other non-executed text remain unrelated commands.
 
-`bin/fm-pr-create-pretool-check.sh` verifies that both wrapper entry points are active before every harness Bash tool call and rejects directly detectable top-level `gh` or `gh-axi` PR creation that uses a command-local PATH or literal executable path without the required repository.
+`bin/fm-pr-create-pretool-check.sh` first identifies directly detectable top-level `gh` or `gh-axi` PR creation, including a command-local PATH or literal executable path.
 
-Malformed checker payloads, unavailable checker dependencies, checker failures, invalid checker responses, and the tested Codex, OpenCode, and Pi adapter failures refuse the unverified shell command.
+It allows unrelated shell commands without requiring shims on PATH.
+
+For visible PR creation, it rejects a missing or wrong `--repo wongsuwarn/firstmate` or `--base main`, then verifies both wrapper entry points before allowing the command.
+
+An unavailable boundary therefore refuses only the visible PR creation that needs it, while malformed checker payloads, unavailable checker dependencies, checker failures, and invalid checker responses leave unrelated shell commands alone.
 
 The tracked adapters cover Claude, Codex, Grok, OpenCode, Pi, and pi-signed, with pi-signed sharing Pi's extension path.
 
@@ -60,7 +64,9 @@ The supported Bash hooks check directly visible literal paths across top-level s
 
 The portable regression drives the Claude and Codex stdin payloads, the Grok stdin payload, and the OpenCode and Pi CLI transports through the executable checker.
 
-It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable top-level literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, mutable origin changes do not disable the wrapper, every tracked primary PreToolUse transport verifies the boundary, Codex, OpenCode, Pi, and pi-signed refuse adapter failures, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
+It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable top-level literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, and ordinary shell commands remain allowed when no shims are first on PATH or the boundary is unavailable.
+
+It also proves mutable origin changes do not disable the wrapper, every tracked primary PreToolUse transport scopes boundary enforcement to visible PR creation, Codex, OpenCode, Pi, and pi-signed leave unrelated commands alone on adapter failures, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
 
 Run it with:
 
@@ -74,12 +80,12 @@ On 2026-08-20, that portable regression completed with:
 ok - gh and gh-axi wrappers enforce expanded PR arguments without matching quoted text or comments
 ok - private boundary verification does not reserve the public gh verify command
 ok - detectable top-level literal-path and command-local-PATH PR calls receive target checks
-ok - every primary harness transport allows only an attested execution boundary
+ok - every primary harness transport scopes boundary enforcement to visible PR creation
 ok - PR target wrapper remains active when the checkout origin changes
-ok - malformed PR-target hook transport denies the unverified command
-ok - OpenCode blocks checker spawn failure and signal termination
-ok - Pi and pi-signed block checker spawn failure and signal termination
-ok - Codex blocks missing checker and hook self-validation failures
+ok - malformed PR-target hook transport leaves unrelated commands alone
+ok - OpenCode leaves unrelated commands alone on checker spawn failure and signal termination
+ok - Pi and pi-signed leave unrelated commands alone on checker spawn failure and signal termination
+ok - Codex leaves unrelated commands alone when checker preconditions are unavailable
 ok - PR target binding converges a clone and remains idempotent through its executable interface
 ok - bootstrap root override binds and verifies the selected checkout
 ```
