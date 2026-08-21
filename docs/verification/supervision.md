@@ -86,7 +86,7 @@ Firstmate-written project hooks under `<worktree>/.codex/hooks.json` fired for n
 Codex also exposes no `StopFailure` hook, so an API-error turn end would need separate coverage even after hook discovery works.
 The app-server protocol schema does define the required lifecycle (`turn/started`, plus a `turn/completed` status of `completed`, `interrupted`, `failed`, or `inProgress`), so the gate is a reachability problem rather than a protocol gap.
 
-Deterministic entry points:
+Deterministic and live entry points:
 
 ```sh
 tests/fm-busy-state.test.sh
@@ -214,7 +214,7 @@ fm-claude-stop-autoarm: ok
 
 ## Watcher continuity
 
-The cross-harness evidence combines the 2026-07-17 live pass with Claude's replacement Stop-owned path revalidated on 2026-07-24, all against isolated project and home state.
+The cross-harness evidence combines the 2026-07-17 live pass, Claude's replacement Stop-owned path revalidated on 2026-07-24, and Grok's Stop-owned path verified on 2026-08-20, all against isolated project and home state.
 No credential material was copied into a fixture.
 
 ```text
@@ -222,7 +222,7 @@ Claude Code 2.1.219
 codex-cli 0.144.4
 OpenCode 1.17.18
 Pi 0.80.10
-grok 0.2.103 (89c3d36fb6f1) [stable]
+grok 1.0.5 (5115b46bc909) [stable]
 ```
 
 | Harness | Exact opt-in command | Observed guarantee |
@@ -231,7 +231,22 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 | Codex | `FM_CODEX_LIVE_E2E=1 tests/fm-codex-continuity-live-e2e.test.sh` | The one-second foreground checkpoint returned without switching to the arm wrapper. |
 | OpenCode | `FM_OPENCODE_LIVE_E2E=1 tests/fm-opencode-primary-live-e2e.test.sh` | A verified successor existed before prompt handling, with no model re-arm or turn-end fallback. |
 | Pi | `FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh` | One initial tool call led to extension-owned successors and clean child retirement on exit. |
-| Grok | `FM_GROK_LIVE_E2E=1 tests/fm-grok-continuity-live-e2e.test.sh` | Native task completion surfaced the actionable close and the cycle ledger recorded `reason=actionable-signal`. |
+| Grok | `FM_GROK_AUTOARM_LIVE_E2E=1 tests/fm-grok-stop-autoarm-live-e2e.test.sh` | The real Stop hook kept SessionStart stdout out of model context, started a watcher, delivered an actionable close, and retained a distinct live successor without a model arm call. |
+
+Grok Stop-owned continuity was verified on 2026-08-20 with Grok 1.0.5 (5115b46bc909) [stable] in a trusted isolated repository and home on a dedicated tmux socket.
+The guard created a real SessionStart hook, proved `GROK_WORKSPACE_ROOT` reached that hook, and proved its stdout stayed out of model context before exercising the real Stop lifecycle.
+
+```sh
+grok --version
+FM_GROK_AUTOARM_LIVE_E2E=1 tests/fm-grok-stop-autoarm-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+grok 1.0.5 (5115b46bc909) [stable]
+ok - grok 1.0.5 (5115b46bc909) [stable] live E2E kept SessionStart stdout out of model context, started a Stop-owned watcher, delivered an actionable close, and retained a distinct live successor
+```
 
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.
 
@@ -255,6 +270,8 @@ tests/fm-pi-primary-types.test.sh
 tests/fm-watcher-lock.test.sh
 tests/fm-subagent-pretool-check.test.sh
 tests/fm-claude-stop-autoarm.test.sh
+tests/fm-grok-stop-autoarm.test.sh
+FM_GROK_AUTOARM_LIVE_E2E=1 tests/fm-grok-stop-autoarm-live-e2e.test.sh
 tests/fm-turnend-guard.test.sh
 ```
 
