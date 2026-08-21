@@ -27,7 +27,7 @@
           },
           {
             "type": "command",
-            "command": "bash -lc 'deny(){ echo \"[pr-target-boundary-unavailable] PR target execution guard precondition failed\" >&2; exit 2; }; payload=$(cat 2>/dev/null) || deny; [ -n \"$payload\" ] || deny; command -v jq >/dev/null 2>&1 || deny; root=$(pwd -P) || deny; [ -x \"$root/bin/fm-pr-create-pretool-check.sh\" ] || deny; [ -f \"$root/AGENTS.md\" ] || deny; [ -f \"$root/.codex/hooks.json\" ] || deny; jq -e \"any(.hooks.PreToolUse[]?.hooks[]?.command?; type == \\\"string\\\" and contains(\\\"fm-pr-create-pretool-check.sh\\\"))\" \"$root/.codex/hooks.json\" >/dev/null 2>&1 || deny; printf \"%s\" \"$payload\" | \"$root/bin/fm-pr-create-pretool-check.sh\"'",
+            "command": "bash -lc 'warn(){ echo \"[pr-target-classification-unavailable] $1; PR-target classification did not run for this command; allowing it unguarded.\" >&2; exit 0; }; root=$(pwd -P) || warn \"the Codex project root is unavailable\"; [ -x \"$root/bin/fm-pr-create-hook-dispatch.sh\" ] || warn \"the hook dispatcher is not executable\"; exec \"$root/bin/fm-pr-create-hook-dispatch.sh\" --codex'",
             "timeout": 10
           }
         ]

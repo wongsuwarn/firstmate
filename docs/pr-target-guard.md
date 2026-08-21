@@ -32,23 +32,39 @@ wongsuwarn/firstmate
 
 `bin/fm-pr-create-wrapper.sh` owns the PR-target decision for calls that reach the tracked PATH shims.
 
-The tracked `bin/shims/gh` and `bin/shims/gh-axi` entry points validate the actual expanded argument vector and refuse `pr create` unless every `--repo` occurrence names `wongsuwarn/firstmate`.
+The tracked `bin/shims/gh` and `bin/shims/gh-axi` entry points validate the actual expanded argument vector and refuse `pr create` unless it explicitly passes `--repo wongsuwarn/firstmate --base main`.
 
-The refusal tells the worker to pass `--repo wongsuwarn/firstmate --base main`.
+Every repeated repository or base option must carry that required value, and the repository shorthand `-R` does not satisfy the explicit-target contract.
+
+The refusal uses the stable `pr-target-required` reason.
 
 `bin/fm-spawn.sh` already places `bin/shims` first on every spawned harness PATH, and the primary launch instructions export the same tracked PATH entry before starting any supported primary harness.
 
 Because enforcement occurs when `gh` or `gh-axi` executes, dynamic command names reach the same guard while quoted examples, comments, and other non-executed text remain unrelated commands.
 
-`bin/fm-pr-create-pretool-check.sh` verifies that both wrapper entry points are active before every harness Bash tool call and rejects directly detectable top-level `gh` or `gh-axi` PR creation that uses a command-local PATH or literal executable path without the required repository.
+`bin/fm-pr-create-visible-check.sh` uses the shared tracked parser to identify directly detectable top-level `gh` or `gh-axi` PR creation, including supported command wrappers, a command-local PATH, or a literal executable path.
 
-Malformed checker payloads, unavailable checker dependencies, checker failures, invalid checker responses, and the tested Codex, OpenCode, and Pi adapter failures refuse the unverified shell command.
+`bin/fm-pr-create-hook-dispatch.sh` gives every tracked harness the same checker-failure behavior.
+
+It allows unrelated shell commands without requiring shims on PATH.
+
+For visible PR creation, it rejects a missing or wrong `--repo wongsuwarn/firstmate` or `--base main`, then verifies both wrapper entry points before allowing the command.
+
+When the wrapper program, Node runtime, policy file, checker executable, or checker process is unavailable, the hook cannot complete classification, so it allows the command and emits a `pr-target-classification-unavailable` diagnostic naming the failed prerequisite and stating that classification did not run.
+
+The same loud allowance applies when the hook payload cannot be classified or the parser exits abnormally.
+
+Checker output is replayed only after a recognized success or denial status, so an incomplete checker run cannot publish a denial verdict.
+
+The guard does not approximate shell parsing when the tracked parser is unavailable.
+
+When parsing succeeds, a visible target violation is refused, and inactive tracked PATH shims refuse only the visible PR creation whose execution boundary cannot be verified.
 
 The tracked adapters cover Claude, Codex, Grok, OpenCode, Pi, and pi-signed, with pi-signed sharing Pi's extension path.
 
 Kimi has no project-level hook configuration and therefore has no tracked primary PreToolUse transport; [`turnend-guard.md`](turnend-guard.md) owns that hook-surface limit.
 
-The Grok adapter depends on Grok supplying `GROK_WORKSPACE_ROOT`; when that adapter precondition is absent, its hook exits without running the checker.
+The Claude, Codex, and Grok shell transports emit the same loud allowance when their project root or dispatcher precondition is unavailable.
 
 The default repository binding means an ordinary bare, unqualified PR creation resolves to `wongsuwarn/firstmate`, so the accidental inferred-upstream path that prompted this change does not recur in a converged checkout.
 
@@ -60,7 +76,9 @@ The supported Bash hooks check directly visible literal paths across top-level s
 
 The portable regression drives the Claude and Codex stdin payloads, the Grok stdin payload, and the OpenCode and Pi CLI transports through the executable checker.
 
-It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable top-level literal-path and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, quoted text and comments do not misfire, mutable origin changes do not disable the wrapper, every tracked primary PreToolUse transport verifies the boundary, Codex, OpenCode, Pi, and pi-signed refuse adapter failures, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
+It proves bare, nested, dynamic-name, conflicting, malformed, and wrong-target PR creation are denied when they reach the wrapper, directly detectable supported-wrapper, literal-path, and command-local-PATH calls receive the same target check, `gh verify` remains transparent, explicit correct-target creation is allowed, and quoted text, comments, and heredoc bodies do not misfire.
+
+It also proves mutable origin changes do not disable the wrapper, every tracked primary PreToolUse transport scopes boundary enforcement to visible PR creation, unavailable classification prerequisites allow commands with a loud diagnostic through every tracked adapter, binding application is idempotent, and bootstrap root overrides repair the selected checkout.
 
 Run it with:
 
@@ -74,12 +92,15 @@ On 2026-08-20, that portable regression completed with:
 ok - gh and gh-axi wrappers enforce expanded PR arguments without matching quoted text or comments
 ok - private boundary verification does not reserve the public gh verify command
 ok - detectable top-level literal-path and command-local-PATH PR calls receive target checks
-ok - every primary harness transport allows only an attested execution boundary
+ok - unavailable parser prerequisites allow commands with a loud diagnostic
+ok - every primary harness transport scopes boundary enforcement to visible PR creation
 ok - PR target wrapper remains active when the checkout origin changes
-ok - malformed PR-target hook transport denies the unverified command
-ok - OpenCode blocks checker spawn failure and signal termination
-ok - Pi and pi-signed block checker spawn failure and signal termination
-ok - Codex blocks missing checker and hook self-validation failures
+ok - malformed PR-target hook transport allows with a loud diagnostic
+ok - checker output is replayed only for recognized statuses across harnesses
+ok - OpenCode allows checker failures with a loud diagnostic
+ok - Claude and Grok allow checker failures with a loud diagnostic
+ok - Pi and pi-signed allow checker failures with a loud diagnostic
+ok - Codex allows unavailable preconditions with a loud diagnostic
 ok - PR target binding converges a clone and remains idempotent through its executable interface
 ok - bootstrap root override binds and verifies the selected checkout
 ```

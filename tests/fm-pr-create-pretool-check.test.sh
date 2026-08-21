@@ -12,10 +12,13 @@ TARGET=wongsuwarn/firstmate
 make_fixture() {
   local dir=$1
   mkdir -p "$dir/bin/shims" "$dir/fakebin"
-  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$ROOT/bin/fm-pr-create-wrapper.sh" \
+  # shellcheck disable=SC2153 # ROOT is provided by tests/lib.sh.
+  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$ROOT/bin/fm-pr-create-hook-dispatch.sh" \
+    "$ROOT/bin/fm-pr-create-visible-check.sh" "$ROOT/bin/fm-pr-create-wrapper.sh" \
     "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$dir/bin/"
   cp "$ROOT/bin/shims/gh" "$ROOT/bin/shims/gh-axi" "$dir/bin/shims/"
-  chmod +x "$dir/bin/fm-pr-create-pretool-check.sh" "$dir/bin/fm-pr-create-wrapper.sh" \
+  chmod +x "$dir/bin/fm-pr-create-pretool-check.sh" "$dir/bin/fm-pr-create-hook-dispatch.sh" \
+    "$dir/bin/fm-pr-create-visible-check.sh" "$dir/bin/fm-pr-create-wrapper.sh" \
     "$dir/bin/shims/gh" "$dir/bin/shims/gh-axi"
   for tool in gh gh-axi; do
     cat > "$dir/fakebin/$tool" <<'SH'
@@ -32,6 +35,7 @@ SH
 FIXTURE=$(make_fixture "$TMP_ROOT/fixture")
 CHECK="$FIXTURE/bin/fm-pr-create-pretool-check.sh"
 GUARD_PATH="$FIXTURE/bin/shims:$FIXTURE/fakebin:$PATH"
+NO_SHIM_PATH="$FIXTURE/fakebin:$(dirname "$(command -v node)"):/usr/bin:/bin"
 GH_LOG="$TMP_ROOT/gh.log"
 
 run_entry() {
@@ -60,6 +64,11 @@ expect_entry() {
     if [ "$entry" = claude ]; then
       [ ! -s "$out" ] || fail "Claude deny must keep stdout empty"
     fi
+  elif [ "$expected" = warn ]; then
+    [ "$rc" -eq 0 ] || fail "$entry must allow an unclassified command, got $rc: $(cat "$err")"
+    [ ! -s "$out" ] || fail "$entry unclassified allow must keep stdout empty"
+    assert_grep 'pr-target-classification-unavailable' "$err" "$entry unclassified allow omitted its stable diagnostic"
+    assert_grep 'classification did not run for this command' "$err" "$entry unclassified allow omitted its consequence"
   else
     [ "$rc" -eq 0 ] || fail "$entry must accept a healthy boundary, got $rc: $(cat "$err")"
     [ ! -s "$out" ] && [ ! -s "$err" ] || fail "$entry healthy-boundary allow must be silent"
@@ -88,6 +97,7 @@ test_wrapper_boundary_matrix() {
   expect_shell deny 'gh pr create --title test'
   expect_shell deny 'gh-axi pr create --title test'
   expect_shell deny 'gh pr create --repo kunchenguid/firstmate --title test'
+  expect_shell deny 'gh pr create --repo wongsuwarn/firstmate --title test'
   expect_shell deny 'gh pr create --repo wongsuwarn/firstmate --repo kunchenguid/firstmate'
   expect_shell deny 'gh pr create --repo wongsuwarn/firstmate -R kunchenguid/firstmate'
   expect_shell deny 'gh pr create --repo wongsuwarn/firstmate; gh-axi pr create --title test'
@@ -118,27 +128,85 @@ test_private_verify_mode_preserves_public_command() {
 }
 
 test_detectable_top_level_explicit_paths_are_checked() {
-  local literal_path=$FIXTURE/fakebin/gh
+  local literal_path=$FIXTURE/fakebin/gh heredoc
+  heredoc="cat <<'EOF'
+gh pr create
+EOF"
   expect_entry deny-target codex "$literal_path pr create --title test"
   expect_entry allow codex "$literal_path pr create --repo wongsuwarn/firstmate --base main"
   expect_entry deny-target codex "PATH=$FIXTURE/fakebin:\$PATH gh pr create --title test"
   expect_entry allow codex "PATH=$FIXTURE/fakebin:\$PATH gh pr create --repo wongsuwarn/firstmate --base main"
+  expect_entry deny-target codex 'sudo gh pr create --title test'
+  expect_entry deny-target codex 'timeout 10 gh pr create --title test'
+  expect_entry allow codex "$heredoc"
+  expect_entry deny-target codex 'gh pr create --repo wongsuwarn/firstmate --base main; /usr/bin/gh pr create --repo wrong/repo --base main'
   pass "detectable top-level literal-path and command-local-PATH PR calls receive target checks"
 }
 
-test_all_harness_transports_attest_boundary() {
-  local entry broken broken_check broken_path
+test_unavailable_dependencies_allow_with_diagnostic() {
+  local fixture checker heredoc path
+  heredoc="cat <<'EOF'
+gh pr create
+EOF"
+  fixture=$(make_fixture "$TMP_ROOT/missing-wrapper")
+  checker="$fixture/bin/fm-pr-create-pretool-check.sh"
+  path="$fixture/bin/shims:$fixture/fakebin:$PATH"
+  chmod -x "$fixture/bin/fm-pr-create-wrapper.sh"
+  expect_entry warn codex 'echo hello' "$checker" "$path"
+  assert_grep 'wrapper is not executable' "$TMP_ROOT/codex.err" "missing-wrapper diagnostic omitted its prerequisite"
+  expect_entry warn codex "$heredoc" "$checker" "$path"
+  expect_entry warn codex 'gh pr create --repo wongsuwarn/firstmate --base main' "$checker" "$path"
+
+  fixture=$(make_fixture "$TMP_ROOT/missing-node")
+  checker="$fixture/bin/fm-pr-create-pretool-check.sh"
+  path="$fixture/bin/shims:$fixture/fakebin:/usr/bin:/bin"
+  expect_entry warn codex 'echo hello' "$checker" "$path"
+  assert_grep 'Node is unavailable' "$TMP_ROOT/codex.err" "missing-Node diagnostic omitted its prerequisite"
+  expect_entry warn codex "$heredoc" "$checker" "$path"
+  expect_entry warn codex 'gh pr create --repo wongsuwarn/firstmate --base main' "$checker" "$path"
+
+  fixture=$(make_fixture "$TMP_ROOT/missing-policy")
+  checker="$fixture/bin/fm-pr-create-pretool-check.sh"
+  path="$fixture/bin/shims:$fixture/fakebin:$PATH"
+  rm "$fixture/bin/fm-pr-create-explicit-path-policy.mjs"
+  expect_entry warn codex 'echo hello' "$checker" "$path"
+  assert_grep 'policy file is missing' "$TMP_ROOT/codex.err" "missing-policy diagnostic omitted its prerequisite"
+  expect_entry warn codex "$heredoc" "$checker" "$path"
+  expect_entry warn codex 'gh pr create --repo wongsuwarn/firstmate --base main' "$checker" "$path"
+
+  fixture=$(make_fixture "$TMP_ROOT/abnormal-parser")
+  checker="$fixture/bin/fm-pr-create-pretool-check.sh"
+  path="$fixture/bin/shims:$fixture/fakebin:$PATH"
+  printf '%s\n' 'this is not JavaScript' > "$fixture/bin/fm-pr-create-explicit-path-policy.mjs"
+  expect_entry warn codex 'echo hello' "$checker" "$path"
+  assert_grep 'parser exited abnormally' "$TMP_ROOT/codex.err" "abnormal-parser diagnostic omitted its prerequisite"
+  expect_entry warn codex "$heredoc" "$checker" "$path"
+  expect_entry warn codex 'gh pr create --repo wongsuwarn/firstmate --base main' "$checker" "$path"
+  pass "unavailable parser prerequisites allow commands with a loud diagnostic"
+}
+
+test_all_harness_transports_scope_boundary_enforcement() {
+  local entry broken broken_check broken_path heredoc
+  heredoc="cat <<'EOF'
+gh pr create
+EOF"
   for entry in codex claude grok opencode pi; do
-    expect_entry allow "$entry" 'echo "gh pr create documentation"'
+    expect_entry allow "$entry" 'echo hello' "$CHECK" "$NO_SHIM_PATH"
+    expect_entry allow "$entry" 'ls' "$CHECK" "$NO_SHIM_PATH"
+    expect_entry deny-target "$entry" 'gh pr create --title test' "$CHECK" "$NO_SHIM_PATH"
+    expect_entry allow "$entry" 'gh pr create --repo wongsuwarn/firstmate --base main --title test'
+    expect_entry allow "$entry" "$heredoc"
   done
   broken=$(make_fixture "$TMP_ROOT/broken-boundary")
   broken_check="$broken/bin/fm-pr-create-pretool-check.sh"
   chmod -x "$broken/bin/shims/gh"
   broken_path="$broken/bin/shims:$broken/fakebin:$PATH"
   for entry in codex claude grok opencode pi; do
-    expect_entry deny "$entry" 'git status --short' "$broken_check" "$broken_path"
+    expect_entry allow "$entry" 'git status --short' "$broken_check" "$broken_path"
+    expect_entry deny-target "$entry" 'gh pr create --title test' "$broken_check" "$broken_path"
+    expect_entry deny "$entry" 'gh pr create --repo wongsuwarn/firstmate --base main --title test' "$broken_check" "$broken_path"
   done
-  pass "every primary harness transport allows only an attested execution boundary"
+  pass "every primary harness transport scopes boundary enforcement to visible PR creation"
 }
 
 test_guard_survives_origin_change() {
@@ -148,19 +216,98 @@ test_guard_survives_origin_change() {
   pass "PR target wrapper remains active when the checkout origin changes"
 }
 
-test_malformed_transport_fails_closed() {
+test_malformed_transport_allows_with_diagnostic() {
   local out="$TMP_ROOT/malformed.out" err="$TMP_ROOT/malformed.err" rc=0
   printf '%s' '{' | env PATH="$GUARD_PATH" "$CHECK" >"$out" 2>"$err" || rc=$?
-  [ "$rc" -eq 2 ] || fail "malformed hook transport must deny, got $rc"
-  assert_grep 'pr-target-boundary-unavailable' "$err" "malformed hook transport deny must name its reason"
-  pass "malformed PR-target hook transport denies the unverified command"
+  [ "$rc" -eq 0 ] || fail "malformed hook transport must not deny an unknown command, got $rc"
+  [ ! -s "$out" ] || fail "malformed hook transport must keep stdout empty"
+  assert_grep 'pr-target-classification-unavailable' "$err" "malformed hook transport omitted its diagnostic"
+  pass "malformed PR-target hook transport allows with a loud diagnostic"
 }
 
-test_opencode_adapter_failures_block() {
-  local plugin=$ROOT/.opencode/plugins/fm-pr-create-pretool-check.js missing signal out status=0
+make_dispatch_result_fixture() {
+  local dir=$1
+  mkdir -p "$dir/.codex" "$dir/bin"
+  : > "$dir/AGENTS.md"
+  cp "$ROOT/.codex/hooks.json" "$dir/.codex/hooks.json"
+  cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$dir/bin/"
+  cat > "$dir/bin/fm-pr-create-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+case "${2-}" in
+  *'gh pr create'*)
+    printf '%s\n' '{"decision":"deny","reason":"synthetic denial"}'
+    case "${FM_TEST_CHECKER_RESULT:?}" in
+      abnormal) exit 3 ;;
+      deny) exit 2 ;;
+    esac
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/bin/fm-pr-create-hook-dispatch.sh" "$dir/bin/fm-pr-create-pretool-check.sh"
+}
+
+run_dispatch_result_case() {
+  local entry=$1 mode=$2 command=$3 fixture=$4 out=$5 err=$6
+  case "$entry" in
+    codex)
+      jq -cn --arg command "$command" '{tool_input:{command:$command}}' \
+        | (cd "$fixture" && env FM_TEST_CHECKER_RESULT="$mode" "$fixture/bin/fm-pr-create-hook-dispatch.sh" --codex) >"$out" 2>"$err"
+      ;;
+    claude)
+      jq -cn --arg command "$command" '{tool_input:{command:$command}}' \
+        | env FM_TEST_CHECKER_RESULT="$mode" "$fixture/bin/fm-pr-create-hook-dispatch.sh" --claude >"$out" 2>"$err"
+      ;;
+    grok)
+      jq -cn --arg command "$command" '{toolInput:{command:$command}}' \
+        | env FM_TEST_CHECKER_RESULT="$mode" "$fixture/bin/fm-pr-create-hook-dispatch.sh" >"$out" 2>"$err"
+      ;;
+    opencode|pi)
+      env FM_TEST_CHECKER_RESULT="$mode" "$fixture/bin/fm-pr-create-hook-dispatch.sh" \
+        --command "$command" >"$out" 2>"$err"
+      ;;
+  esac
+}
+
+test_checker_output_requires_recognized_status() {
+  local command entry err fixture mode out rc
+  fixture="$TMP_ROOT/dispatch-result"
+  make_dispatch_result_fixture "$fixture"
+  for entry in codex claude grok opencode pi; do
+    for mode in abnormal deny; do
+      out="$TMP_ROOT/$entry-$mode.out"
+      err="$TMP_ROOT/$entry-$mode.err"
+      rc=0
+      run_dispatch_result_case "$entry" "$mode" 'git status' "$fixture" "$out" "$err" || rc=$?
+      [ "$rc" -eq 0 ] || fail "$entry $mode checker changed an ordinary command result: $rc"
+      [ ! -s "$out" ] && [ ! -s "$err" ] || fail "$entry $mode checker changed ordinary command output"
+
+      rc=0
+      command='gh pr create --repo wongsuwarn/firstmate --base main'
+      run_dispatch_result_case "$entry" "$mode" "$command" "$fixture" "$out" "$err" || rc=$?
+      if [ "$mode" = abnormal ]; then
+        [ "$rc" -eq 0 ] || fail "$entry abnormal checker must allow, got $rc"
+        [ ! -s "$out" ] || fail "$entry abnormal checker replayed an incomplete denial: $(cat "$out")"
+        assert_grep 'pr-target-classification-unavailable' "$err" "$entry abnormal checker omitted its diagnostic"
+      else
+        [ "$rc" -eq 2 ] || fail "$entry completed denial must refuse, got $rc"
+        assert_grep 'synthetic denial' "$out" "$entry completed denial output was not replayed"
+      fi
+    done
+  done
+  pass "checker output is replayed only for recognized statuses across harnesses"
+}
+
+test_opencode_adapter_failures_allow_with_diagnostic() {
+  local plugin=$ROOT/.opencode/plugins/fm-pr-create-pretool-check.js missing signal out root status=0
   missing="$TMP_ROOT/opencode-missing"
   signal="$TMP_ROOT/opencode-signal"
   mkdir -p "$missing/bin" "$signal/bin"
+  for root in "$missing" "$signal"; do
+    cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$ROOT/bin/fm-pr-create-visible-check.sh" \
+      "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$root/bin/"
+    chmod +x "$root/bin/fm-pr-create-hook-dispatch.sh" "$root/bin/fm-pr-create-visible-check.sh"
+  done
   cat > "$signal/bin/fm-pr-create-pretool-check.sh" <<'SH'
 #!/usr/bin/env bash
 kill -TERM $$
@@ -171,19 +318,85 @@ import { pathToFileURL } from "node:url";
 const mod = await import(`${pathToFileURL(process.env.PLUGIN).href}?failure=${Date.now()}`);
 for (const root of [process.env.MISSING, process.env.SIGNAL]) {
   const hooks = await mod.FmPrCreatePretoolCheck({ worktree: root });
-  let blocked = false;
-  try {
-    await hooks["tool.execute.before"]({ tool: "bash" }, { args: { command: "git status" } });
-  } catch {
-    blocked = true;
+  for (const command of [
+    "git status",
+    "cat <<'EOF'\ngh pr create\nEOF",
+    "gh pr create --repo wongsuwarn/firstmate --base main",
+  ]) {
+    await hooks["tool.execute.before"]({ tool: "bash" }, { args: { command } });
   }
-  if (!blocked) throw new Error(`OpenCode allowed checker failure for ${root}`);
 }
 JS
   ) || status=$?
   [ "$status" -eq 0 ] || fail "OpenCode adapter failure test failed: $out"
-  [ -z "$out" ] || fail "OpenCode adapter failure test printed output: $out"
-  pass "OpenCode blocks checker spawn failure and signal termination"
+  assert_contains "$out" 'pr-target-classification-unavailable' "OpenCode checker failure omitted its diagnostic"
+  assert_contains "$out" 'classification did not run for this command' "OpenCode checker failure omitted its consequence"
+  pass "OpenCode allows checker failures with a loud diagnostic"
+}
+
+test_direct_hook_adapter_failures_allow_with_diagnostic() {
+  local adapter command hook mode fixture payload out status
+  for mode in missing signal; do
+    fixture="$TMP_ROOT/direct-$mode"
+    mkdir -p "$fixture/bin"
+    cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$ROOT/bin/fm-pr-create-visible-check.sh" \
+      "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$fixture/bin/"
+    chmod +x "$fixture/bin/fm-pr-create-hook-dispatch.sh" "$fixture/bin/fm-pr-create-visible-check.sh"
+    if [ "$mode" = signal ]; then
+      cat > "$fixture/bin/fm-pr-create-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+kill -TERM $$
+SH
+      chmod +x "$fixture/bin/fm-pr-create-pretool-check.sh"
+    fi
+    for adapter in claude grok; do
+      case "$adapter" in
+        claude)
+          hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-hook-dispatch.sh")) | .command' "$ROOT/.claude/settings.json")
+          payload=$(jq -cn --arg command 'git status' '{tool_input:{command:$command}}')
+          status=0
+          out=$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$fixture" bash -c "$hook" 2>&1) || status=$?
+          ;;
+        grok)
+          hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-hook-dispatch.sh")) | .command' "$ROOT/.grok/hooks/fm-pr-create-pretool-check.json")
+          payload=$(jq -cn --arg command 'git status' '{toolInput:{command:$command}}')
+          status=0
+          out=$(printf '%s' "$payload" | GROK_WORKSPACE_ROOT="$fixture" bash -c "$hook" 2>&1) || status=$?
+          ;;
+      esac
+      [ "$status" -eq 0 ] || fail "$adapter $mode checker blocked an unrelated command: $out"
+      assert_contains "$out" 'pr-target-classification-unavailable' "$adapter $mode checker failure omitted its diagnostic"
+      for command in "cat <<'EOF'
+gh pr create
+EOF" 'gh pr create --repo wongsuwarn/firstmate --base main'; do
+        case "$adapter" in
+          claude) payload=$(jq -cn --arg command "$command" '{tool_input:{command:$command}}') ;;
+          grok) payload=$(jq -cn --arg command "$command" '{toolInput:{command:$command}}') ;;
+        esac
+        status=0
+        if [ "$adapter" = claude ]; then
+          out=$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$fixture" bash -c "$hook" 2>&1) || status=$?
+        else
+          out=$(printf '%s' "$payload" | GROK_WORKSPACE_ROOT="$fixture" bash -c "$hook" 2>&1) || status=$?
+        fi
+        [ "$status" -eq 0 ] || fail "$adapter $mode checker blocked an unclassified command: $out"
+        assert_contains "$out" 'pr-target-classification-unavailable' "$adapter $mode checker failure omitted its diagnostic"
+      done
+    done
+  done
+  hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-hook-dispatch.sh")) | .command' "$ROOT/.claude/settings.json")
+  payload=$(jq -cn --arg command 'git status' '{tool_input:{command:$command}}')
+  status=0
+  out=$(printf '%s' "$payload" | env -u CLAUDE_PROJECT_DIR bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 0 ] || fail "Claude missing-root precondition blocked an unrelated command: $out"
+  assert_contains "$out" 'pr-target-classification-unavailable' "Claude missing-root diagnostic is missing"
+  hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-hook-dispatch.sh")) | .command' "$ROOT/.grok/hooks/fm-pr-create-pretool-check.json")
+  payload=$(jq -cn --arg command 'git status' '{toolInput:{command:$command}}')
+  status=0
+  out=$(printf '%s' "$payload" | env -u GROK_WORKSPACE_ROOT bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 0 ] || fail "Grok missing-root precondition blocked an unrelated command: $out"
+  assert_contains "$out" 'pr-target-classification-unavailable' "Grok missing-root diagnostic is missing"
+  pass "Claude and Grok allow checker failures with a loud diagnostic"
 }
 
 make_pi_adapter_fixture() {
@@ -194,6 +407,8 @@ make_pi_adapter_fixture() {
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$repo/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$ROOT/.pi/extensions/lib/fm-primary-scope.ts" "$repo/.pi/extensions/lib/"
   cp "$ROOT/bin/fm-primary-scope.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$repo/bin/"
+  cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$ROOT/bin/fm-pr-create-visible-check.sh" \
+    "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$repo/bin/"
   cat > "$repo/bin/fm-cd-pretool-check.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -209,7 +424,9 @@ kill -TERM $$
 SH
     chmod +x "$repo/bin/fm-pr-create-pretool-check.sh"
   fi
-  chmod +x "$repo/bin/fm-cd-pretool-check.sh" "$repo/bin/fm-arm-pretool-check.sh" "$repo/bin/fm-primary-scope.sh"
+  chmod +x "$repo/bin/fm-cd-pretool-check.sh" "$repo/bin/fm-arm-pretool-check.sh" \
+    "$repo/bin/fm-primary-scope.sh" "$repo/bin/fm-pr-create-hook-dispatch.sh" \
+    "$repo/bin/fm-pr-create-visible-check.sh"
 }
 
 run_pi_adapter_case() {
@@ -223,42 +440,72 @@ mod.default(pi);
 const handler = handlers.get("tool_call");
 if (!handler) throw new Error("Pi tool_call handler was not registered");
 const result = await handler({ type: "tool_call", toolName: "bash", input: { command: "git status" } });
-if (result?.block !== true) throw new Error("Pi allowed an unverified PR checker result");
+if (result?.block === true) throw new Error("Pi blocked an unrelated command after PR checker failure");
+const heredocResult = await handler({ type: "tool_call", toolName: "bash", input: { command: "cat <<'EOF'\ngh pr create\nEOF" } });
+if (heredocResult?.block === true) throw new Error("Pi blocked heredoc content after PR checker failure");
+const prResult = await handler({ type: "tool_call", toolName: "bash", input: { command: "gh pr create --repo wongsuwarn/firstmate --base main" } });
+if (prResult?.block === true) throw new Error("Pi blocked visible PR creation after PR checker failure");
 JS
   ) || status=$?
   [ "$status" -eq 0 ] || fail "Pi adapter failure test failed: $out"
-  [ -z "$out" ] || fail "Pi adapter failure test printed output: $out"
+  assert_contains "$out" 'pr-target-classification-unavailable' "Pi adapter failure omitted its diagnostic"
 }
 
-test_pi_adapter_failures_block() {
+test_pi_adapter_failures_allow_with_diagnostic() {
   local missing="$TMP_ROOT/pi-missing" signal="$TMP_ROOT/pi-signal"
   make_pi_adapter_fixture "$missing" missing
   make_pi_adapter_fixture "$signal" signal
   run_pi_adapter_case "$missing"
   run_pi_adapter_case "$signal"
-  pass "Pi and pi-signed block checker spawn failure and signal termination"
+  pass "Pi and pi-signed allow checker failures with a loud diagnostic"
 }
 
-test_codex_adapter_preconditions_block() {
-  local hook fixture payload out status=0
-  hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-pretool-check.sh")) | .command' "$ROOT/.codex/hooks.json")
+test_codex_adapter_preconditions_allow_with_diagnostic() {
+  local hook fixture missing_dispatch payload out status=0
+  hook=$(jq -r '.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("fm-pr-create-hook-dispatch.sh")) | .command' "$ROOT/.codex/hooks.json")
   [ -n "$hook" ] || fail "Codex PR-target hook command is missing"
   payload=$(jq -cn --arg command 'git status' '{tool_input:{command:$command}}')
   fixture="$TMP_ROOT/codex-precondition"
   mkdir -p "$fixture/.codex" "$fixture/bin"
   : > "$fixture/AGENTS.md"
   cp "$ROOT/.codex/hooks.json" "$fixture/.codex/hooks.json"
+  cp "$ROOT/bin/fm-pr-create-hook-dispatch.sh" "$ROOT/bin/fm-pr-create-visible-check.sh" \
+    "$ROOT/bin/fm-pr-create-explicit-path-policy.mjs" "$ROOT/bin/fm-arm-command-policy.mjs" "$fixture/bin/"
+  chmod +x "$fixture/bin/fm-pr-create-hook-dispatch.sh" "$fixture/bin/fm-pr-create-visible-check.sh"
   out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
-  [ "$status" -eq 2 ] || fail "Codex missing-checker precondition must deny, got $status: $out"
-  assert_contains "$out" 'pr-target-boundary-unavailable' "Codex missing-checker denial omitted its reason"
-  cp "$ROOT/bin/fm-pr-create-pretool-check.sh" "$fixture/bin/"
-  chmod +x "$fixture/bin/fm-pr-create-pretool-check.sh"
-  printf '%s\n' '{}' > "$fixture/.codex/hooks.json"
+  [ "$status" -eq 0 ] || fail "Codex missing-checker precondition must allow unrelated commands, got $status: $out"
+  assert_contains "$out" 'pr-target-classification-unavailable' "Codex missing-checker diagnostic is missing"
+  payload=$(jq -cn --arg command 'gh pr create --repo wongsuwarn/firstmate --base main' '{tool_input:{command:$command}}')
   status=0
   out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
-  [ "$status" -eq 2 ] || fail "Codex hook self-validation failure must deny, got $status: $out"
-  assert_contains "$out" 'pr-target-boundary-unavailable' "Codex self-validation denial omitted its reason"
-  pass "Codex blocks missing checker and hook self-validation failures"
+  [ "$status" -eq 0 ] || fail "Codex missing-checker precondition must allow visible PR creation, got $status: $out"
+  assert_contains "$out" 'pr-target-classification-unavailable' "Codex missing-checker diagnostic is missing"
+  payload=$(jq -cn --arg command "cat <<'EOF'
+gh pr create
+EOF" '{tool_input:{command:$command}}')
+  status=0
+  out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 0 ] || fail "Codex missing-checker precondition must allow heredoc content, got $status: $out"
+  assert_contains "$out" 'pr-target-classification-unavailable' "Codex missing-checker diagnostic is missing"
+  printf '%s\n' '{}' > "$fixture/.codex/hooks.json"
+  payload=$(jq -cn --arg command 'git status' '{tool_input:{command:$command}}')
+  status=0
+  out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 0 ] || fail "Codex hook self-validation failure must allow unrelated commands, got $status: $out"
+  assert_contains "$out" 'pr-target-classification-unavailable' "Codex self-validation diagnostic is missing"
+  payload=$(jq -cn --arg command 'gh pr create --repo wongsuwarn/firstmate --base main' '{tool_input:{command:$command}}')
+  status=0
+  out=$(cd "$fixture" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 0 ] || fail "Codex self-validation failure must allow visible PR creation, got $status: $out"
+  assert_contains "$out" 'pr-target-classification-unavailable' "Codex self-validation diagnostic is missing"
+  missing_dispatch="$TMP_ROOT/codex-missing-dispatch"
+  mkdir -p "$missing_dispatch"
+  payload=$(jq -cn --arg command 'git status' '{tool_input:{command:$command}}')
+  status=0
+  out=$(cd "$missing_dispatch" && printf '%s' "$payload" | bash -c "$hook" 2>&1) || status=$?
+  [ "$status" -eq 0 ] || fail "Codex missing dispatcher blocked an unrelated command: $out"
+  assert_contains "$out" 'pr-target-classification-unavailable' "Codex missing-dispatch diagnostic is missing"
+  pass "Codex allows unavailable preconditions with a loud diagnostic"
 }
 
 make_config_fixture() {
@@ -334,11 +581,14 @@ SH
 test_wrapper_boundary_matrix
 test_private_verify_mode_preserves_public_command
 test_detectable_top_level_explicit_paths_are_checked
-test_all_harness_transports_attest_boundary
+test_unavailable_dependencies_allow_with_diagnostic
+test_all_harness_transports_scope_boundary_enforcement
 test_guard_survives_origin_change
-test_malformed_transport_fails_closed
-test_opencode_adapter_failures_block
-test_pi_adapter_failures_block
-test_codex_adapter_preconditions_block
+test_malformed_transport_allows_with_diagnostic
+test_checker_output_requires_recognized_status
+test_opencode_adapter_failures_allow_with_diagnostic
+test_direct_hook_adapter_failures_allow_with_diagnostic
+test_pi_adapter_failures_allow_with_diagnostic
+test_codex_adapter_preconditions_allow_with_diagnostic
 test_binding_converges_idempotently
 test_bootstrap_root_override_binds_selected_checkout

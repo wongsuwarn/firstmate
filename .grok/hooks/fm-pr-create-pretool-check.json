@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -lc '[ -n \"${GROK_WORKSPACE_ROOT:-}\" ] || exit 0; exec \"${GROK_WORKSPACE_ROOT:-}/bin/fm-pr-create-pretool-check.sh\"'",
+            "command": "bash -lc 'warn(){ echo \"[pr-target-classification-unavailable] $1; PR-target classification did not run for this command; allowing it unguarded.\" >&2; exit 0; }; [ -n \"${GROK_WORKSPACE_ROOT:-}\" ] || warn \"the Grok workspace root is unavailable\"; [ -x \"$GROK_WORKSPACE_ROOT/bin/fm-pr-create-hook-dispatch.sh\" ] || warn \"the hook dispatcher is not executable\"; exec \"$GROK_WORKSPACE_ROOT/bin/fm-pr-create-hook-dispatch.sh\"'",
             "timeout": 10
           }
         ]

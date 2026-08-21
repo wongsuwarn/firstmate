@@ -53,25 +53,31 @@ is_pr_create() {
   return 1
 }
 
-has_required_repo() {
-  local found=0 arg expect_repo=0 expect_long=0
+has_required_target() {
+  local repo_found=0 base_found=0 arg expect_repo=0 expect_base=0
   for arg in "$@"; do
     if [ "$expect_repo" -eq 1 ]; then
       [ "$arg" = "$TARGET" ] || return 1
-      [ "$expect_long" -eq 0 ] || found=1
+      repo_found=1
       expect_repo=0
-      expect_long=0
+      continue
+    fi
+    if [ "$expect_base" -eq 1 ]; then
+      [ "$arg" = main ] || return 1
+      base_found=1
+      expect_base=0
       continue
     fi
     case "$arg" in
       --) break ;;
-      --repo) expect_repo=1; expect_long=1 ;;
-      --repo=*) [ "${arg#--repo=}" = "$TARGET" ] || return 1; found=1 ;;
-      -R) expect_repo=1 ;;
-      -R?*) [ "${arg#-R}" = "$TARGET" ] || return 1 ;;
+      --repo) expect_repo=1 ;;
+      --repo=*) [ "${arg#--repo=}" = "$TARGET" ] || return 1; repo_found=1 ;;
+      -R|-R?*) return 1 ;;
+      --base) expect_base=1 ;;
+      --base=*) [ "${arg#--base=}" = main ] || return 1; base_found=1 ;;
     esac
   done
-  [ "$expect_repo" -eq 0 ] && [ "$found" -eq 1 ]
+  [ "$expect_repo" -eq 0 ] && [ "$expect_base" -eq 0 ] && [ "$repo_found" -eq 1 ] && [ "$base_found" -eq 1 ]
 }
 
 resolve_real_tool() {
@@ -107,10 +113,15 @@ if [ -z "$TOOL" ]; then
       ;;
     check)
       case "${1-}" in gh|gh-axi) shift ;; *) exit 2 ;; esac
-      if is_pr_create "$@" && ! has_required_repo "$@"; then
+      if is_pr_create "$@" && ! has_required_target "$@"; then
         refuse_target
       fi
       exit 0
+      ;;
+    is-pr-create)
+      case "${1-}" in gh|gh-axi) shift ;; *) exit 2 ;; esac
+      is_pr_create "$@"
+      exit $?
       ;;
   esac
 fi
@@ -119,7 +130,7 @@ case "$TOOL" in
   *) echo "error: fm-pr-create-wrapper.sh must be reached through the gh or gh-axi shim" >&2; exit 2 ;;
 esac
 
-if is_pr_create "$@" && ! has_required_repo "$@"; then
+if is_pr_create "$@" && ! has_required_target "$@"; then
   refuse_target
 fi
 REAL_TOOL=$(resolve_real_tool "$TOOL") || { echo "error: no real $TOOL executable found after firstmate's shim" >&2; exit 2; }

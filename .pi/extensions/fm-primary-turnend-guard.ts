@@ -130,7 +130,7 @@ function runCdCheck(command: string): Promise<{ code: number; stderr: string }> 
 }
 
 function runPrCreateCheck(command: string): Promise<{ code: number; stderr: string }> {
-  return runChecker("fm-pr-create-pretool-check.sh", command);
+  return runChecker("fm-pr-create-hook-dispatch.sh", command);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -181,7 +181,12 @@ export default function (pi: ExtensionAPI) {
       return { block: true, reason: cdResult.stderr.trim() || "denied by the cd-guard PreToolUse seatbelt" };
     }
     const prResult = await runPrCreateCheck(command);
-    if (prResult.code !== 0) {
+    if (![0, 2].includes(prResult.code)) {
+      process.stderr.write("[pr-target-classification-unavailable] the hook dispatcher failed; PR-target classification did not run for this command; allowing it unguarded.\n");
+    } else if (prResult.code !== 2 && prResult.stderr) {
+      process.stderr.write(prResult.stderr);
+    }
+    if (prResult.code === 2) {
       return { block: true, reason: prResult.stderr.trim() || "denied by the PR target PreToolUse seatbelt" };
     }
     const result = await runPretoolCheck(command);
